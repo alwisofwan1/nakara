@@ -482,7 +482,8 @@ The web UI binds to loopback. Choose one of the following:
   and `NAKARA_PUBLIC_URL=https://code.example.com/proxy/7788`, then open
   `https://code.example.com/proxy/7788/?token=…` once. The proxy is a
   loopback peer, but loopback no longer skips the token: the first visit sets the
-  cookie. The public URL's host must match the `Host` the proxy forwards.
+  cookie, which lasts a year and renews on every page visit, so links from Telegram
+  or GitHub open signed in. The public URL's host must match the `Host` the proxy forwards.
 - **Tailscale**: set `NAKARA_HOST=<tailnet IP>` and `NAKARA_ALLOW=<your device IP>`, then
   open `http://<tailnet IP>:7788/?token=…`. The token is in `$NAKARA_DATA_DIR/token`.
 - **A dedicated hostname** needs a reverse proxy or tunnel (for example a Cloudflare Tunnel ingress rule) in front of the loopback port.

@@ -126,14 +126,19 @@ export function createApp(
       ["GET", "HEAD"].includes(c.req.method) &&
       (c.req.path === "/healthz" || c.req.path === "/metrics");
     if (!open) {
-      const fromQuery = c.req.query("token");
-      if (fromQuery && same(fromQuery, token)) {
+      // Lax, so a link tapped in Telegram or GitHub arrives signed in; the
+      // Origin check below still refuses cross-site writes. Each visit renews
+      // it, so a phone in daily use never asks for the token again.
+      const remember = () =>
         setCookie(c, "nakara_token", token, {
           httpOnly: true,
-          sameSite: "Strict",
+          sameSite: "Lax",
           path: "/",
-          maxAge: 60 * 60 * 24 * 30,
+          maxAge: 60 * 60 * 24 * 365,
         });
+      const fromQuery = c.req.query("token");
+      if (fromQuery && same(fromQuery, token)) {
+        remember();
         const u = new URL(c.req.url);
         u.searchParams.delete("token");
         return c.redirect(`${u.pathname}${u.search}`);
@@ -148,6 +153,8 @@ export function createApp(
           "Unauthorized: open the URL with ?token=<token>",
           401,
         );
+      if (same(cookie, token) && !apiRequest && c.req.method === "GET")
+        remember();
     }
     if (apiRequest || !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
       const origin = c.req.header("origin");

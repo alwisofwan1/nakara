@@ -319,6 +319,34 @@ test("a Bearer token or the cookie opens any route; a missing or wrong one is re
   store.close();
 });
 
+test("the token cookie is Lax for a year and a page visit with it renews it", async () => {
+  const { store, app, from } = fixture();
+  const get = (path: string, headers: Record<string, string> = {}) =>
+    app.request(
+      path,
+      { headers: { host: HOST, ...headers } },
+      from("127.0.0.1"),
+    );
+  const cookie = (r: Response) => r.headers.get("set-cookie") ?? "";
+  const login = await get("/inbox?token=s3cret");
+  assert.equal(login.status, 302);
+  assert.match(cookie(login), /SameSite=Lax/);
+  assert.match(cookie(login), /Max-Age=31536000/);
+  assert.match(
+    cookie(await get("/inbox", { cookie: "nakara_token=s3cret" })),
+    /Max-Age=31536000/,
+  );
+  assert.equal(
+    cookie(await get("/api/status", { cookie: "nakara_token=s3cret" })),
+    "",
+  );
+  assert.equal(
+    cookie(await get("/inbox", { authorization: "Bearer s3cret" })),
+    "",
+  );
+  store.close();
+});
+
 test("/healthz and /metrics answer a loopback peer without the token, others still need it", async () => {
   const { store, app, from } = fixture();
   const get = (path: string, peer: string) =>
