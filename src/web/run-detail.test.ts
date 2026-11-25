@@ -5,9 +5,7 @@ import { type Run, Store } from "../db.ts";
 import { Factory } from "../orchestrator/factory.ts";
 import { type RunContext, readRun } from "./runs.ts";
 
-const limits = { budgetUsd: 15, maxReviews: 1, maxRevisions: 2 };
 const context: RunContext = {
-  limits,
   workDir: "/data/work",
   systemPrompt: null,
   agent: (name) =>

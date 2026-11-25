@@ -46,7 +46,7 @@ const text = (t: string, isError = false) => ({
 });
 
 function submit(action: Action, accepted: string) {
-  const verdict = check(state, action, snapshot.limits, snapshot.repositories);
+  const verdict = check(state, action, snapshot.repositories);
   if (!verdict.ok) {
     record({ action, accepted: false, reason: verdict.reason });
     return text(`Refused by factory policy: ${verdict.reason}`, true);

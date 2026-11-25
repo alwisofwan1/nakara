@@ -6,6 +6,7 @@ import type {
   SpecState,
   Stage,
 } from "../domain/policy.ts";
+import type { FactorySettingsRepository } from "./factory-settings.ts";
 import type { Notifier } from "./notifier.ts";
 import { now, Repository } from "./repository.ts";
 
@@ -30,6 +31,10 @@ export interface WorkItem {
   max_runs: number;
   /** The runs the item started, of every role and however they ended. */
   run_count: number;
+  /** How many reviews the item may run, copied from its factory when it was created. */
+  max_reviews: number;
+  /** How many revisions the item may take, copied from its factory when it was created. */
+  max_revisions: number;
   /** 1 when someone without write access edited the request after the Factory Label was applied. */
   request_edited: number;
   issue_url: string | null;
@@ -53,6 +58,8 @@ export function policyState(item: WorkItem): PolicyState {
     budgetUsd: item.budget_usd,
     runCount: item.run_count,
     maxRuns: item.max_runs,
+    maxReviews: item.max_reviews,
+    maxRevisions: item.max_revisions,
     prUrl: item.pr_url,
     prMerged: item.pr_merged === 1,
   };
@@ -60,18 +67,15 @@ export function policyState(item: WorkItem): PolicyState {
 
 /** Reads and writes the work_items table. */
 export class ItemRepository extends Repository {
-  private readonly defaultBudgetUsd: number;
-  private readonly defaultMaxRuns: number;
+  private readonly settings: FactorySettingsRepository;
 
   constructor(
     db: DatabaseSync,
     notifier: Notifier,
-    defaultBudgetUsd: number,
-    defaultMaxRuns: number,
+    settings: FactorySettingsRepository,
   ) {
     super(db, notifier);
-    this.defaultBudgetUsd = defaultBudgetUsd;
-    this.defaultMaxRuns = defaultMaxRuns;
+    this.settings = settings;
   }
 
   /** A work item changed: the status bar, the item lists, and the item itself. */
@@ -92,14 +96,21 @@ export class ItemRepository extends Repository {
     automation?: string | null;
     issueUrl?: string | null;
     requestEdited?: boolean;
+    /** Overrides the factory's Budget per Work Item. */
     budgetUsd?: number;
     /** The owning factory; the first factory when omitted. */
     factoryId?: number;
   }): WorkItem {
     const t = now();
+    const factoryId =
+      input.factoryId ??
+      // biome-ignore lint/style/noNonNullAssertion: Migration 005 seeds a factory.
+      this.get<{ id: number }>("SELECT MIN(id) AS id FROM factories")!.id;
+    // A snapshot: changing the factory's limits later leaves this item alone.
+    const limits = this.settings.settings(factoryId);
     const id = this.run(
-      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, issue_url, request_edited, budget_usd, max_runs, factory_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, (SELECT MIN(id) FROM factories)), ?, ?)`,
+      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, factory_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.title,
       input.request,
       input.requester ?? null,
@@ -110,9 +121,11 @@ export class ItemRepository extends Repository {
       input.automation ?? null,
       input.issueUrl ?? null,
       input.requestEdited ? 1 : 0,
-      input.budgetUsd ?? this.defaultBudgetUsd,
-      this.defaultMaxRuns,
-      input.factoryId ?? null,
+      input.budgetUsd ?? limits.budgetUsd,
+      limits.maxRuns,
+      limits.maxReviews,
+      limits.maxRevisions,
+      factoryId,
       t,
       t,
     );

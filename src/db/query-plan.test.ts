@@ -117,9 +117,8 @@ test("posting proof uses indexes", () => {
 });
 
 test("the Work Item page uses indexes", () => {
-  const config = loadConfig({});
   assertIndexed(() => {
-    readItem(store, openItem, config.limits);
+    readItem(store, openItem);
     store.events(openItem);
   });
 });

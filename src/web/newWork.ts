@@ -33,6 +33,8 @@ const manualAutomation = (definition: Definition | undefined) =>
 export function readNewWorkOptions(
   store: Store,
   definition: Definition | undefined,
+  /** The factory whose Budget per Work Item the form starts from; the default budget without one. */
+  factoryId?: number,
 ): NewWorkOptionsDto {
   const requesters = new Set([DEFAULT_REQUESTER, ...store.requesters()]);
   return {
@@ -48,7 +50,10 @@ export function readNewWorkOptions(
       })),
     defaults: {
       automation: manualAutomation(definition)?.name ?? null,
-      budgetUsd: store.defaultBudgetUsd,
+      budgetUsd:
+        factoryId === undefined
+          ? store.defaultBudgetUsd
+          : store.repos.factorySettings.settings(factoryId).budgetUsd,
       requester: DEFAULT_REQUESTER,
     },
     requesters: [...requesters],

@@ -1,0 +1,76 @@
+import type { DatabaseSync } from "node:sqlite";
+
+import type { Notifier } from "./notifier.ts";
+import { now, Repository } from "./repository.ts";
+
+/** The per-factory limits a Work Item snapshots when it is created (ADR-0006). */
+export interface FactoryLimits {
+  budgetUsd: number;
+  maxReviews: number;
+  maxRevisions: number;
+  maxRuns: number;
+}
+
+/** A factory's effective limits, and the environment defaults they fall back to. */
+export interface FactoryLimitSettings extends FactoryLimits {
+  defaults: FactoryLimits;
+}
+
+/** A limits edit: an omitted key stays, `null` resets it to the default. */
+export type LimitsEdit = { [K in keyof FactoryLimits]?: number | null };
+
+const COLUMNS = {
+  budgetUsd: "budget_usd",
+  maxReviews: "max_reviews",
+  maxRevisions: "max_revisions",
+  maxRuns: "max_runs",
+} as const satisfies Record<keyof FactoryLimits, string>;
+
+type Row = { [K in (typeof COLUMNS)[keyof FactoryLimits]]: number | null };
+
+/**
+ * Reads and writes the factory_settings table: how Nakara limits a factory.
+ * A NULL column, or a factory without a row, uses the environment default.
+ */
+export class FactorySettingsRepository extends Repository {
+  private readonly defaults: FactoryLimits;
+
+  constructor(db: DatabaseSync, notifier: Notifier, defaults: FactoryLimits) {
+    super(db, notifier);
+    this.defaults = { ...defaults };
+  }
+
+  /** The factory's effective limits and the defaults; the defaults alone when it saved none. */
+  settings(factoryId: number): FactoryLimitSettings {
+    const row = this.get<Row>(
+      "SELECT budget_usd, max_reviews, max_revisions, max_runs FROM factory_settings WHERE factory_id = ?",
+      factoryId,
+    );
+    const limit = (key: keyof FactoryLimits) =>
+      row?.[COLUMNS[key]] ?? this.defaults[key];
+    return {
+      budgetUsd: limit("budgetUsd"),
+      maxReviews: limit("maxReviews"),
+      maxRevisions: limit("maxRevisions"),
+      maxRuns: limit("maxRuns"),
+      defaults: { ...this.defaults },
+    };
+  }
+
+  /** Save the given limits; the others keep their saved value. */
+  saveLimits(factoryId: number, edit: LimitsEdit): void {
+    const keys = (Object.keys(COLUMNS) as (keyof FactoryLimits)[]).filter(
+      (key) => edit[key] !== undefined,
+    );
+    const columns = keys.map((key) => COLUMNS[key]);
+    this.run(
+      `INSERT INTO factory_settings (factory_id, ${[...columns, "updated_at"].join(", ")})
+       VALUES (?, ${[...columns, "updated_at"].map(() => "?").join(", ")})
+       ON CONFLICT(factory_id) DO UPDATE SET ${[...columns, "updated_at"].map((c) => `${c} = excluded.${c}`).join(", ")}`,
+      factoryId,
+      ...keys.map((key) => edit[key] ?? null),
+      now(),
+    );
+    this.notifier.notify({ type: "factories", id: "global" });
+  }
+}

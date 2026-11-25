@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import type { Run, RunStatus, Store } from "../db.ts";
-import type { AgentType, Limits } from "../domain/policy.ts";
+import type { AgentType } from "../domain/policy.ts";
 import { checkFollowUp } from "../orchestrator/follow-up.ts";
 
 export const runsQuery = z.object({
@@ -136,7 +136,6 @@ export interface RunDetailDto extends RunSummaryDto {
 }
 
 export interface RunContext {
-  limits: Limits;
   workDir: string;
   /** The agent's type and runner in the loaded definition; undefined once it was removed. */
   agent: (
@@ -167,7 +166,7 @@ export function readRun(
   const item = store.item(run.item_id)!;
   const runs = store.runs(item.id);
   const agent = run.role === "agent" ? context.agent(run.agent) : undefined;
-  const verdict = checkFollowUp(store, run, agent?.type, context.limits);
+  const verdict = checkFollowUp(store, run, agent?.type);
   return {
     ...summary(run),
     item: { id: item.id, title: item.title },
@@ -199,7 +198,7 @@ export function readRun(
         verdict.ok && verdict.next.revisionCount > item.revision_count,
       revisions: {
         used: item.revision_count,
-        max: context.limits.maxRevisions,
+        max: item.max_revisions,
       },
     },
     otherRuns: runs.filter((r) => r.id !== run.id).map(summary),

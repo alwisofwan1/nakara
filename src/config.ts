@@ -3,7 +3,11 @@ import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
-import { DEFAULT_MAX_RUNS } from "./domain/policy.ts";
+import {
+  DEFAULT_MAX_REVIEWS,
+  DEFAULT_MAX_REVISIONS,
+  DEFAULT_MAX_RUNS,
+} from "./domain/policy.ts";
 import { LEVELS } from "./telemetry/log.ts";
 
 const num = (fallback: number) =>
@@ -45,8 +49,8 @@ const env = z.object({
     .string()
     .default(join(homedir(), ".config/nakara/codex")),
   NAKARA_BUDGET_USD: num(15),
-  NAKARA_MAX_REVIEWS: num(1),
-  NAKARA_MAX_REVISIONS: num(2),
+  NAKARA_MAX_REVIEWS: num(DEFAULT_MAX_REVIEWS),
+  NAKARA_MAX_REVISIONS: num(DEFAULT_MAX_REVISIONS),
   /** Runs a work item may start: foreman turns and agent runs, failed and interrupted ones included. */
   NAKARA_MAX_RUNS: z.coerce.number().int().min(1).default(DEFAULT_MAX_RUNS),
   NAKARA_CONCURRENCY: num(2),

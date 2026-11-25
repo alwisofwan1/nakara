@@ -30,8 +30,8 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   - implementation waits for an approved spec (approval only via the inbox),
   - review runs at most once, and only after a PR is recorded,
   - review fixes go to the same implementation agent through `follow_up`, with a revision cap,
-  - a budget cap per work item (set in New work, default `NAKARA_BUDGET_USD`) that includes failed runs; a claude run stopped before its final result is charged an estimate from the token usage it streamed,
-  - a run limit per work item (default `NAKARA_MAX_RUNS`) that counts foreman turns and agent runs, failed and interrupted ones included, so items on harnesses without a per-token bill (codex, qwen) also stop; the item pauses until the operator presses Raise run limit,
+  - a budget cap per work item (set in New work; default from the factory's Settings, else `NAKARA_BUDGET_USD`) that includes failed runs; a claude run stopped before its final result is charged an estimate from the token usage it streamed,
+  - a run limit per work item (default from the factory's Settings, else `NAKARA_MAX_RUNS`) that counts foreman turns and agent runs, failed and interrupted ones included, so items on harnesses without a per-token bill (codex, qwen) also stop; the item pauses until the operator presses Raise run limit,
   - a work item with a PR completes only after a human merges it (one without a PR, such as an answered question, completes with a summary), and nothing in the factory merges.
 - **Follow-ups keep context.** A follow-up resumes the agent's own Claude Code
   session, as Warp's foreman procedure requires.
@@ -242,9 +242,9 @@ existing shell; the default Tailwind palette and dimension scales are reset.
 | `NAKARA_ALLOWED_HOSTS` | `""` | Extra `Host` header values (`host:port`, comma-separated) the web server answers to, besides `NAKARA_HOST`, loopback names on `NAKARA_PORT` and the `NAKARA_PUBLIC_URL` host; for a dev proxy or a hostname you serve under yourself |
 | `NAKARA_DATA_DIR` | `~/.local/share/nakara` | DB, token, clones, logs |
 | `NAKARA_DEFINITION_DIR` | `factory` | Definition root (`factory.yaml`) of the first factory when migration 005 registers it; afterwards each factory loads its definition from its registered directory. When it is set and names another directory than the first factory's registered one, startup logs `startup.definition_dir_ignored` and `/healthz` lists the warning; the registered directory is used |
-| `NAKARA_BUDGET_USD` | `15` | Default budget of a work item, failed runs included. New work can set another one; existing items get this value when migrated |
+| `NAKARA_BUDGET_USD` | `15` | Default budget of a work item, failed runs included. New work can set another one; existing items get this value when migrated. This and the three limits below are defaults: a factory's Settings → Limits can override them for its new work items, and work items keep the limits they were created with |
 | `NAKARA_MAX_RUNS` | `50` | Default run limit of a work item: foreman turns and agent runs, failed and interrupted ones included. At the limit the item pauses until Raise run limit adds 10; existing items get this value when migrated. Replaces `NAKARA_MAX_FOREMAN_TURNS` |
-| `NAKARA_MAX_REVIEWS` / `NAKARA_MAX_REVISIONS` | `1` / `2` | Review policy |
+| `NAKARA_MAX_REVIEWS` / `NAKARA_MAX_REVISIONS` | `1` / `2` | Default review policy of a work item; existing items get these values when migrated |
 | `NAKARA_CONCURRENCY` | `2` | Concurrent agent runs, across all factories |
 | `NAKARA_POLL_SECONDS` | `60` | GitHub polling interval |
 | `NAKARA_PUMP_SECONDS` | `15` | Safety-net scheduler interval; the scheduler also runs after every state change |

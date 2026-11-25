@@ -7,7 +7,11 @@ import { test } from "node:test";
 
 import { listSnapshots } from "../backup.ts";
 import { type FactorySeed, Store, stubFactorySeed } from "../db.ts";
-import { DEFAULT_MAX_RUNS } from "../domain/policy.ts";
+import {
+  DEFAULT_MAX_REVIEWS,
+  DEFAULT_MAX_REVISIONS,
+  DEFAULT_MAX_RUNS,
+} from "../domain/policy.ts";
 import { MIGRATIONS, migrate, migrateDown, schemaVersion } from "./migrate.ts";
 
 function tempDir(t: { after: (fn: () => void) => void }) {
@@ -334,6 +338,8 @@ const contents = (db: DatabaseSync) =>
             tools,
             max_runs,
             run_count,
+            max_reviews,
+            max_revisions,
             request_edited,
             ...row
           }) => {
@@ -345,6 +351,11 @@ const contents = (db: DatabaseSync) =>
             assert.equal(request_edited ?? 0, 0);
             if (t === "work_items" && factory_id !== undefined)
               assert.equal(typeof factory_id, "number");
+            // Migration 015 gives existing items the default review and revision limits.
+            if (t === "work_items" && max_reviews !== undefined) {
+              assert.equal(max_reviews, DEFAULT_MAX_REVIEWS);
+              assert.equal(max_revisions, DEFAULT_MAX_REVISIONS);
+            }
             if (t === "work_items" && max_runs !== undefined) {
               assert.equal(max_runs, DEFAULT_MAX_RUNS);
               // Migration 010 counts the runs the item already has.
@@ -512,8 +523,17 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
       store.db
         .prepare("SELECT * FROM work_items ORDER BY id")
         .all()
-        // Migration 010 and 012's columns are checked by contents().
-        .map(({ max_runs, run_count, request_edited, ...row }) => row),
+        // Migration 010, 012 and 015's columns are checked by contents().
+        .map(
+          ({
+            max_runs,
+            run_count,
+            request_edited,
+            max_reviews,
+            max_revisions,
+            ...row
+          }) => row,
+        ),
       before.map((row) => ({ ...row, factory_id: factory?.id })),
     );
     // The orphan event is still there, and the only violation.
@@ -639,4 +659,64 @@ test("a downgrade past a migration without down refuses and changes nothing", (t
   assert.equal(schemaVersion(db), MIGRATIONS.length);
   assert.deepEqual(schema(db), before);
   assert.equal(migrateDown(db, MIGRATIONS.length), MIGRATIONS.length);
+});
+
+test("migration 015 adds factory settings, gives existing items the default limits, and down restores version 14", (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, "nakara.db");
+  const VERSION_14 = MIGRATIONS.slice(0, 14);
+  const db = new DatabaseSync(path);
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: VERSION_14,
+  });
+  const version14 = schema(db);
+  db.exec(`INSERT INTO work_items (title, request, source, budget_usd, factory_id, created_at, updated_at)
+           VALUES ('Old', 'r', 'manual', 9, 1, 'now', 'now')`);
+
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    defaultMaxReviews: 3,
+    defaultMaxRevisions: 4,
+  });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  assert.deepEqual(
+    {
+      ...db
+        .prepare(
+          "SELECT budget_usd, max_runs, max_reviews, max_revisions FROM work_items",
+        )
+        .get(),
+    },
+    {
+      budget_usd: 9,
+      max_runs: DEFAULT_MAX_RUNS,
+      max_reviews: 3,
+      max_revisions: 4,
+    },
+  );
+  db.exec(
+    "INSERT INTO factory_settings (factory_id, budget_usd, updated_at) VALUES (1, 5, 'now')",
+  );
+  // Every limit is nullable: NULL means the environment default.
+  assert.deepEqual(
+    {
+      ...db
+        .prepare(
+          "SELECT budget_usd, max_reviews, max_revisions, max_runs FROM factory_settings",
+        )
+        .get(),
+    },
+    { budget_usd: 5, max_reviews: null, max_revisions: null, max_runs: null },
+  );
+
+  assert.equal(migrateDown(db, 14), 14);
+  assert.deepEqual(schema(db), version14);
+  assert.equal(
+    (db.prepare("SELECT title FROM work_items").get() as { title: string })
+      .title,
+    "Old",
+  );
 });

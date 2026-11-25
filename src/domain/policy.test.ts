@@ -11,11 +11,9 @@ import {
   RUN_STEP,
   type Action,
   type AgentType,
-  type Limits,
   type PolicyState,
 } from "./policy.ts";
 
-const limits: Limits = { maxReviews: 1, maxRevisions: 2 };
 const repos = ["o/r"];
 const fresh: PolicyState = {
   stage: "intake",
@@ -27,6 +25,8 @@ const fresh: PolicyState = {
   budgetUsd: 10,
   runCount: 0,
   maxRuns: 30,
+  maxReviews: 1,
+  maxRevisions: 2,
   prUrl: null,
   prMerged: false,
 };
@@ -46,7 +46,7 @@ const followUp = (agentType: AgentType, agent = "x"): Action => ({
 
 const apply = (state: PolicyState, ...actions: Action[]): PolicyState =>
   actions.reduce((s, a) => {
-    const v = check(s, a, limits, repos);
+    const v = check(s, a, repos);
     assert.ok(
       v.ok,
       `expected ${a.type} to be allowed: ${v.ok ? "" : v.reason}`,
@@ -56,7 +56,7 @@ const apply = (state: PolicyState, ...actions: Action[]): PolicyState =>
 
 test("implementation waits for an approved spec", () => {
   const drafting = apply(fresh, dispatch("SPEC"));
-  assert.equal(check(drafting, dispatch("IMPLEMENT"), limits, repos).ok, false);
+  assert.equal(check(drafting, dispatch("IMPLEMENT"), repos).ok, false);
 
   const awaiting = apply(drafting, {
     type: "request_spec_approval",
@@ -64,7 +64,7 @@ test("implementation waits for an approved spec", () => {
     summary: "s",
   });
   assert.equal(awaiting.status, "waiting_human");
-  assert.equal(check(awaiting, dispatch("IMPLEMENT"), limits, repos).ok, false);
+  assert.equal(check(awaiting, dispatch("IMPLEMENT"), repos).ok, false);
 
   const approved = decideSpec(awaiting, true);
   assert.equal(apply(approved, dispatch("IMPLEMENT")).stage, "building");
@@ -80,7 +80,7 @@ test("rejected spec returns to drafting", () => {
 });
 
 test("review runs once and needs a PR", () => {
-  assert.equal(check(fresh, dispatch("REVIEW"), limits, repos).ok, false);
+  assert.equal(check(fresh, dispatch("REVIEW"), repos).ok, false);
   const reviewed = apply(
     fresh,
     dispatch("IMPLEMENT"),
@@ -88,7 +88,7 @@ test("review runs once and needs a PR", () => {
     dispatch("REVIEW"),
   );
   assert.equal(reviewed.reviewCount, 1);
-  assert.equal(check(reviewed, dispatch("REVIEW"), limits, repos).ok, false);
+  assert.equal(check(reviewed, dispatch("REVIEW"), repos).ok, false);
 });
 
 test("revisions after review go through follow_up and are capped", () => {
@@ -98,21 +98,58 @@ test("revisions after review go through follow_up and are capped", () => {
     { type: "record_refs", prUrl: "https://github.com/o/r/pull/1" },
     dispatch("REVIEW"),
   );
-  assert.equal(check(reviewed, dispatch("IMPLEMENT"), limits, repos).ok, false);
+  assert.equal(check(reviewed, dispatch("IMPLEMENT"), repos).ok, false);
   const twice = apply(reviewed, followUp("IMPLEMENT"), followUp("IMPLEMENT"));
   assert.equal(twice.revisionCount, 2);
-  assert.equal(check(twice, followUp("IMPLEMENT"), limits, repos).ok, false);
+  assert.equal(check(twice, followUp("IMPLEMENT"), repos).ok, false);
+});
+
+test("the review cap is the item's own", () => {
+  const reviewed = apply(
+    { ...fresh, maxReviews: 2 },
+    dispatch("IMPLEMENT"),
+    { type: "record_refs", prUrl: "https://github.com/o/r/pull/2" },
+    dispatch("REVIEW"),
+    dispatch("REVIEW"),
+  );
+  assert.equal(reviewed.reviewCount, 2);
+  const third = check(reviewed, dispatch("REVIEW"), repos);
+  assert.equal(third.ok, false);
+  assert.match(third.ok ? "" : third.reason, /the limit is 2/);
+});
+
+test("the revision cap is the item's own", () => {
+  const reviewed = apply(
+    { ...fresh, maxRevisions: 0 },
+    dispatch("IMPLEMENT"),
+    { type: "record_refs", prUrl: "https://github.com/o/r/pull/1" },
+    dispatch("REVIEW"),
+  );
+  const refused = check(reviewed, followUp("IMPLEMENT"), repos);
+  assert.equal(refused.ok, false);
+  assert.match(
+    refused.ok ? "" : refused.reason,
+    /Revision limit reached \(0\)/,
+  );
+  const raised = apply(
+    { ...reviewed, maxRevisions: 3 },
+    followUp("IMPLEMENT"),
+    followUp("IMPLEMENT"),
+    followUp("IMPLEMENT"),
+  );
+  assert.equal(raised.revisionCount, 3);
+  assert.equal(check(raised, followUp("IMPLEMENT"), repos).ok, false);
 });
 
 test("budget cap blocks new agent work but not communication", () => {
   const broke = { ...fresh, costUsd: 10 };
-  assert.equal(check(broke, dispatch("TRIAGE"), limits, repos).ok, false);
+  assert.equal(check(broke, dispatch("TRIAGE"), repos).ok, false);
   assert.equal(
-    check(broke, { type: "post_update", message: "m" }, limits, repos).ok,
+    check(broke, { type: "post_update", message: "m" }, repos).ok,
     true,
   );
   assert.equal(
-    check(broke, { type: "ask_human", question: "q" }, limits, repos).ok,
+    check(broke, { type: "ask_human", question: "q" }, repos).ok,
     true,
   );
 });
@@ -120,15 +157,10 @@ test("budget cap blocks new agent work but not communication", () => {
 test("budget checks use the work item's own budget", () => {
   const spent = { ...fresh, costUsd: 12 };
   assert.equal(
-    check({ ...spent, budgetUsd: 20 }, dispatch("TRIAGE"), limits, repos).ok,
+    check({ ...spent, budgetUsd: 20 }, dispatch("TRIAGE"), repos).ok,
     true,
   );
-  const capped = check(
-    { ...spent, budgetUsd: 12 },
-    followUp("TRIAGE"),
-    limits,
-    repos,
-  );
+  const capped = check({ ...spent, budgetUsd: 12 }, followUp("TRIAGE"), repos);
   assert.equal(capped.ok, false);
   assert.match(capped.ok ? "" : capped.reason, /\$12\.00 of \$12\.00/);
 });
@@ -136,7 +168,7 @@ test("budget checks use the work item's own budget", () => {
 test("the run limit refuses dispatches and follow-ups with a reason for the foreman", () => {
   const used = { ...fresh, stage: "building" as const, runCount: 30 };
   for (const action of [dispatch("TRIAGE"), followUp("IMPLEMENT")]) {
-    const refused = check(used, action, limits, repos);
+    const refused = check(used, action, repos);
     assert.equal(refused.ok, false);
     assert.equal(
       refused.ok ? "" : refused.reason,
@@ -147,13 +179,12 @@ test("the run limit refuses dispatches and follow-ups with a reason for the fore
   const pushOnly = check(
     { ...used, pushOnlyBranch: "b" },
     { ...followUp("IMPLEMENT"), pushOnly: true } as Action,
-    limits,
     repos,
   );
   assert.equal(pushOnly.ok, false);
   // Telling the user is not a run.
   assert.equal(
-    check(used, { type: "post_update", message: "m" }, limits, repos).ok,
+    check(used, { type: "post_update", message: "m" }, repos).ok,
     true,
   );
 });
@@ -164,7 +195,7 @@ test("each run a turn queues counts, so one turn cannot queue past the limit", (
   assert.equal(once.runCount, 29);
   const twice = apply(once, dispatch("SPEC"));
   assert.equal(twice.runCount, 30);
-  assert.equal(check(twice, dispatch("TRIAGE"), limits, repos).ok, false);
+  assert.equal(check(twice, dispatch("TRIAGE"), repos).ok, false);
 });
 
 test("retry is refused at the run limit", () => {
@@ -180,7 +211,7 @@ test("raise run limit adds one step and unblocks a run-stopped item", () => {
   assert.equal(raised.next.maxRuns, 30 + RUN_STEP);
   assert.equal(raised.unblocked, true);
   assert.equal(raised.next.status, "active");
-  assert.equal(check(raised.next, dispatch("TRIAGE"), limits, repos).ok, true);
+  assert.equal(check(raised.next, dispatch("TRIAGE"), repos).ok, true);
   assert.equal(raiseRunLimit({ ...used, stage: "cancelled" }).ok, false);
 });
 
@@ -214,7 +245,7 @@ test("completion requires the PR to be merged", () => {
   });
   assert.equal(handed.stage, "handoff");
   assert.equal(
-    check(handed, { type: "complete_task", summary: "s" }, limits, repos).ok,
+    check(handed, { type: "complete_task", summary: "s" }, repos).ok,
     false,
   );
   const merged = { ...handed, prMerged: true };
@@ -234,17 +265,17 @@ test("informational work without a PR can complete", () => {
 test("terminal items accept nothing", () => {
   const done = { ...fresh, stage: "complete" as const };
   assert.equal(
-    check(done, { type: "post_update", message: "m" }, limits, repos).ok,
+    check(done, { type: "post_update", message: "m" }, repos).ok,
     false,
   );
 });
 
 test("CI fixes before review use follow_up and consume the revision cap", () => {
   const failed = { ...fresh, ciFailed: true };
-  assert.equal(check(failed, dispatch("IMPLEMENT"), limits, repos).ok, false);
+  assert.equal(check(failed, dispatch("IMPLEMENT"), repos).ok, false);
   const twice = apply(failed, followUp("IMPLEMENT"), followUp("IMPLEMENT"));
   assert.equal(twice.revisionCount, 2);
-  assert.equal(check(twice, followUp("IMPLEMENT"), limits, repos).ok, false);
+  assert.equal(check(twice, followUp("IMPLEMENT"), repos).ok, false);
 });
 
 test("retry spends budget but leaves the review and revision counts alone", () => {
@@ -275,7 +306,7 @@ test("raise budget adds one step and unblocks a budget-stopped item", () => {
   assert.equal(raised.next.budgetUsd, 10 + BUDGET_STEP_USD);
   assert.equal(raised.unblocked, true);
   assert.equal(raised.next.status, "active");
-  assert.equal(check(raised.next, dispatch("TRIAGE"), limits, repos).ok, true);
+  assert.equal(check(raised.next, dispatch("TRIAGE"), repos).ok, true);
 });
 
 test("raise budget does not wake an item its budget was not stopping", () => {
@@ -347,7 +378,7 @@ test("URLs of the factory's own repositories are accepted", () => {
     ...urlActions("https://github.com/O/R/pull/12/").slice(2, 3),
   ];
   for (const [name, state, action] of accepted)
-    assert.equal(check(state, action, limits, repos).ok, true, name);
+    assert.equal(check(state, action, repos).ok, true, name);
 });
 
 for (const url of [
@@ -388,7 +419,7 @@ for (const url of [
 ]) {
   test(`Policy refuses the Foreman URL ${JSON.stringify(url)}`, () => {
     for (const [name, state, action] of urlActions(url)) {
-      const v = check(state, action, limits, repos);
+      const v = check(state, action, repos);
       assert.equal(v.ok, false, name);
       if (!v.ok) assert.match(v.reason, /not on one of this factory/, name);
     }
@@ -397,17 +428,17 @@ for (const url of [
 
 test("an issue URL is not a pull request URL, and the reverse", () => {
   const issue = urlActions("https://github.com/o/r/issues/1");
-  assert.equal(check(fresh, pick(issue, 1), limits, repos).ok, false);
+  assert.equal(check(fresh, pick(issue, 1), repos).ok, false);
   const pull = urlActions("https://github.com/o/r/pull/1");
-  assert.equal(check(fresh, pick(pull, 3), limits, repos).ok, false);
+  assert.equal(check(fresh, pick(pull, 3), repos).ok, false);
 });
 
 test("a factory with no repositories accepts no Foreman URL", () => {
   const pull = urlActions("https://github.com/o/r/pull/1");
-  assert.equal(check(fresh, pick(pull, 1), limits, []).ok, false);
+  assert.equal(check(fresh, pick(pull, 1), []).ok, false);
 });
 
 test("the foreman cannot dispatch or follow up a reflect agent", () => {
-  assert.equal(check(fresh, dispatch("REFLECT"), limits, repos).ok, false);
-  assert.equal(check(fresh, followUp("REFLECT"), limits, repos).ok, false);
+  assert.equal(check(fresh, dispatch("REFLECT"), repos).ok, false);
+  assert.equal(check(fresh, followUp("REFLECT"), repos).ok, false);
 });

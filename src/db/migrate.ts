@@ -19,12 +19,17 @@ import { runLimits } from "./migrations/011-run-limits.ts";
 import { requestEdited } from "./migrations/012-request-edited.ts";
 import { learnings } from "./migrations/013-learnings.ts";
 import { lessonRecurrences } from "./migrations/014-lesson-recurrences.ts";
+import { factorySettings } from "./migrations/015-factory-settings.ts";
 
 export interface MigrationContext {
   /** The budget of items that predate per-item budgets. */
   defaultBudgetUsd: number;
   /** The run limit of items that predate per-item run limits; DEFAULT_MAX_RUNS when omitted. */
   defaultMaxRuns?: number | undefined;
+  /** The review limit of items that predate per-item review limits; DEFAULT_MAX_REVIEWS when omitted. */
+  defaultMaxReviews?: number | undefined;
+  /** The revision limit of items that predate per-item revision limits; DEFAULT_MAX_REVISIONS when omitted. */
+  defaultMaxRevisions?: number | undefined;
   /** Names the first factory (migration 005); called only by that migration. */
   factory?: (() => FactorySeed) | undefined;
 }
@@ -57,6 +62,7 @@ export const MIGRATIONS: readonly Migration[] = [
   requestEdited,
   learnings,
   lessonRecurrences,
+  factorySettings,
 ];
 
 export const schemaVersion = (db: DatabaseSync): number =>

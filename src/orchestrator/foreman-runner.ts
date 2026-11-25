@@ -237,7 +237,6 @@ export class ForemanRunner {
       foreman: def.foreman.name,
       // This turn's own run is counted when it starts, below.
       policy: { ...policyFor(this.store, item), runCount: item.run_count + 1 },
-      limits: this.config.limits,
       repositories: factoryRepositories(def),
       agents: [...def.agents.values()]
         .filter((a) => a.type !== "FOREMAN")
@@ -257,15 +256,14 @@ export class ForemanRunner {
     };
     await writeInternal(
       systemPromptFile,
-      foremanSystemPrompt(def, ws, this.config.limits) +
-        def.foreman.instructions,
+      foremanSystemPrompt(def, ws, snapshot.policy) + def.foreman.instructions,
     );
     await writeInternal(statePath, JSON.stringify(snapshot));
     await writeInternal(actionsPath, "");
 
     const prompt = [
       ...events.map((e) => renderEvent(e, item, def)),
-      renderState(item, runs, this.config.limits),
+      renderState(item, runs),
     ].join("\n\n");
     // Shutting down: the events stay pending for the turn after the restart.
     if (this.control.interrupting) return;

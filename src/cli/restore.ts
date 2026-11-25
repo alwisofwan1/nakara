@@ -48,6 +48,8 @@ if (unreadable)
 const store = new Store(config.dbPath, {
   defaultBudgetUsd: config.limits.budgetUsd,
   defaultMaxRuns: config.limits.maxRuns,
+  defaultMaxReviews: config.limits.maxReviews,
+  defaultMaxRevisions: config.limits.maxRevisions,
   backup: config.backup,
   lock,
   // A snapshot from before the factory registry migrates like a normal start.

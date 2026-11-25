@@ -52,6 +52,7 @@ import {
   pullRequestDto,
 } from "./pull-request.ts";
 import {
+  limitsInput,
   moveInput,
   readFactories,
   readFactorySettings,
@@ -226,6 +227,7 @@ const automationEditBody = jsonBody(automationEditInput, "Invalid automation");
 const creationBody = jsonBody(creationInput, "Invalid factory");
 const renameBody = jsonBody(renameInput, "Invalid factory settings");
 const moveBody = jsonBody(moveInput, "Invalid folder");
+const limitsBody = jsonBody(limitsInput, "Invalid limits");
 const creationParam = validator("param", (value, c) => {
   const id = z.uuid().safeParse(value.id);
   if (!id.success)
@@ -568,7 +570,7 @@ function createFactoryApi(
         const { factory } = c.var;
         const managed = factory.record?.definition_mode === "managed";
         const dto = readFactorySettings(
-          store.repos.factories,
+          store.repos,
           c.req.param("slug") ?? "",
           {
             repositories: (factory.definition?.factory.repositories ?? []).map(
@@ -595,6 +597,15 @@ function createFactoryApi(
         if (!result.ok) return c.json(apiError("policy", result.message), 409);
         return c.json({ slug: c.req.param("slug") ?? "" }, 200);
       })
+      // Budget, review, revision and run limits for the factory's new Work
+      // Items; items already created keep the limits they copied (ADR-0006).
+      .put("/settings/limits", limitsBody, (c) => {
+        const id = c.var.factory.record?.id;
+        if (id === undefined)
+          return c.json(apiError("not_found", "Factory not found"), 404);
+        store.repos.factorySettings.saveLimits(id, c.req.valid("json"));
+        return c.json(store.repos.factorySettings.settings(id), 200);
+      })
       // Refused for the default factory and while it has active items or runs;
       // the database is snapshotted first.
       .delete("/", async (c) => {
@@ -618,7 +629,13 @@ function createFactoryApi(
         return c.json({ dir: result.dir, archive: result.archive }, 200);
       })
       .get("/new-work", (c) =>
-        c.json(readNewWorkOptions(store, c.var.factory.definition)),
+        c.json(
+          readNewWorkOptions(
+            store,
+            c.var.factory.definition,
+            c.var.factory.record?.id,
+          ),
+        ),
       )
       .post(
         "/items",
@@ -901,7 +918,7 @@ export function createApi(
       );
     })
     .get("/items/:id", itemParam, (c) => {
-      const dto = readItem(store, c.req.valid("param").id, config.limits);
+      const dto = readItem(store, c.req.valid("param").id);
       if (!dto)
         return c.json(apiError("not_found", "Work item not found"), 404);
       return c.json(dto, 200);
@@ -1152,7 +1169,6 @@ export function createApi(
         : null;
       const definition = orchestrator(run.item_id).definition;
       const dto = readRun(store, id, {
-        limits: config.limits,
         workDir: config.workDir,
         systemPrompt,
         agent: (name) => {

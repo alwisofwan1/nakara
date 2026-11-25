@@ -170,6 +170,8 @@ const writes: Record<
         budgetUsd: 15,
         runCount: 0,
         maxRuns: 50,
+        maxReviews: 1,
+        maxRevisions: 2,
         prUrl: null,
         prMerged: false,
       }),

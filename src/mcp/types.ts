@@ -1,14 +1,8 @@
-import type {
-  Action,
-  AgentType,
-  Limits,
-  PolicyState,
-} from "../domain/policy.ts";
+import type { Action, AgentType, PolicyState } from "../domain/policy.ts";
 
 export interface TurnSnapshot {
   foreman: string;
   policy: PolicyState;
-  limits: Limits;
   /** The Factory's `owner/name` repositories: Foreman URLs must belong to them. */
   repositories: string[];
   agents: {
