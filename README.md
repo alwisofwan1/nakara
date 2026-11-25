@@ -11,7 +11,7 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
 ## How it works
 
 ```
- web form ─┐                                    ┌─► triage   (qwen)
+ web form ─┐                                    ┌─► triage   (claude haiku)
  GitHub    ├─► work item ─► event ─► foreman ───┼─► spec     (claude opus) ─► inbox: approve spec
  label     ┘                        turn        ├─► implement(claude opus) ─► draft PR
                                        ▲        └─► review   (claude opus) ─► findings

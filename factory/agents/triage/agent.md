@@ -2,7 +2,8 @@
 description: Triages requests and establishes task state.
 agentType: TRIAGE
 harness:
-  type: qwen
+  type: claude
+  model: haiku
 ---
 # Triage
 

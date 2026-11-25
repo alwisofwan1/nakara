@@ -31,7 +31,7 @@ test("the bundled factory definition loads", async () => {
   );
   assert.ok(result.ok, JSON.stringify(!result.ok && result.errors));
   assert.equal(result.definition.foreman.name, "foreman");
-  assert.equal(result.definition.agents.get("triage")?.harness.kind, "qwen");
+  assert.equal(result.definition.agents.get("triage")?.harness.kind, "claude");
   assert.equal(result.definition.label, "factory:Nakara");
 });
 
