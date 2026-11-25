@@ -1,0 +1,17 @@
+# The sandbox is the trust boundary, and the foreman runs inside it
+
+Every **Agent**, the **Foreman** included, reads untrusted text (issue bodies, PR comments, repository files) and is treated as prompt-injectable, so its limits come from what it can technically reach, not from its instructions. Everything a sandboxed **Run** can write (its item directory, its clones, its harness home) is hostile to the host: the host never runs git, a harness or a hook against it, and never follows a symlink in it, except through the isolated readers in `src/runner/snapshot.ts` and `head.ts`, and the one-time startup migration in `src/runner/migrate.ts`, which reads a pre-upgrade cache only as the alternate object directory of a repository Nakara owns (its config and hooks never run; it refuses a cache whose `objects` is not a directory or that names further alternates). Concretely: each **Work Item** gets its own clone (`git clone --reference` to a private cache that is mounted read-only and never touched by host git in agent-writable form); Nakara's internal files (prompts, logs, recorded actions) live outside every agent mount and are written without following symlinks; harnesses get an allow-listed environment, not `process.env`; codex gets a per-run `CODEX_HOME` with only `auth.json` copied back; and foreman-supplied issue/PR URLs must point at the **Factory**'s own repositories.
+
+The foreman runs in a sandbox container like the other agents, which is how Warp Factories place it (`docs/research/warp-factory-foreman-isolation.md`). Its power stays on the host side: the `nakara` MCP server runs in the container but only appends to a foreman-only actions file, and the host re-checks every action against **Policy**. It reads GitHub with a dedicated read-only token (`NAKARA_FOREMAN_GH_TOKEN`; falling back to the agent token with a warning), and its definition's MCP servers run in the container under the runner's egress allowlist.
+
+## Considered Options
+
+- **Keep the foreman on the host with tighter flags** (cwd outside the mount, `--setting-sources user`, path-scoped `Read`, no `git`): rejected because the foreman still reads agent-written worktrees on the host, where a planted symlink reaches the operator's home, and it keeps the operator's full network and `gh` identity. Warp likewise refuses unmanaged host execution as a factory host.
+- **Sanitise the shared bare clones** before each host git command: rejected because containers of other items can rewrite them between the sanitise and the command.
+
+## Consequences
+
+- The `local` **Runner** remains "not a sandbox" and applies only to non-foreman agents; it is not hardened.
+- With no runner image or no Docker, the foreman refuses to run (the item is paused) unless the operator sets `NAKARA_ALLOW_HOST_FOREMAN=1`, which runs it on the host with a warning in the UI and `/healthz`.
+- Each foreman turn pays a container start (~1–2 s); a warm pool is deferred until that latency matters.
+- Existing item directories are migrated to the per-item clone and outside-the-mount layout at startup. Git still parses the old cache's object files during that migration, so a symlink planted under its `objects` could make git read a host file as an object; the result is at most an unparsable object or one copied into that same item's clone, never code run on the host. The old caches are kept in `repos.old` until the **Operator** deletes them.

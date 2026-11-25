@@ -1,0 +1,30 @@
+description: >-
+  Docker runner with a browser: the docker runner plus playwright-cli and
+  Chromium, so an agent can run the app, drive it and screenshot it. Build the
+  image after nakara-agent with
+  `docker build -t nakara-agent-browser -f deploy/agent-browser.Dockerfile deploy`.
+# Enforced as container limits (--cpus, --memory); Chromium needs the memory.
+instanceShape:
+  vcpus: 2
+  memoryGb: 4
+platform:
+  os: linux
+  arch: x86_64
+  linux:
+    dockerImage: nakara-agent-browser
+# Nakara extension: the only hosts containers can reach, through an
+# allowlisting proxy on an internal Docker network. `*.example.com` matches
+# subdomains. Add your model gateway here for codex or qwen.
+egress:
+  allow:
+    - api.anthropic.com
+    - statsig.anthropic.com
+    - github.com
+    - "*.github.com"
+    - "*.githubusercontent.com"
+    - registry.npmjs.org
+    # Codex signed in with ChatGPT (the review agent): its API and token refresh.
+    - chatgpt.com
+    - auth.openai.com
+setupCommands:
+  - if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; fi

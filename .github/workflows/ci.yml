@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # The same script runs locally; see "Development checks" in README.md.
+      - run: npm run ci
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: web-smoke-proof
+          path: test-results/
+          if-no-files-found: error
+          # Every run uploads screenshots; the repository's storage quota fills otherwise.
+          retention-days: 7

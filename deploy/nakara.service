@@ -1,0 +1,33 @@
+# systemd user unit. Install:
+#   mkdir -p ~/.config/systemd/user && cp deploy/nakara.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable nakara
+#   loginctl enable-linger $USER   # keep running after logout
+#   scripts/deploy.sh              # build a release, switch to it, (re)start
+# Deploy every later change with scripts/deploy.sh too. The unit never builds,
+# so a restart (Restart=on-failure included) only starts the built release.
+[Unit]
+Description=Nakara software factory
+After=network-online.target
+
+[Service]
+# The live release from scripts/deploy.sh, with its dist/web.
+WorkingDirectory=%h/.local/share/nakara/releases/current
+# mise puts node, gh and claude on PATH for the service.
+ExecStart=%h/.local/bin/mise exec -- node src/main.ts
+# The definition stays in the checkout: edits from the UI must outlive a release.
+Environment=NAKARA_DEFINITION_DIR=%h/workspace/nakara/factory
+Environment=NAKARA_BASE_PATH=/proxy/7788
+# systemd's default PATH lacks ~/.local/bin, where claude lives.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# CLAUDE_CODE_OAUTH_TOKEN=... for the Docker runner (claude setup-token).
+EnvironmentFile=-%h/.config/nakara/env
+Restart=on-failure
+RestartSec=5
+# SIGTERM goes to Nakara only, not to the agents it runs: Nakara drains them
+# (NAKARA_DRAIN_SECONDS, default 600) and stops what is left itself.
+KillMode=mixed
+# Above the drain, plus time for agents to exit and the web server to close.
+TimeoutStopSec=630
+
+[Install]
+WantedBy=default.target

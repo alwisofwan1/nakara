@@ -1,0 +1,30 @@
+description: >-
+  Docker runner: each agent turn runs in a throwaway container that sees only
+  the item's worktrees. Build the image with
+  `docker build -t nakara-agent -f deploy/agent.Dockerfile deploy`.
+  The foreman runs in a container too, with only its own turn directory writable.
+# Enforced as container limits (--cpus, --memory). Two agents can run at once.
+instanceShape:
+  vcpus: 2
+  memoryGb: 4
+platform:
+  os: linux
+  arch: x86_64
+  linux:
+    dockerImage: nakara-agent
+# Nakara extension: the only hosts containers can reach, through an
+# allowlisting proxy on an internal Docker network. `*.example.com` matches
+# subdomains. Add your model gateway here for codex or qwen.
+egress:
+  allow:
+    - api.anthropic.com
+    - statsig.anthropic.com
+    - github.com
+    - "*.github.com"
+    - "*.githubusercontent.com"
+    - registry.npmjs.org
+    # Codex signed in with ChatGPT (the review agent): its API and token refresh.
+    - chatgpt.com
+    - auth.openai.com
+setupCommands:
+  - if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; fi

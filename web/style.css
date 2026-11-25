@@ -1,0 +1,1005 @@
+@import "tailwindcss";
+@theme {
+  --color-*: initial;
+  --spacing: initial;
+  --spacing-*: initial;
+  --radius-*: initial;
+  --color-bg: #ffffff;
+  --color-sidebar: #f4f4f3;
+  --color-surface-muted: #f2f2f1;
+  --color-line: #e6e5e2;
+  --color-text: #1a1a19;
+  --color-muted: #74736e;
+  --color-accent: #6d4aff;
+  --color-accent-soft: #efebff;
+  --color-building: #2563eb;
+  --color-building-soft: #eff4ff;
+  --color-reviewing: #c0267a;
+  --color-reviewing-soft: #fceef5;
+  --color-handoff: #15803d;
+  --color-handoff-soft: #ecf7ef;
+  --color-attention: #b45309;
+  --color-attention-soft: #fdf3e7;
+  --color-nav-active: #e4e3e0;
+  --color-bad: #b91c1c;
+  --color-bad-bg: #fdecec;
+  --color-bad-line: #f3c4c4;
+  /* Run log terminal, from the Run Detail mockup. */
+  --color-log-bg: #1a1a19;
+  --color-log-text: #d6d5d1;
+  --color-log-muted: #8e8d88;
+  --color-log-tool: #93c5fd;
+  --color-log-bad: #fca5a5;
+
+  /* Named dimensions taken from the existing shell. No numeric spacing scale. */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --spacing-xxl: 32px;
+  --spacing-sidebar: 240px;
+  --spacing-drawer: 300px;
+  --spacing-header: 64px;
+  --spacing-content: 1200px;
+  --spacing-icon: 14px;
+  --spacing-dot: 7px;
+  --spacing-key: 200px;
+  --spacing-files: 360px;
+  --spacing-toast: 360px;
+  --spacing-tile: 28px;
+  --spacing-empty-icon: 48px;
+  --spacing-title: 240px;
+  --spacing-cost: 48px;
+  --spacing-age: 32px;
+  --radius-logo: 6px;
+  --radius-avatar: 5px;
+  --spacing-avatar: 20px;
+  --radius-control: 8px;
+  --radius-chip: 12px;
+  --spacing-aside: 340px;
+  --spacing-log: 560px;
+  --spacing-panel: 320px;
+  --spacing-modal: 640px;
+  --spacing-pane: 360px;
+  --spacing-inbox-pane: 460px;
+  --radius-modal: 14px;
+  --text-body: 15px;
+  --text-small: 13px;
+  --text-tiny: 11px;
+  --text-title: 18px;
+  --text-heading: 22px;
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@layer base {
+  body {
+    margin: 0;
+    @apply bg-bg font-sans text-body text-text;
+    line-height: 1.5;
+  }
+  a:focus-visible,
+  button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+  }
+  button {
+    cursor: pointer;
+  }
+}
+@layer components {
+  .shell {
+    display: grid;
+    grid-template-columns: var(--spacing-sidebar) minmax(0, 1fr);
+    min-height: 100dvh;
+  }
+  .sidebar {
+    @apply flex flex-col gap-xl border-line border-r bg-sidebar px-md py-lg;
+    height: 100dvh;
+    overflow-y: auto;
+  }
+  .desktop-sidebar {
+    position: sticky;
+    top: 0;
+  }
+  .brand {
+    @apply flex items-center gap-sm px-sm py-xs font-semibold text-text;
+  }
+  .logo {
+    @apply h-xl w-xl rounded-logo bg-text p-xs text-bg;
+  }
+  .sidebar nav {
+    @apply flex flex-col gap-xs;
+  }
+  .nav-link {
+    @apply flex items-center gap-sm rounded-control px-md py-sm text-small text-text;
+  }
+  .nav-link:hover {
+    @apply bg-surface-muted;
+  }
+  .nav-link[aria-current] {
+    @apply bg-nav-active font-semibold;
+  }
+  .nav-heading {
+    @apply mb-sm flex items-center justify-between pl-md text-muted text-tiny;
+  }
+  .factory-name {
+    @apply flex items-center gap-sm px-md py-xs font-semibold text-small;
+    overflow-wrap: anywhere;
+  }
+  .factory-avatar {
+    @apply flex h-avatar w-avatar shrink-0 items-center justify-center rounded-avatar bg-accent font-bold text-bg text-tiny;
+  }
+  .sidebar nav .factory-pages {
+    @apply mb-sm pl-lg;
+  }
+  .badge {
+    @apply ml-auto rounded-control bg-attention px-sm text-bg text-tiny;
+  }
+  .sidebar-footer {
+    @apply mt-auto grid gap-sm border-line border-t px-sm pt-lg text-muted text-tiny;
+  }
+  .workspace {
+    min-width: 0;
+  }
+  .page-header {
+    @apply flex min-h-header flex-wrap items-center gap-md border-line border-b px-xl py-md;
+  }
+  .breadcrumb {
+    @apply flex flex-wrap gap-sm text-small;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .breadcrumb a {
+    @apply text-muted;
+  }
+  .new-work {
+    @apply ml-auto rounded-control bg-text px-md py-xs font-semibold text-bg text-small;
+  }
+  main {
+    @apply mx-auto max-w-content px-xxl py-xl;
+    overflow-wrap: anywhere;
+  }
+  .ghost {
+    @apply rounded-control border border-line px-md py-sm text-small text-text;
+  }
+  .ghost:disabled,
+  .primary:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+  .primary {
+    @apply rounded-control border border-text bg-text px-md py-sm font-semibold text-bg text-small;
+  }
+  .icon {
+    @apply h-icon w-icon shrink-0;
+    margin-top: 0.2em;
+  }
+  .menu-button {
+    display: none;
+  }
+  .box {
+    @apply rounded-control border border-line;
+  }
+  .box-row {
+    @apply flex items-start gap-md border-line border-t px-lg py-md text-small;
+  }
+  .box > .box-row:first-child {
+    @apply border-t-0 text-body;
+  }
+  .box ul {
+    @apply border-line border-t;
+  }
+  .file {
+    @apply border-t-0 py-xs;
+  }
+  .file.depth-1 {
+    @apply pl-xxl;
+  }
+  .file.broken {
+    @apply text-bad;
+  }
+  .definition-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--spacing-files);
+    @apply items-start gap-lg;
+  }
+  .repo-slug {
+    @apply w-key shrink-0 font-semibold;
+  }
+  .repo-status {
+    @apply flex flex-1 items-center gap-sm text-muted;
+    min-width: 0;
+  }
+  .repo-status .dot {
+    @apply h-dot w-dot shrink-0 bg-muted;
+    border-radius: 50%;
+  }
+  .repo-status.cloned .dot {
+    @apply bg-handoff;
+  }
+  .repo-status.error {
+    @apply text-bad;
+  }
+  .repo-status.error .dot {
+    @apply bg-bad;
+  }
+  .banner {
+    @apply grid gap-sm rounded-control border px-lg py-md text-small;
+  }
+  .banner.bad {
+    @apply border-bad-line bg-bad-bg text-bad;
+  }
+  .banner.ok {
+    @apply border-line bg-handoff-soft text-handoff;
+  }
+  .problem {
+    @apply pl-xl;
+  }
+  .toast-viewport {
+    @apply fixed z-10 grid w-toast max-w-full list-none gap-sm p-lg;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+  }
+  .toast {
+    @apply relative grid gap-xs rounded-control border border-line bg-bg py-md pr-xxl pl-lg text-small;
+    border-left-width: 4px;
+    box-shadow: 0 4px 16px
+      color-mix(in srgb, var(--color-text) 15%, transparent);
+  }
+  .toast.ok {
+    @apply border-l-handoff;
+  }
+  .toast.bad {
+    @apply border-l-bad;
+  }
+  .toast-close {
+    @apply absolute top-sm right-sm px-sm text-muted;
+  }
+  .filter-button {
+    @apply flex items-center gap-sm rounded-control border border-line px-md py-xs text-small text-text;
+  }
+  .filter-button[aria-pressed="true"],
+  .filter-button[data-state="open"] {
+    @apply bg-nav-active;
+  }
+  .menu {
+    @apply grid min-w-drawer rounded-control border border-line bg-bg p-xs text-small;
+  }
+  .menu-item {
+    @apply cursor-pointer rounded-control px-md py-sm outline-none;
+  }
+  .menu-item[data-highlighted] {
+    @apply bg-surface-muted;
+  }
+  .menu-item[data-state="checked"] {
+    @apply font-semibold;
+  }
+  .model-picker {
+    @apply absolute z-10 mt-xs grid w-full rounded-control border border-line bg-bg text-small;
+    max-width: 28rem;
+  }
+  .model-picker-list {
+    @apply grid overflow-y-auto p-xs;
+    max-height: 18rem;
+  }
+  .model-option {
+    @apply flex items-center justify-between gap-sm rounded-control px-md py-sm text-left;
+  }
+  .model-option:hover,
+  .model-option:focus-visible {
+    @apply bg-surface-muted;
+  }
+  .effort-option {
+    @apply rounded-control px-sm py-xs text-muted;
+  }
+  .effort-option[aria-pressed="true"] {
+    @apply bg-surface-muted font-semibold text-text;
+  }
+  /* Outcome tiles on Activity: as many columns as fit, hairlines between. */
+  .outcomes {
+    @apply grid overflow-hidden rounded-control border border-line bg-line;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    margin: 0;
+  }
+  .outcomes > div {
+    @apply grid gap-xs bg-bg px-lg py-md;
+  }
+  .outcomes dd {
+    margin: 0;
+  }
+  .chip {
+    @apply inline-flex items-center gap-xs whitespace-nowrap rounded-chip px-sm text-small;
+  }
+  .ghost:disabled {
+    @apply text-muted;
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .run-meta {
+    @apply grid rounded-control border border-line;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .run-meta > div {
+    @apply border-line border-r px-md py-sm;
+  }
+  .run-meta > div:last-child {
+    border-right: 0;
+  }
+  .run-body {
+    @apply grid items-start gap-xl;
+    grid-template-columns: minmax(0, 1fr) var(--spacing-aside);
+  }
+  .item-body {
+    @apply grid items-start gap-xl;
+    grid-template-columns: minmax(0, 1fr) var(--spacing-panel);
+  }
+  .item-properties {
+    @apply flex flex-col gap-xl border-line border-l pl-xl;
+  }
+  .stage-progress {
+    @apply grid gap-xs;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+  .tab {
+    @apply rounded-control px-md py-xs font-semibold text-muted text-small;
+  }
+  .tab[data-state="active"] {
+    @apply bg-surface-muted text-text;
+  }
+  .primary {
+    @apply rounded-control bg-text px-md py-sm font-semibold text-bg text-small;
+  }
+  .primary:disabled {
+    @apply bg-muted;
+    cursor: not-allowed;
+  }
+  .danger {
+    @apply inline-flex items-center gap-xs rounded-control border border-bad-line bg-bg px-md py-sm font-semibold text-bad text-small;
+  }
+  .danger:disabled {
+    @apply text-muted border-line;
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .danger-solid {
+    @apply rounded-control border border-bad bg-bad px-md py-sm font-semibold text-bg text-small;
+  }
+  .danger-solid:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--color-text) 40%, transparent);
+  }
+  .modal {
+    @apply rounded-modal border border-line bg-bg;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(var(--spacing-modal), calc(100vw - 2 * var(--spacing-lg)));
+    max-height: calc(100dvh - 2 * var(--spacing-lg));
+    overflow-y: auto;
+  }
+  .modal-head {
+    @apply flex items-center justify-between border-line border-b px-xl py-lg;
+  }
+  .icon-button {
+    @apply rounded-control px-sm text-muted;
+  }
+  .modal-body {
+    @apply grid gap-lg p-xl;
+  }
+  .modal-foot {
+    @apply flex flex-wrap items-center justify-between gap-md border-line border-t px-xl py-md;
+  }
+  .field {
+    @apply grid gap-xs;
+    min-width: 0;
+  }
+  .field-label {
+    @apply flex items-baseline gap-sm font-semibold text-small;
+  }
+  .field-hint {
+    @apply font-normal text-muted text-small;
+  }
+  .field-row {
+    @apply grid grid-cols-2 gap-md;
+  }
+  .input {
+    @apply w-full rounded-control border border-line bg-bg px-md py-sm font-sans text-body text-text;
+  }
+  .input:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+  .input:disabled {
+    @apply bg-surface-muted;
+  }
+  .import-issue {
+    @apply grid gap-sm rounded-control bg-surface-muted px-md py-md;
+  }
+  .shell-alert {
+    @apply mb-lg rounded-control border border-bad-line bg-bad-bg px-md py-sm text-bad text-small;
+  }
+  .shell-alert a {
+    @apply underline;
+  }
+  .form-error {
+    margin: 0;
+    @apply rounded-control border border-bad-line bg-bad-bg px-md py-sm text-bad text-small;
+  }
+  .menu-overlay {
+    position: fixed;
+    inset: 0;
+    background: color-mix(in srgb, var(--color-text) 35%, transparent);
+  }
+  .mobile-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(var(--spacing-drawer), 90vw);
+  }
+  .close-menu {
+    align-self: flex-end;
+  }
+  @media (max-width: 700px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .desktop-sidebar {
+      display: none;
+    }
+    .menu-button {
+      display: inline-flex;
+    }
+    .page-header {
+      @apply px-lg;
+    }
+    main {
+      @apply px-lg;
+    }
+    .definition-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .repo-slug {
+      @apply w-auto;
+    }
+    .repo-status {
+      flex-basis: 100%;
+    }
+    .box-row .w-key {
+      @apply w-auto;
+    }
+    .box-row:has(.w-key) {
+      @apply flex-wrap gap-xs;
+    }
+    .run-meta {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .run-meta > div {
+      @apply border-b;
+    }
+    .run-meta > div:nth-child(2n) {
+      border-right: 0;
+    }
+    .run-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .item-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .item-properties {
+      @apply border-t border-l-0 pt-xl;
+      padding-left: 0;
+    }
+    .stage-progress {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      row-gap: var(--spacing-md);
+    }
+    .field-row {
+      @apply grid-cols-1;
+    }
+  }
+}
+
+@layer components {
+  .blueprint-scroll {
+    min-width: 0;
+    flex: 1;
+    overflow-x: auto;
+  }
+  .blueprint-canvas {
+    position: relative;
+    margin-inline: auto;
+  }
+  .blueprint-canvas svg {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+  }
+  .blueprint-edge {
+    fill: none;
+    stroke: var(--color-line);
+    stroke-width: 1.5;
+  }
+  .blueprint-edge[data-designed="false"] {
+    stroke-dasharray: 4 4;
+  }
+  [data-state="used"] .blueprint-edge {
+    stroke: var(--color-muted);
+  }
+  [data-state="selected"] .blueprint-edge {
+    stroke: var(--color-accent);
+    stroke-width: 2;
+  }
+  [data-state="faded"] {
+    opacity: 0.35;
+  }
+  .blueprint-arrow {
+    fill: var(--color-muted);
+  }
+  .blueprint-count {
+    fill: var(--color-muted);
+    @apply text-tiny;
+  }
+  .blueprint-node {
+    position: absolute;
+    display: grid;
+    align-content: center;
+    @apply gap-xs rounded-control border border-line bg-bg px-md text-small;
+    text-align: left;
+  }
+  .blueprint-node[aria-pressed="true"] {
+    @apply border-accent bg-accent-soft;
+  }
+  .blueprint-table {
+    width: 100%;
+    border-collapse: collapse;
+    @apply text-small;
+  }
+  .blueprint-table th {
+    @apply font-semibold text-muted text-tiny;
+    text-align: left;
+  }
+  .blueprint-table td,
+  .blueprint-table th {
+    @apply py-xs;
+  }
+  .blueprint-table tr[aria-current] {
+    @apply bg-accent-soft;
+  }
+  .automations-layout {
+    @apply flex items-start gap-xl;
+  }
+  .automation-table-wrap {
+    min-width: 0;
+    flex: 1;
+    @apply rounded-control border border-line;
+  }
+  .automation-table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow-wrap: normal;
+    @apply text-small;
+  }
+  .automation-table th {
+    @apply bg-surface-muted font-semibold text-muted;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .automation-table th,
+  .automation-table td {
+    @apply border-line border-b px-lg py-md;
+    vertical-align: top;
+  }
+  .automation-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .automation-table tbody tr {
+    cursor: pointer;
+  }
+  .automation-table tbody tr:hover,
+  .automation-table tr[data-selected="true"] {
+    @apply bg-accent-soft;
+  }
+  .automation-when {
+    white-space: nowrap;
+  }
+  .automation-name {
+    @apply text-left font-semibold;
+    overflow-wrap: anywhere;
+  }
+  .automation-description {
+    @apply mt-xs text-muted;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .trigger-chip {
+    @apply rounded-control bg-surface-muted px-sm py-xs text-tiny;
+    white-space: nowrap;
+  }
+  .automation-switch {
+    appearance: none;
+    display: block;
+    position: relative;
+    @apply h-lg w-xxl bg-muted;
+    border-radius: var(--spacing-lg);
+  }
+  .automation-switch:checked {
+    @apply bg-accent;
+  }
+  .automation-switch:enabled {
+    cursor: pointer;
+  }
+  .automation-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .automation-switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    @apply h-md w-md bg-bg;
+    border-radius: 50%;
+  }
+  .automation-switch:checked::after {
+    left: calc(var(--spacing-xxl) - var(--spacing-md) - 2px);
+  }
+  .automation-pane {
+    @apply grid gap-xl rounded-control border border-line bg-bg p-lg;
+    width: var(--spacing-pane);
+    flex-shrink: 0;
+    max-height: calc(100dvh - var(--spacing-header) - var(--spacing-xxl));
+    overflow-y: auto;
+    position: sticky;
+    top: calc(var(--spacing-header) + var(--spacing-lg));
+  }
+  .pane-heading {
+    @apply mb-sm font-semibold text-muted text-tiny;
+    text-transform: uppercase;
+  }
+  .automation-settings {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    @apply gap-sm text-small;
+  }
+  .automation-settings dt {
+    @apply text-muted;
+  }
+  @media (max-width: 1100px) {
+    .automations-layout {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .automation-pane {
+      width: auto;
+      position: static;
+      max-height: none;
+    }
+  }
+  /* Stacked rows: each automation becomes a card with labelled cells. */
+  @media (max-width: 700px) {
+    .automation-table thead {
+      display: none;
+    }
+    .automation-table tbody tr {
+      @apply grid gap-sm border-line border-b px-lg py-md;
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .automation-table tbody tr:last-child {
+      border-bottom: 0;
+    }
+    .automation-table td {
+      padding: 0;
+      border: 0;
+    }
+    .automation-table td:last-child {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .automation-table td:nth-child(2),
+    .automation-table td:nth-child(3),
+    .automation-table td:nth-child(4) {
+      grid-column: 1 / -1;
+    }
+    .automation-table td[data-label]::before {
+      content: attr(data-label) " · ";
+      @apply text-muted;
+    }
+    .automation-when {
+      white-space: normal;
+    }
+  }
+}
+
+@layer components {
+  .agent-tree {
+    @apply grid gap-lg;
+  }
+  .agent-card {
+    @apply flex items-center gap-lg rounded-control border border-line bg-bg p-lg;
+  }
+  .agent-card:hover {
+    @apply bg-surface-muted;
+  }
+  .agent-name {
+    flex: 1;
+    min-width: 0;
+  }
+  /* Catch-all tile colour for triage, verify and custom agents. */
+  .agent-tile {
+    @apply flex h-xxl w-xxl shrink-0 items-center justify-center rounded-control bg-handoff-soft text-handoff;
+  }
+  .agent-foreman {
+    @apply bg-accent-soft text-accent;
+  }
+  .agent-implement {
+    @apply bg-building-soft text-building;
+  }
+  .agent-spec {
+    @apply bg-attention-soft text-attention;
+  }
+  .agent-review {
+    @apply bg-reviewing-soft text-reviewing;
+  }
+  .agent-chip {
+    @apply inline-block rounded-control bg-surface-muted px-sm py-xs text-tiny;
+  }
+  .agent-child {
+    @apply ml-xxl;
+    position: relative;
+  }
+  .agent-child::before {
+    content: "";
+    position: absolute;
+    left: calc(-1 * var(--spacing-lg));
+    top: calc(-1 * var(--spacing-lg));
+    bottom: 50%;
+    width: var(--spacing-lg);
+    border-left: 1px solid var(--color-line);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .agent-child:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: calc(-1 * var(--spacing-lg));
+    top: 50%;
+    bottom: 0;
+    border-left: 1px solid var(--color-line);
+  }
+  .new-agent {
+    @apply mt-lg block w-full rounded-control border border-line border-dashed p-lg text-center text-muted;
+  }
+  .new-agent:hover {
+    @apply border-accent text-accent;
+  }
+  .danger-zone {
+    @apply mt-xl grid gap-md rounded-control border border-bad-line p-lg;
+  }
+  .agent-tabs {
+    @apply flex gap-lg border-line border-b;
+  }
+  .agent-tabs button {
+    @apply py-md text-muted text-small;
+  }
+  .agent-tabs button[data-state="active"] {
+    @apply border-accent border-b text-accent;
+  }
+  .agent-prompt-input {
+    @apply font-mono text-small;
+    resize: vertical;
+  }
+  .detail-row {
+    @apply flex flex-wrap items-start gap-lg border-line border-b py-lg;
+  }
+  .detail-row dt {
+    @apply w-sidebar;
+  }
+  .detail-row dd {
+    flex: 1;
+    min-width: 0;
+  }
+  @media (max-width: 700px) {
+    .agent-card {
+      @apply flex-wrap gap-sm p-md;
+    }
+    .agent-card .agent-chip {
+      @apply ml-auto;
+    }
+    .detail-row {
+      @apply flex-col items-stretch gap-sm;
+    }
+  }
+}
+
+@layer components {
+  .kind-pill {
+    @apply rounded-chip border border-line px-md py-xs text-small text-text;
+  }
+  .kind-pill[aria-pressed="true"] {
+    @apply border-text bg-text font-medium text-bg;
+  }
+  .inbox-layout {
+    @apply flex items-start gap-xl;
+  }
+  .inbox-list {
+    @apply grid gap-xs;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    flex: 1;
+  }
+  .inbox-row {
+    @apply flex w-full items-center gap-md rounded-control border border-transparent px-md py-md text-left;
+  }
+  .inbox-row:hover {
+    @apply bg-surface-muted;
+  }
+  .inbox-row-text {
+    @apply grid flex-1 gap-xs;
+    min-width: 0;
+  }
+  .inbox-row-line {
+    @apply flex items-baseline gap-sm;
+    min-width: 0;
+  }
+  .inbox-row-title {
+    @apply flex-1 truncate font-semibold;
+    min-width: 0;
+  }
+  .inbox-row[aria-expanded="true"] {
+    @apply border-line bg-surface-muted;
+  }
+  .inbox-pane {
+    @apply grid content-start gap-lg rounded-control border border-line bg-bg p-xl;
+    width: var(--spacing-inbox-pane);
+    flex-shrink: 0;
+    max-height: calc(100dvh - var(--spacing-header) - var(--spacing-xxl));
+    overflow-y: auto;
+    position: sticky;
+    top: calc(var(--spacing-header) + var(--spacing-lg));
+  }
+  /* Empty States mockup: shown in place of a page's list, one next step each. */
+  .empty-state {
+    @apply grid justify-items-center gap-md rounded-chip border border-line bg-bg px-xl py-xxl text-center;
+  }
+  .empty-state-icon {
+    @apply flex h-empty-icon w-empty-icon items-center justify-center rounded-full bg-surface-muted text-text;
+  }
+  /* Narrow rows: kind, id and age on one line, the title wrapped below. */
+  @media (max-width: 700px) {
+    .inbox-row-line {
+      flex-wrap: wrap;
+    }
+    .inbox-row-line time {
+      margin-left: auto;
+    }
+    .inbox-row-title {
+      flex-basis: 100%;
+      order: 1;
+      white-space: normal;
+    }
+  }
+  @media (max-width: 1100px) {
+    .inbox-layout {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .inbox-pane {
+      width: auto;
+      position: static;
+      max-height: none;
+    }
+  }
+}
+
+/* New factory wizard: full page, no sidebar, from the New Factory Wizard board. */
+@layer components {
+  .wizard {
+    @apply mx-auto grid max-w-modal gap-xl px-xl py-xxl;
+  }
+  .wizard-top {
+    @apply flex items-center justify-between gap-md;
+  }
+  .wizard-progress {
+    @apply flex gap-sm;
+  }
+  .wizard-progress span {
+    @apply h-sm w-xxl rounded-control bg-line;
+  }
+  .wizard-progress span.done {
+    @apply bg-accent;
+  }
+  .wizard-card {
+    @apply grid gap-lg rounded-modal border border-line p-xl;
+    min-width: 0;
+  }
+  .wizard-host {
+    @apply flex flex-wrap items-center gap-md rounded-control border border-line p-lg;
+  }
+  .wizard-host.connected {
+    @apply border-accent bg-accent-soft;
+  }
+  .wizard-logo {
+    @apply flex h-xxl w-xxl shrink-0 items-center justify-center rounded-control bg-text text-bg;
+  }
+  .wizard-results {
+    @apply grid max-h-panel gap-xs overflow-y-auto rounded-control border border-line p-xs;
+  }
+  .wizard-option {
+    @apply flex cursor-pointer items-center gap-md rounded-control px-md py-sm;
+  }
+  .wizard-option:hover,
+  .wizard-option:has(input:checked) {
+    @apply bg-accent-soft;
+  }
+  .wizard-option input {
+    accent-color: var(--color-accent);
+  }
+  .wizard-avatar {
+    @apply flex h-xxl w-xxl shrink-0 items-center justify-center rounded-control font-bold text-bg text-title;
+  }
+  .wizard-swatch {
+    @apply relative h-xl w-xl cursor-pointer rounded-control;
+  }
+  .wizard-swatch input {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .wizard-swatch:has(input:checked) {
+    outline: 2px solid var(--color-text);
+    outline-offset: 2px;
+  }
+  .wizard-swatch:has(input:focus-visible) {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .wizard-foot {
+    @apply flex items-center justify-between gap-md;
+  }
+  .wizard-agent {
+    @apply flex flex-wrap items-center gap-md rounded-control border border-line p-md;
+  }
+  .wizard-agent.off {
+    @apply bg-surface-muted;
+  }
+  .wizard-summary-row {
+    @apply flex flex-wrap items-baseline gap-md border-b border-line pb-sm;
+  }
+  .wizard-summary-row dt {
+    @apply w-key shrink-0;
+  }
+  .wizard-files {
+    @apply grid max-h-panel gap-xs overflow-y-auto break-all rounded-control bg-surface-muted p-md font-mono text-small;
+  }
+  .wizard-step {
+    @apply flex flex-wrap items-start gap-md rounded-control border border-line p-md;
+  }
+  .banner.attention {
+    @apply border-line bg-attention-soft text-attention;
+  }
+  @media (max-width: 700px) {
+    .wizard {
+      @apply px-lg py-xl;
+    }
+    .wizard-card {
+      @apply p-lg;
+    }
+    .wizard-progress span {
+      @apply w-xl;
+    }
+    .wizard-summary-row dt {
+      @apply w-full;
+    }
+  }
+}

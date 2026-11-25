@@ -1,0 +1,8 @@
+description: >-
+  Local runner: agents work in the item's worktree on this host with the
+  operator's permissions and toolchain. Not a sandbox.
+platform:
+  os: linux
+  arch: x86_64
+setupCommands:
+  - if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; fi

@@ -1,0 +1,19 @@
+# Nakara factory definition (Warp Factories schema v1alpha1, compatible subset).
+# Agent prompts are adapted from warpdotdev/warp-factory-examples
+# (MIT, see LICENSE.warp-examples).
+schemaVersion: v1alpha1
+name: nakara-default
+description: >-
+  Default SDLC factory: triage, optional spec with human approval,
+  implementation, one adversarial review, and a human merge.
+alias: Nakara
+repositories:
+  - owner: alwisofwan1
+    name: nakara-sandbox
+  - owner: alwisofwan1
+    name: nakara
+agentDefaults:
+  harness:
+    type: claude
+    model: sonnet
+  runner: docker

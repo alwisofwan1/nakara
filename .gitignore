@@ -1,0 +1,10 @@
+node_modules/
+.data/
+*.log
+.envrc
+dist/
+.nakara-proof/
+.playwright-cli/
+playwright-report/
+test-results/
+.claude/worktrees/

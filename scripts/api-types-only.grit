@@ -1,0 +1,13 @@
+or {
+  `import $clause from $source` as $statement,
+  `import $source` as $statement,
+  `import($source)` as $statement,
+  `require($source)` as $statement,
+  `export { $names } from $source` as $statement,
+  `export * from $source` as $statement,
+  `export * as $ns from $source` as $statement
+} where {
+  $source <: r".*src/web/api\.ts.*",
+  not $statement <: `import type $types from $path`,
+  register_diagnostic(span=$statement, message="The server API module may only be imported with import type.")
+}

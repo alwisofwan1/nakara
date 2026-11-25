@@ -1,0 +1,68 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
+  "assist": {
+    "enabled": false
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    }
+  },
+  "files": {
+    "includes": ["**", "!web/routeTree.gen.ts"]
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "tailwind": {
+    "stylesheet": "./web/style.css"
+  },
+  "overrides": [
+    {
+      "includes": ["web/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "preset": "recommended"
+          },
+          "nursery": {
+            "noTailwindArbitraryValue": "error",
+            "noTailwindRawColors": "error",
+            "useTailwindSortedClasses": "error"
+          },
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/src/**", "!**/src/web/api.ts"],
+                    "message": "Client code may only import API types from src/web/api.ts."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "plugins": ["./scripts/api-types-only.grit"]
+    }
+  ]
+}
