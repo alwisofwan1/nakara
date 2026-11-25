@@ -434,7 +434,7 @@ test("New factory wizard: after a failed Create, change the choices and Create a
   await expect(progress(page)).toHaveAttribute("aria-valuenow", "5");
   await page.getByRole("button", { name: "Next" }).click();
   await expect(summary).toContainText(
-    "foreman (claude), triage (qwen), spec (claude), implement (claude)",
+    "foreman (claude), triage (claude), spec (claude), implement (claude)",
   );
   await expect(
     summary.getByRole("list", { name: "Files to write" }),
