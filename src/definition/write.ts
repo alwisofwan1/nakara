@@ -482,26 +482,154 @@ export function serializeNewAgent(agent: Omit<NewAgent, "name">): string {
  * Create agents/<name>/agent.md. An existing folder is a conflict and is never
  * touched; the new agent is validated with the whole tree before it is written.
  */
-export async function createAgent(
+export function createAgent(
   root: string,
   agent: NewAgent,
   defaults: ResolvedHarness,
 ): Promise<WriteResult> {
-  const dir = join("agents", agent.name);
-  const relPath = join(dir, "agent.md");
   if (!AGENT_NAME.test(agent.name))
-    return {
-      ok: false,
-      code: "invalid",
-      errors: [
-        {
-          path: dir,
-          message:
-            "an agent name uses lowercase letters, digits, - and _, starts with a letter or digit, and is not new",
-        },
-      ],
-      warnings: [],
-    };
+    return Promise.resolve(
+      refused(
+        join("agents", agent.name),
+        "an agent name uses lowercase letters, digits, - and _, starts with a letter or digit, and is not new",
+      ),
+    );
+  return createFile(
+    root,
+    join("agents", agent.name),
+    "agent.md",
+    serializeNewAgent(agent),
+    defaults,
+  );
+}
+
+/**
+ * Delete the folder agents/<name> with its agent.md and skills. `revision` is the
+ * fileRevision of the agent.md the page showed; a file changed since then is a
+ * conflict. The deletion is refused with the loader's errors when the tree would
+ * no longer load, for example without a foreman or with an automation that
+ * names the agent.
+ */
+export function deleteAgent(
+  root: string,
+  name: string,
+  revision: string,
+  defaults: ResolvedHarness,
+  /** Runs after validation, right before the deletion; tests use it to race the file. */
+  beforeDelete?: () => Promise<void>,
+): Promise<WriteResult> {
+  return deleteFolder(
+    root,
+    "agents",
+    name,
+    "agent.md",
+    revision,
+    defaults,
+    beforeDelete,
+  );
+}
+
+/** A new automation: its folder name and the drawer's fields. */
+export interface NewAutomation {
+  name: string;
+  /** Empty or null writes no `displayName`, so the folder name shows. */
+  displayName: string | null;
+  trigger: TriggerEdit;
+  /** The agent the work item starts with; the loader checks that it exists. */
+  agent: string;
+  /** The markdown body. */
+  instructions: string;
+  enabled: boolean;
+}
+
+/**
+ * A new automation's folder name: lowercase letters, digits, `-` and `_`,
+ * starting with a letter or digit.
+ */
+export const AUTOMATION_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+
+/** The automation.md of a new automation; its trigger is written as the drawer's edit writes it. */
+export function serializeNewAutomation(
+  automation: Omit<NewAutomation, "name">,
+): string {
+  return serializeMarkdown("", automation.instructions, (put, current) => {
+    put(["displayName"], automation.displayName?.trim() || null);
+    put(["enabled"], automation.enabled);
+    put(["agent"], automation.agent);
+    putTrigger(put, current, automation.trigger);
+  });
+}
+
+/**
+ * Create automations/<name>/automation.md, as createAgent creates an agent: a
+ * taken name is a conflict and the tree is validated with the new file first.
+ */
+export function createAutomation(
+  root: string,
+  automation: NewAutomation,
+  defaults: ResolvedHarness,
+): Promise<WriteResult> {
+  const dir = join("automations", automation.name);
+  if (!AUTOMATION_NAME.test(automation.name))
+    return Promise.resolve(
+      refused(
+        dir,
+        "an automation name uses lowercase letters, digits, - and _, and starts with a letter or digit",
+      ),
+    );
+  let text: string;
+  try {
+    text = serializeNewAutomation(automation);
+  } catch (error) {
+    // Serializing is pure: whatever it throws is a problem with the new file.
+    return Promise.resolve(
+      refused(join(dir, "automation.md"), (error as Error).message),
+    );
+  }
+  return createFile(root, dir, "automation.md", text, defaults);
+}
+
+/**
+ * Delete the folder automations/<name>, with deleteAgent's revision check and
+ * validation. The work items it created stay; its triggers stop with the reload.
+ */
+export function deleteAutomation(
+  root: string,
+  name: string,
+  revision: string,
+  defaults: ResolvedHarness,
+  beforeDelete?: () => Promise<void>,
+): Promise<WriteResult> {
+  return deleteFolder(
+    root,
+    "automations",
+    name,
+    "automation.md",
+    revision,
+    defaults,
+    beforeDelete,
+  );
+}
+
+const refused = (path: string, message: string): WriteResult => ({
+  ok: false,
+  code: "invalid",
+  errors: [{ path, message }],
+  warnings: [],
+});
+
+/**
+ * Create the folder `dir` holding `file`. An existing folder is a conflict and
+ * is never touched; the tree is validated with the new file before it is written.
+ */
+async function createFile(
+  root: string,
+  dir: string,
+  file: string,
+  text: string,
+  defaults: ResolvedHarness,
+): Promise<WriteResult> {
+  const relPath = join(dir, file);
   const conflict = {
     ok: false as const,
     code: "conflict" as const,
@@ -512,14 +640,13 @@ export async function createAgent(
     () => false,
   );
   if (taken) return conflict;
-  const text = serializeNewAgent(agent);
   const checked = await validateChange(root, defaults, async (copy) => {
     await mkdir(join(copy, dir), { recursive: true });
     await writeFile(join(copy, relPath), text);
   });
   if (!checked.ok) return checked;
 
-  await mkdir(join(root, "agents"), { recursive: true });
+  await mkdir(join(root, dirname(dir)), { recursive: true });
   // Not recursive: a folder created since the check above is a conflict.
   const created = await mkdir(join(root, dir)).then(
     () => true,
@@ -536,22 +663,20 @@ export async function createAgent(
 }
 
 /**
- * Delete the folder agents/<name> with its agent.md and skills. `revision` is the
- * fileRevision of the agent.md the page showed; a file changed since then is a
- * conflict. The deletion is refused with the loader's errors when the tree would
- * no longer load, for example without a foreman or with an automation that
- * names the agent.
+ * Delete the folder <kind>/<name> when its `file` still has `revision` and the
+ * tree loads without it; otherwise a conflict or the loader's errors.
  */
-export async function deleteAgent(
+async function deleteFolder(
   root: string,
+  kind: string,
   name: string,
+  file: string,
   revision: string,
   defaults: ResolvedHarness,
-  /** Runs after validation, right before the deletion; tests use it to race the file. */
   beforeDelete?: () => Promise<void>,
 ): Promise<WriteResult> {
-  const dir = join("agents", name);
-  const relPath = join(dir, "agent.md");
+  const dir = join(kind, name);
+  const relPath = join(dir, file);
   const conflict = {
     ok: false as const,
     code: "conflict" as const,
@@ -562,7 +687,7 @@ export async function deleteAgent(
       (bytes) => fileRevision(bytes) === revision,
       () => false,
     );
-  // Only a folder directly in agents/.
+  // Only a folder directly in <kind>/.
   if (basename(name) !== name || name === "." || name === "..") return conflict;
   if (!(await current())) return conflict;
   const checked = await validateChange(root, defaults, (copy) =>

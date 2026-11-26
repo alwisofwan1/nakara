@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Store } from "../db.ts";
 import type { AutomationDef } from "../definition/load.ts";
+import { AUTOMATION_NAME } from "../definition/write.ts";
 import { cronMatches, parseCron } from "../intake/schedule.ts";
 
 const MINUTE = 60_000;
@@ -102,6 +103,29 @@ export const automationEditInput = z
     trigger: triggerEditInput.optional(),
     revision: z.string().regex(/^[0-9a-f]{64}$/),
   })
+  .strict();
+
+/** A new automation; the loader validates it with the rest of the definition. */
+export const newAutomationInput = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .regex(
+        AUTOMATION_NAME,
+        "Use lowercase letters, digits, - and _, starting with a letter or digit",
+      ),
+    displayName: z.string().max(200).nullable(),
+    trigger: triggerEditInput,
+    agent: z.string().min(1).max(255),
+    instructions: z.string().max(200_000),
+    enabled: z.boolean(),
+  })
+  .strict();
+
+/** The revision of the automation.md the drawer showed, so a changed file is not deleted. */
+export const automationDeleteInput = z
+  .object({ revision: z.string().regex(/^[0-9a-f]{64}$/) })
   .strict();
 
 export const cronPreviewInput = z

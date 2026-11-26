@@ -212,6 +212,18 @@ export class Factory {
     return this.definitions.saveAutomation(...args);
   }
 
+  createAutomation(
+    ...args: Parameters<DefinitionService["createAutomation"]>
+  ): Promise<DefinitionWrite> {
+    return this.definitions.createAutomation(...args);
+  }
+
+  deleteAutomation(
+    ...args: Parameters<DefinitionService["deleteAutomation"]>
+  ): Promise<DefinitionWrite> {
+    return this.definitions.deleteAutomation(...args);
+  }
+
   saveLearning(
     ...args: Parameters<DefinitionService["saveLearning"]>
   ): Promise<DefinitionWrite> {

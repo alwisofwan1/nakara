@@ -16,6 +16,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { AGENT_NAME as WEB_AGENT_NAME } from "../../web/features/agents/agent-name.ts";
+import {
+  slugify,
+  AUTOMATION_NAME as WEB_AUTOMATION_NAME,
+} from "../../web/features/automations/automation-name.ts";
 import { loadConfig } from "../config.ts";
 import { Store } from "../db.ts";
 import { GithubPoller } from "../intake/github.ts";
@@ -26,13 +30,16 @@ import { Factory } from "../orchestrator/factory.ts";
 import { fileRevision, HARNESS_FALLBACK, loadDefinition } from "./load.ts";
 import {
   AGENT_NAME,
+  AUTOMATION_NAME,
   type AgentEdit,
   type AutomationEdit,
   appendLearning,
   LEARNINGS_CAP,
   LEARNINGS_PATH,
   createAgent,
+  createAutomation,
   deleteAgent,
+  deleteAutomation,
   isGitTracked,
   serializeAgent,
   writeAgent,
@@ -602,6 +609,195 @@ test("deleting an agent changed since it was loaded is a conflict", async () => 
 test("the New agent form checks names with the same rule as the writer", () => {
   assert.equal(WEB_AGENT_NAME.source, AGENT_NAME.source);
   assert.equal(WEB_AGENT_NAME.flags, AGENT_NAME.flags);
+});
+
+test("the New automation drawer checks names with the writer's rule and suggests valid ones", () => {
+  assert.equal(WEB_AUTOMATION_NAME.source, AUTOMATION_NAME.source);
+  assert.equal(WEB_AUTOMATION_NAME.flags, AUTOMATION_NAME.flags);
+  assert.equal(slugify("Nightly report"), "nightly-report");
+  assert.equal(slugify("  Déploiement — Prod!  "), "deploiement-prod");
+  assert.equal(slugify("—"), "");
+  for (const name of ["Nightly report", "_x", "x".repeat(80), "a-".repeat(40)])
+    assert.match(slugify(name), AUTOMATION_NAME, name);
+});
+
+const NEW_AUTOMATION = {
+  displayName: "Nightly report",
+  trigger: { kind: "schedule", cron: "0 3 * * *" },
+  agent: "helper",
+  instructions: "Report\r\n\r\nthe night.",
+  enabled: true,
+} as const;
+
+test("a created automation writes an automation.md that loads with its trigger", async () => {
+  const root = await tree();
+  const result = await createAutomation(
+    root,
+    { name: "nightly", ...NEW_AUTOMATION },
+    HARNESS_FALLBACK,
+  );
+  assert.deepEqual(result, { ok: true, changed: true, warnings: [] });
+  assert.equal(
+    await readFile(join(root, "automations/nightly/automation.md"), "utf8"),
+    "---\ndisplayName: Nightly report\nenabled: true\nagent: helper\ntriggers:\n  - provider: schedule\n    event: cron_fired\n    schedule:\n      cron: 0 3 * * *\n---\nReport\n\nthe night.\n",
+  );
+  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  const [nightly] = loaded.definition.automations;
+  assert.equal(nightly?.name, "nightly");
+  assert.equal(nightly?.agent, "helper");
+  assert.equal(nightly?.instructions, "Report\n\nthe night.");
+  assert.equal(nightly?.frontmatter.displayName, "Nightly report");
+  assert.equal(nightly?.frontmatter.enabled, true);
+  assert.deepEqual(nightly?.frontmatter.triggers, [
+    {
+      provider: "schedule",
+      event: "cron_fired",
+      schedule: { cron: "0 3 * * *" },
+    },
+  ]);
+
+  // Without a display name the folder name shows; a disabled one says so.
+  assert.ok(
+    (
+      await createAutomation(
+        root,
+        {
+          name: "chat",
+          displayName: " ",
+          trigger: { kind: "telegram" },
+          agent: "boss",
+          instructions: "",
+          enabled: false,
+        },
+        HARNESS_FALLBACK,
+      )
+    ).ok,
+  );
+  assert.equal(
+    await readFile(join(root, "automations/chat/automation.md"), "utf8"),
+    "---\nenabled: false\nagent: boss\ntriggers:\n  - provider: telegram\n    event: message\n---\n",
+  );
+});
+
+test("creating an automation refuses a taken or invalid name, a bad trigger and an invalid tree, writing nothing", async () => {
+  const root = await tree();
+  await mkdir(join(root, "automations/nightly"), { recursive: true });
+  await writeFile(
+    join(root, "automations/nightly/automation.md"),
+    "---\ntriggers:\n  - provider: telegram\n    event: message\n---\nChat.\n",
+  );
+  const before = await snapshot(root);
+
+  const taken = await createAutomation(
+    root,
+    { name: "nightly", ...NEW_AUTOMATION },
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!taken.ok && taken.code === "conflict");
+  assert.equal(
+    taken.message,
+    "automations/nightly already exists; choose another name",
+  );
+
+  for (const name of [
+    "../escape",
+    "Nightly",
+    "-x",
+    "",
+    "a/b",
+    "x".repeat(64),
+  ]) {
+    const invalid = await createAutomation(
+      root,
+      { ...NEW_AUTOMATION, name },
+      HARNESS_FALLBACK,
+    );
+    assert.ok(!invalid.ok && invalid.code === "invalid", name);
+    assert.match(invalid.errors[0]?.message ?? "", /an automation name uses/);
+  }
+
+  const cron = await createAutomation(
+    root,
+    {
+      ...NEW_AUTOMATION,
+      name: "weekly",
+      trigger: { kind: "schedule", cron: "every day" },
+    },
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!cron.ok && cron.code === "invalid");
+  assert.deepEqual(
+    cron.errors.map((e) => [e.path, e.message]),
+    [
+      [
+        "automations/weekly/automation.md",
+        'cron "every day" must have 5 fields',
+      ],
+    ],
+  );
+
+  // The loader's error for an agent that does not exist comes back.
+  const ghost = await createAutomation(
+    root,
+    { ...NEW_AUTOMATION, name: "weekly", agent: "ghost" },
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!ghost.ok && ghost.code === "invalid");
+  assert.deepEqual(
+    ghost.errors.map((e) => [e.path, e.message]),
+    [["automations/weekly/automation.md", 'agent "ghost" is not defined']],
+  );
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test("deleting an automation removes its folder; a stale one is a conflict", async () => {
+  const root = await tree();
+  assert.ok(
+    (
+      await createAutomation(
+        root,
+        { name: "nightly", ...NEW_AUTOMATION },
+        HARNESS_FALLBACK,
+      )
+    ).ok,
+  );
+  const path = join(root, "automations/nightly/automation.md");
+  const stale = fileRevision(await readFile(path));
+  await writeFile(path, (await readFile(path, "utf8")).replace("night", "day"));
+  const conflict = await deleteAutomation(
+    root,
+    "nightly",
+    stale,
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!conflict.ok && conflict.code === "conflict");
+  assert.match(
+    conflict.message,
+    /automations\/nightly\/automation\.md changed on disk/,
+  );
+  assert.ok(await stat(path));
+
+  // Only a folder directly in automations/ can be deleted.
+  const outside = await deleteAutomation(
+    root,
+    "..",
+    fileRevision(await readFile(path)),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!outside.ok && outside.code === "conflict");
+
+  const deleted = await deleteAutomation(
+    root,
+    "nightly",
+    fileRevision(await readFile(path)),
+    HARNESS_FALLBACK,
+  );
+  assert.deepEqual(deleted, { ok: true, changed: true, warnings: [] });
+  assert.deepEqual(await readdir(join(root, "automations")), []);
+  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  assert.deepEqual(loaded.definition.automations, []);
 });
 
 test("an automation's enabled switch and instructions round-trip through automation.md", async () => {
