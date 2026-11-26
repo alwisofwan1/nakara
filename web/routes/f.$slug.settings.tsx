@@ -384,7 +384,11 @@ function Limits({ settings }: { settings: Settings }) {
           limits={settings.limits}
         />
       ))}
-      <SpecRuleRow slug={settings.slug} rule={settings.limits.specRule} />
+      <SpecRuleRow
+        slug={settings.slug}
+        rule={settings.limits.specRule}
+        specAgent={settings.definition.specAgent}
+      />
     </section>
   );
 }
@@ -398,7 +402,16 @@ const SPEC_RULE_OPTIONS: { rule: SpecRule; label: string }[] = [
 ];
 
 /** Spec before code: Always, When triage asks (the Foreman decides) or Never. */
-function SpecRuleRow({ slug, rule }: { slug: string; rule: SpecRule }) {
+function SpecRuleRow({
+  slug,
+  rule,
+  specAgent,
+}: {
+  slug: string;
+  rule: SpecRule;
+  /** Whether the loaded definition has a SPEC agent; null when none is loaded. */
+  specAgent: boolean | null;
+}) {
   const client = useQueryClient();
   const toast = useToast();
   const save = useMutation({
@@ -444,6 +457,13 @@ function SpecRuleRow({ slug, rule }: { slug: string; rule: SpecRule }) {
         A Spec is written into the Pull Request, and you approve it before
         implement starts.
       </p>
+      {shown === "always" && specAgent === false && (
+        <p role="note" className="banner attention">
+          This factory's definition has no spec agent, so no Spec can be written
+          and new Work Items will wait for you before implement. Add a SPEC
+          agent to the definition, or choose another rule.
+        </p>
+      )}
       {save.error && (
         <p className="form-error" role="alert">
           {save.error.message}

@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import type { Config } from "../config.ts";
 import { policyState, type Store, type WorkItem } from "../db.ts";
-import { type Definition, factoryRepositories } from "../definition/load.ts";
+import {
+  type Definition,
+  factoryRepositories,
+  hasSpecAgent,
+} from "../definition/load.ts";
 import { runsUsed } from "../domain/policy.ts";
 import { runTurn } from "../harness/claude.ts";
 import type { RecordedAction, TurnSnapshot } from "../mcp/types.ts";
@@ -244,7 +248,11 @@ export class ForemanRunner {
     const snapshot: TurnSnapshot = {
       foreman: def.foreman.name,
       // This turn's own run is counted when it starts, below.
-      policy: { ...policyFor(this.store, item), runCount: item.run_count + 1 },
+      policy: {
+        ...policyFor(this.store, item),
+        runCount: item.run_count + 1,
+        specAgent: hasSpecAgent(def),
+      },
       repositories: factoryRepositories(def),
       agents: [...def.agents.values()]
         .filter((a) => a.type !== "FOREMAN")

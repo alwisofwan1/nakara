@@ -179,6 +179,15 @@ export function factoryRepositories(definition: Definition): string[] {
   return definition.factory.repositories.map((r) => `${r.owner}/${r.name}`);
 }
 
+/** Whether the definition has a SPEC agent its Foreman may dispatch. */
+export function hasSpecAgent(definition: Definition): boolean {
+  return [...definition.agents.values()].some(
+    (a) =>
+      a.type === "SPEC" &&
+      (!a.spawnableBy || a.spawnableBy.includes(definition.foreman.name)),
+  );
+}
+
 /**
  * The `owner/name` repositories a definition claims, each with the file that
  * claims it: the factory's repositories, and the repos filter of every GitHub
