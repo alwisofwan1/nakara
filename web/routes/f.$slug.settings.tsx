@@ -16,6 +16,7 @@ import {
   pauseFactory,
   renameFactory,
   resumeFactory,
+  saveFactoryFile,
   saveLimits,
 } from "../lib/api";
 import {
@@ -136,6 +137,9 @@ function General({ settings }: { settings: Settings }) {
             </span>
           </label>
         </div>
+        {settings.factoryFile && (
+          <Description slug={settings.slug} file={settings.factoryFile} />
+        )}
         <fieldset className="grid gap-sm">
           <legend className="field-label mb-sm">Avatar color</legend>
           <div className="flex flex-wrap gap-md">
@@ -188,6 +192,94 @@ function General({ settings }: { settings: Settings }) {
         </div>
       </div>
     </form>
+  );
+}
+
+/** The description in factory.yaml, saved on blur or Enter; empty removes it. */
+function Description({
+  slug,
+  file,
+}: {
+  slug: string;
+  file: NonNullable<Settings["factoryFile"]>;
+}) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const saved = file.description ?? "";
+  const [value, setValue] = useState(saved);
+  // The text last saved or sent: Enter then blur saves once.
+  const committed = useRef(saved);
+  // Another tab's edit arrives through /api/events.
+  useEffect(() => {
+    committed.current = saved;
+    setValue(saved);
+  }, [saved]);
+  const save = useMutation({
+    mutationFn: (description: string) =>
+      saveFactoryFile(slug, { revision: file.revision, description }),
+    onSuccess: (_, description) => {
+      void client.invalidateQueries({ queryKey: ["factories"] });
+      toast({
+        title: "Description saved",
+        description: description
+          ? "factory.yaml has the new description."
+          : "The description was removed from factory.yaml.",
+        tone: "ok",
+      });
+    },
+  });
+  const commit = () => {
+    const text = value.trim();
+    if (text === committed.current) return;
+    committed.current = text;
+    save.mutate(text, {
+      onError: () => {
+        committed.current = saved;
+      },
+    });
+  };
+  const problems = save.error instanceof ApiError ? save.error.problems : [];
+  return (
+    <div className="grid gap-xs">
+      <label className="field">
+        <span className="field-label">Description</span>
+        <input
+          className="input"
+          value={value}
+          maxLength={500}
+          autoComplete="off"
+          onChange={(event) => {
+            setValue(event.target.value);
+            save.reset();
+          }}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            // Enter saves the description, not the rename form around it.
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+          }}
+        />
+        <span className="text-small text-muted">
+          Shown under the channel name.
+        </span>
+      </label>
+      {save.error && (
+        <p className="form-error" role="alert">
+          {save.error.message}
+        </p>
+      )}
+      {problems.length > 0 && (
+        <ul className="grid gap-xs">
+          {problems.map((problem, index) => (
+            <li key={problemKey(problem, index)} className="problem">
+              <code>{problemLocation(problem)}</code> {problem.message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
