@@ -31,6 +31,16 @@ export const specRequestRefused = (rule: SpecRule): string =>
     ? "This factory always writes a Spec first, so a Work Item does not ask for one."
     : "This factory does not write Specs, so a Work Item cannot ask for one.";
 
+/** A Work Item asked for a Spec its factory's rule does not allow. */
+export class SpecRequestRefused extends Error {
+  readonly rule: SpecRule;
+  constructor(rule: SpecRule) {
+    super(specRequestRefused(rule));
+    this.name = "SpecRequestRefused";
+    this.rule = rule;
+  }
+}
+
 export const AGENT_TYPES = [
   "FOREMAN",
   "TRIAGE",
