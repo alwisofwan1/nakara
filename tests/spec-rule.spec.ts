@@ -2,6 +2,9 @@ import { expect, type Page, test } from "@playwright/test";
 
 // See tests/server.ts: Harbor is a second factory with its own definition.
 
+// Both tests change Harbor's Spec rule, so they take turns.
+test.describe.configure({ mode: "serial" });
+
 const openNewWork = async (page: Page) => {
   await page.getByRole("button", { name: "New work", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "New work" });
@@ -85,4 +88,60 @@ test("Spec before code: the Settings choice decides the New work switch", async 
     fullPage: true,
   });
   expect(errors).toEqual([]);
+});
+
+test("Spec before code: Always warns when the definition has no spec agent", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name === "dev");
+  // Harbor's definition, as Settings reads it, without its spec agent.
+  await page.route("**/api/f/harbor/settings", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const response = await route.fetch();
+    const json = await response.json();
+    json.definition.specAgent = false;
+    return route.fulfill({ response, json });
+  });
+  await page.goto("./f/harbor/settings");
+  const limits = page.getByRole("region", { name: "Limits" });
+  const option = (name: string) =>
+    limits
+      .getByRole("group", { name: "Spec before code" })
+      .getByRole("button", { name });
+  const warning = limits.getByRole("note");
+  await expect(option("When triage asks")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(warning).toHaveCount(0);
+
+  // Chosen: the save is allowed, and the row warns.
+  await option("Always").click();
+  await expect(
+    page.locator(".toast").getByText("Spec rule saved", { exact: true }),
+  ).toBeVisible();
+  await expect(option("Always")).toHaveAttribute("aria-pressed", "true");
+  await expect(warning).toContainText(
+    "This factory's definition has no spec agent",
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("settings-spec-always-no-agent.png"),
+    fullPage: true,
+  });
+
+  // Already saved: the row warns on a fresh load too.
+  await page.reload();
+  await expect(option("Always")).toHaveAttribute("aria-pressed", "true");
+  await expect(warning).toBeVisible();
+
+  // Another rule needs no spec agent; put Harbor back as it was.
+  await option("Never").click();
+  await expect(option("Never")).toHaveAttribute("aria-pressed", "true");
+  await expect(warning).toHaveCount(0);
+  await option("When triage asks").click();
+  await expect(option("When triage asks")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(warning).toHaveCount(0);
 });
