@@ -290,7 +290,7 @@ export function createApp(
     if (!index) return c.text("Web build missing. Run npm run build.", 503);
     const runtime = JSON.stringify({
       basePath: base,
-      factories: readFactories(store.repos.factories),
+      factories: readFactories(store.repos),
     }).replaceAll("<", "\\u003c");
     return c.html(
       index.replace(

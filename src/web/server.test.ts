@@ -122,11 +122,11 @@ for (const basePath of ["", "/proxy/7788"]) {
         )?.[1] ?? "{}",
       );
       assert.deepEqual(runtime.factories, [
-        { slug, name: "Default", avatarColor: "#6366f1" },
+        { slug, name: "Default", avatarColor: "#6366f1", paused: false },
       ]);
     }
     assert.deepEqual(await (await request("/api/factories")).json(), [
-      { slug, name: "Default", avatarColor: "#6366f1" },
+      { slug, name: "Default", avatarColor: "#6366f1", paused: false },
     ]);
     assert.equal((await request("/f/missing/activity")).status, 404);
     assert.equal((await request("/f/%E0/activity")).status, 404);

@@ -810,3 +810,36 @@ test("migration 016 marks the in-flight dispatched reviews, and their continuati
   });
   assert.equal(store.item(1)?.review_count, 0);
 });
+
+test("migration 017 adds the factories' pause, running by default, and down restores version 16 keeping the limits", (t) => {
+  const dir = tempDir(t);
+  const db = new DatabaseSync(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 16),
+  });
+  const version16 = schema(db);
+  db.exec(
+    "INSERT INTO factory_settings (factory_id, budget_usd, updated_at) VALUES (1, 5, 'now')",
+  );
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  // A factory with settings saved before the upgrade runs.
+  assert.deepEqual(
+    {
+      ...db.prepare("SELECT budget_usd, paused_at FROM factory_settings").get(),
+    },
+    { budget_usd: 5, paused_at: null },
+  );
+  db.exec("UPDATE factory_settings SET paused_at = 'now'");
+
+  assert.equal(migrateDown(db, 16), 16);
+  assert.deepEqual(schema(db), version16);
+  assert.deepEqual(
+    { ...db.prepare("SELECT budget_usd FROM factory_settings").get() },
+    { budget_usd: 5 },
+  );
+});

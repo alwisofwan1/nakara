@@ -88,6 +88,7 @@ _Avoid_: Blocked, stalled
 
 **Paused**:
 The **Status** of a **Work Item** the factory stopped because it hit a safety limit, such as its **Budget**.
+The Operator can also pause a **Factory**, which stops its **Work Items** from starting **Runs**: running work finishes, and new **Work Items** wait in Intake until the Operator resumes it.
 _Avoid_: Suspended, halted
 
 **Spec**:

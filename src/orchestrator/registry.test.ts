@@ -232,6 +232,137 @@ test("the concurrency limit is shared across factories", async (t) => {
   assert.equal(peak, 2);
 });
 
+test("a paused factory starts no foreman turn or queued run, lets running work finish, and starts its waiting work on resume; the other factory keeps running", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-registry-"));
+  const secondDir = join(dir, "second");
+  await copyDefinition(secondDir, "Second", ["acme/second"]);
+  const { store, registry, first, second } = twoFactories(
+    secondDir,
+    join(dir, "backups"),
+  );
+  t.after(async () => {
+    await registry.drain(0);
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  // Foreman turns hold until released, as a harness would; runs end at once.
+  const turns: number[] = [];
+  const release = new Map<number, () => void>();
+  const runs: number[] = [];
+  for (const factory of registry.factories) {
+    factory.foremanTurn = (itemId) => {
+      turns.push(itemId);
+      return new Promise<void>((resolve) =>
+        release.set(itemId, () => {
+          store.markEventsProcessed(
+            store.pendingEvents(itemId).map((e) => e.id),
+          );
+          resolve();
+        }),
+      );
+    };
+    factory.agentRun = async (run: ScheduledRun) => {
+      runs.push(run.id);
+      store.cancelQueuedRuns(run.item_id);
+    };
+  }
+  await registry.start();
+  const work = (factory: Factory, title: string) =>
+    factory.createWorkItem({ title, request: "r", source: "manual" });
+
+  // A turn of the second factory is running when the Operator pauses it.
+  const running = work(second, "Running");
+  await until(() => turns.includes(running.id));
+  assert.ok(second.setPaused(true));
+  assert.equal(second.canStart, false);
+
+  // Its new work waits, and so does its queued run; the first factory's starts.
+  const waiting = work(second, "Waiting");
+  const queued = queueRun(store, running.id);
+  const other = work(first, "Other");
+  const otherRun = queueRun(store, other.id);
+  await registry.pump();
+  await until(() => turns.includes(other.id) && runs.includes(otherRun.id));
+  assert.ok(!turns.includes(waiting.id));
+  assert.ok(!runs.includes(queued.id));
+  assert.equal(store.runById(queued.id)?.status, "queued");
+
+  // The running turn finishes; the waiting work still waits.
+  release.get(running.id)?.();
+  release.get(other.id)?.();
+  await until(() => registry.inFlightCount === 0);
+  await registry.pump();
+  assert.ok(!turns.includes(waiting.id));
+  assert.equal(store.pendingEvents(running.id).length, 0);
+  assert.equal(store.pendingEvents(waiting.id).length, 1);
+  assert.equal(store.runById(queued.id)?.status, "queued");
+
+  // Resume starts the waiting turn and the queued run without another pump.
+  assert.equal(second.setPaused(false), null);
+  await until(() => turns.includes(waiting.id) && runs.includes(queued.id));
+  release.get(waiting.id)?.();
+});
+
+test("a pause survives a restart", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-registry-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const secondDir = join(dir, "second");
+  await copyDefinition(secondDir, "Second", ["acme/second"]);
+  const path = join(dir, "nakara.db");
+  const config = loadConfig({
+    NAKARA_GITHUB_MIRROR: "false",
+    NAKARA_BACKUP_DIR: join(dir, "backups"),
+  });
+  const open = () => {
+    const store = new Store(path, {
+      defaultBudgetUsd: 15,
+      factory: stubFactorySeed,
+    });
+    return { store, registry: new FactoryRegistry(store, config) };
+  };
+  const setup = open();
+  setup.store.repos.factories.createFactory({
+    ...stubFactorySeed(),
+    slug: "second",
+    name: "Second",
+    definition_dir: secondDir,
+  });
+  setup.store.close();
+  const before = open();
+  assert.ok(before.registry.get("second")?.setPaused(true));
+  before.store.close();
+
+  const { store, registry } = open();
+  t.after(async () => {
+    await registry.drain(0);
+    store.close();
+  });
+  const turns: number[] = [];
+  for (const factory of registry.factories)
+    factory.foremanTurn = async (itemId) => {
+      turns.push(itemId);
+      store.markEventsProcessed(store.pendingEvents(itemId).map((e) => e.id));
+    };
+  await registry.start();
+  const [first, second] = registry.factories as [Factory, Factory];
+  assert.ok(second.definition);
+  assert.ok(second.pausedAt);
+  assert.equal(first.pausedAt, null);
+  const waiting = second.createWorkItem({
+    title: "Waits",
+    request: "r",
+    source: "manual",
+  });
+  const runs = first.createWorkItem({
+    title: "Runs",
+    request: "r",
+    source: "manual",
+  });
+  await until(() => turns.includes(runs.id));
+  await registry.pump();
+  assert.ok(!turns.includes(waiting.id));
+});
+
 test("an unreadable definition is an error of its own factory, not a crash", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "nakara-registry-"));
   const unreadable = join(dir, "factory");
@@ -342,12 +473,17 @@ else if (args[0] === "api") {
   for (const factory of registry.factories) factory.pump = async () => {};
   await registry.start();
   assert.equal(second.definition?.label, "factory:Harbor");
+  // Intake keeps working in a paused factory: the issue still becomes a Work Item.
+  second.setPaused(true);
 
   const poller = new GithubPoller(registry.factories);
   await poller.poll();
   assert.equal(poller.lastPoll?.error, null);
   const docked = store.itemBySourceRef("github:acme/harbor#7");
   assert.equal(docked?.factory_id, second.record?.id);
+  // It waits in Intake for the factory to resume.
+  assert.equal(docked?.stage, "intake");
+  assert.equal(second.canStart, false);
   // The Requester is whoever last applied the label, not the author.
   assert.equal(docked?.requester, "harbormaster");
   assert.equal(registry.forItem(docked?.id ?? 0), second);

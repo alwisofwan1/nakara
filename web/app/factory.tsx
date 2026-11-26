@@ -24,6 +24,18 @@ export function FactoryAvatar({
   );
 }
 
+/** Shown next to a paused factory in the sidebar and the page header. */
+export function PausedChip() {
+  return (
+    <span
+      className="chip bg-attention-soft text-tiny font-medium text-attention"
+      title="Paused: new Work Items wait in Intake until you resume."
+    >
+      Paused
+    </span>
+  );
+}
+
 /** A ?factory= search value: a registered factory's slug, or none. */
 export const factorySearch = (value: unknown): string | undefined =>
   factories.find((f) => f.slug === value)?.slug;

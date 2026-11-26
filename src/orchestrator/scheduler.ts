@@ -10,7 +10,7 @@ const MAX_FOREMAN_TURNS_IN_FLIGHT = 2;
  * through itself, a FactoryRegistry through the item's own factory.
  */
 export interface SchedulerHooks {
-  /** The item's factory has a valid definition loaded, so its work may start. */
+  /** The item's factory has a valid definition loaded and is not paused, so its work may start. */
   ready(itemId: number): boolean;
   /** Pump again: Factory.pump (which tests and the smoke server replace) or FactoryRegistry.pump. */
   pump(): Promise<void>;
@@ -23,7 +23,8 @@ export interface SchedulerHooks {
  * queued agent runs within capacity, one turn per item and one run per agent
  * conversation; tracks them until they settle, and drains them on shutdown.
  * In a FactoryRegistry one Scheduler serves every factory, so the capacity is
- * shared, and an item whose factory has no valid definition waits.
+ * shared, and an item whose factory has no valid definition, or is paused,
+ * waits.
  */
 export class Scheduler {
   private readonly foremanInFlight = new Set<number>();
