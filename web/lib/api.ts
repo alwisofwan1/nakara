@@ -505,6 +505,16 @@ export const renameFactory = (slug: string, json: FactoryRename) =>
     "Unable to save the settings",
   );
 
+export type LimitsEdit = InferRequestType<
+  typeof factoryApi.settings.limits.$put
+>["json"];
+/** Saves the factory's limits for new Work Items; null resets one to its default. */
+export const saveLimits = (slug: string, json: LimitsEdit) =>
+  body(
+    factoryApi.settings.limits.$put({ param: { slug }, json }),
+    "Unable to save the limits",
+  );
+
 /** Deletes the factory; refused (code "policy") while it has active items. */
 export const deleteFactory = (slug: string) =>
   body(factoryApi.$delete({ param: { slug } }), "Unable to delete the factory");

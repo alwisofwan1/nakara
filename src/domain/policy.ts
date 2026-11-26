@@ -44,6 +44,10 @@ export interface PolicyState {
   runCount: number;
   /** The work item's own cap on runCount. */
   maxRuns: number;
+  /** The work item's own cap on reviewCount. */
+  maxReviews: number;
+  /** The work item's own cap on revisionCount. */
+  maxRevisions: number;
   prUrl: string | null;
   prMerged: boolean;
   ciFailed?: boolean;
@@ -54,10 +58,8 @@ export interface PolicyState {
   pushOnlyBranch?: string | null;
 }
 
-export interface Limits {
-  maxReviews: number;
-  maxRevisions: number;
-}
+/** The review and revision caps a work item snapshotted from its factory. */
+export type Limits = Pick<PolicyState, "maxReviews" | "maxRevisions">;
 
 export type Action =
   | {
@@ -105,7 +107,6 @@ const specGate = (state: PolicyState): string | null => {
 export function check(
   state: PolicyState,
   action: Action,
-  limits: Limits,
   repositories: readonly string[],
 ): Verdict {
   if (state.stage === "complete" || state.stage === "cancelled")
@@ -133,7 +134,7 @@ export function check(
   switch (action.type) {
     case "dispatch_agent":
     case "follow_up": {
-      const verdict = checkAgentWork(state, action, limits);
+      const verdict = checkAgentWork(state, action);
       // The run it queues counts at once, so one turn cannot queue past the limit.
       return verdict.ok
         ? {
@@ -251,7 +252,6 @@ function withPr(state: PolicyState, prUrl: string): PolicyState {
 function checkAgentWork(
   state: PolicyState,
   action: Extract<Action, { type: "dispatch_agent" | "follow_up" }>,
-  limits: Limits,
 ): Verdict {
   const active = { ...state, status: "active" as const };
   const isFollowUp = action.type === "follow_up";
@@ -288,9 +288,9 @@ function checkAgentWork(
     case "REVIEW":
       if (isFollowUp)
         return { ok: true, next: { ...active, stage: "reviewing" } };
-      if (state.reviewCount >= limits.maxReviews)
+      if (state.reviewCount >= state.maxReviews)
         return refuse(
-          `Review already ran ${state.reviewCount} time(s); the limit is ${limits.maxReviews}. Hand the PR to the human.`,
+          `Review already ran ${state.reviewCount} time(s); the limit is ${state.maxReviews}. Hand the PR to the human.`,
         );
       if (!state.prUrl)
         return refuse(
@@ -323,9 +323,9 @@ function checkAgentWork(
         return refuse(
           "Review findings and CI failures go back to the agent that built the change: use follow_up, not a new dispatch.",
         );
-      if (state.revisionCount >= limits.maxRevisions)
+      if (state.revisionCount >= state.maxRevisions)
         return refuse(
-          `Revision limit reached (${limits.maxRevisions}). Ask the human how to proceed; failing CI still blocks handoff.`,
+          `Revision limit reached (${state.maxRevisions}). Ask the human how to proceed; failing CI still blocks handoff.`,
         );
       return {
         ok: true,
@@ -352,6 +352,10 @@ export const runLimitReached = (
 
 /** The run limit of a work item when NAKARA_MAX_RUNS is not set. */
 export const DEFAULT_MAX_RUNS = 50;
+/** The review limit of a work item when NAKARA_MAX_REVIEWS is not set. */
+export const DEFAULT_MAX_REVIEWS = 1;
+/** The revision limit of a work item when NAKARA_MAX_REVISIONS is not set. */
+export const DEFAULT_MAX_REVISIONS = 2;
 /** How many runs one Raise run limit adds to the work item's limit. */
 export const RUN_STEP = 10;
 const closed = (state: PolicyState) =>

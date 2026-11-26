@@ -199,18 +199,14 @@ export function renderEvent(
   }
 }
 
-export function renderState(
-  item: WorkItem,
-  runs: Run[],
-  limits: Limits,
-): string {
+export function renderState(item: WorkItem, runs: Run[]): string {
   const active = runs.filter(
     (r) =>
       r.role === "agent" && (r.status === "running" || r.status === "queued"),
   );
   return [
     "## Current state",
-    `- stage: ${item.stage} · spec: ${item.spec_state} · reviews: ${item.review_count}/${limits.maxReviews} · revisions: ${item.revision_count}/${limits.maxRevisions}`,
+    `- stage: ${item.stage} · spec: ${item.spec_state} · reviews: ${item.review_count}/${item.max_reviews} · revisions: ${item.revision_count}/${item.max_revisions}`,
     `- issue: ${item.issue_url ?? "none"} · PR: ${item.pr_url ?? "none"}${item.pr_merged ? " (merged)" : ""}`,
     `- cost: $${item.cost_usd.toFixed(2)} of $${item.budget_usd.toFixed(2)} · runs: ${item.run_count + 1} of ${item.max_runs} (this turn included)`,
     `- agents in progress: ${active.length ? active.map((r) => `${r.agent} (#${r.id}, ${r.status})`).join(", ") : "none"}`,

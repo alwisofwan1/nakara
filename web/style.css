@@ -411,6 +411,9 @@
   .field-row {
     @apply grid grid-cols-2 gap-md;
   }
+  .limit-input {
+    @apply flex items-center gap-xs;
+  }
   .input {
     @apply w-full rounded-control border border-line bg-bg px-md py-sm font-sans text-body text-text;
   }
@@ -420,6 +423,9 @@
   }
   .input:disabled {
     @apply bg-surface-muted;
+  }
+  .input-narrow {
+    width: 9rem;
   }
   .import-issue {
     @apply grid gap-sm rounded-control bg-surface-muted px-md py-md;

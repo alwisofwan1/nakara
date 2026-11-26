@@ -5,14 +5,16 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   deleteFactory,
   factorySettingsQuery,
   loadPage,
+  type LimitsEdit,
   moveDefinition,
   renameFactory,
+  saveLimits,
 } from "../lib/api";
 import {
   plural,
@@ -53,6 +55,7 @@ function SettingsPage() {
         </p>
       </div>
       <General settings={data} />
+      <Limits settings={data} />
       <Definition settings={data} />
       <DeleteFactory settings={data} />
     </section>
@@ -182,6 +185,174 @@ function General({ settings }: { settings: Settings }) {
         </div>
       </div>
     </form>
+  );
+}
+
+type LimitKey = keyof Settings["limits"]["defaults"];
+
+const LIMIT_ROWS: {
+  key: LimitKey;
+  label: string;
+  hint?: string;
+  help?: string;
+  min: number;
+  max: number;
+  step: number;
+  money?: boolean;
+}[] = [
+  {
+    key: "budgetUsd",
+    label: "Budget per Work Item",
+    help: "Spending cap, failed Runs included. At the cap the Work Item pauses and lands in your Inbox.",
+    min: 1,
+    max: 100,
+    step: 0.5,
+    money: true,
+  },
+  {
+    key: "maxRevisions",
+    label: "Revisions",
+    hint: "per Work Item",
+    help: "Fixes after review before the Foreman asks you how to proceed.",
+    min: 0,
+    max: 5,
+    step: 1,
+  },
+  {
+    key: "maxReviews",
+    label: "Reviews",
+    hint: "per Work Item",
+    min: 1,
+    max: 5,
+    step: 1,
+  },
+  {
+    key: "maxRuns",
+    label: "Run limit",
+    hint: "per Work Item",
+    help: "Foreman turns and agent Runs, failed ones included. At the limit the Work Item pauses until you raise it.",
+    min: 5,
+    max: 200,
+    step: 1,
+  },
+];
+
+const money = (usd: number) =>
+  `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`;
+
+/** Budget, review, revision and run limits that new Work Items copy. */
+function Limits({ settings }: { settings: Settings }) {
+  return (
+    <section className="box" aria-labelledby="settings-limits">
+      <h2 id="settings-limits" className="box-row font-semibold">
+        Limits
+      </h2>
+      <p className="box-row text-muted">
+        New Work Items copy these limits; work already in flight keeps its own.
+        Leave a field empty to use the default.
+      </p>
+      {LIMIT_ROWS.map((row) => (
+        <LimitRow
+          key={row.key}
+          slug={settings.slug}
+          row={row}
+          limits={settings.limits}
+        />
+      ))}
+    </section>
+  );
+}
+
+function LimitRow({
+  slug,
+  row,
+  limits,
+}: {
+  slug: string;
+  row: (typeof LIMIT_ROWS)[number];
+  limits: Settings["limits"];
+}) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const fallback = limits.defaults[row.key];
+  // A limit equal to its default shows as the default.
+  const saved = limits[row.key] === fallback ? "" : String(limits[row.key]);
+  const [value, setValue] = useState(saved);
+  const [invalid, setInvalid] = useState<string | null>(null);
+  // The text last saved or sent: Enter then blur saves once.
+  const committed = useRef(saved);
+  // Another tab's edit arrives through /api/events.
+  useEffect(() => {
+    committed.current = saved;
+    setValue(saved);
+  }, [saved]);
+  const save = useMutation({
+    mutationFn: (next: number | null) =>
+      saveLimits(slug, { [row.key]: next } as LimitsEdit),
+    onSuccess: (_, next) => {
+      void client.invalidateQueries({ queryKey: ["factories", slug] });
+      const display = (n: number) => (row.money ? money(n) : String(n));
+      toast({
+        title: "Limits saved",
+        description: `${row.label}: ${next === null ? `default (${display(fallback)})` : display(next)} for new Work Items.`,
+        tone: "ok",
+      });
+    },
+  });
+  const commit = (input: HTMLInputElement) => {
+    const text = input.value.trim();
+    if (!input.checkValidity()) {
+      setInvalid(input.validationMessage);
+      return;
+    }
+    if (text === committed.current) return;
+    committed.current = text;
+    save.mutate(text === "" ? null : Number(text), {
+      onError: () => {
+        committed.current = saved;
+      },
+    });
+  };
+  const id = `limit-${row.key}`;
+  return (
+    <div className="box-row grid gap-xs">
+      <div className="flex flex-wrap items-center justify-between gap-md">
+        <label htmlFor={id} className="field-label">
+          {row.label}
+          {row.hint && <span className="field-hint">{row.hint}</span>}
+        </label>
+        <span className="limit-input">
+          {row.money && <span aria-hidden="true">$</span>}
+          <input
+            id={id}
+            className="input input-narrow"
+            type="number"
+            inputMode={row.money ? "decimal" : "numeric"}
+            min={row.min}
+            max={row.max}
+            step={row.step}
+            placeholder={`Default: ${row.money ? money(fallback) : fallback}`}
+            value={value}
+            aria-invalid={invalid ? true : undefined}
+            onChange={(event) => {
+              setValue(event.target.value);
+              setInvalid(null);
+              save.reset();
+            }}
+            onBlur={(event) => commit(event.currentTarget)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit(event.currentTarget);
+            }}
+          />
+        </span>
+      </div>
+      {row.help && <p className="text-muted">{row.help}</p>}
+      {(invalid ?? save.error) && (
+        <p className="form-error" role="alert">
+          {invalid ?? save.error?.message}
+        </p>
+      )}
+    </div>
   );
 }
 

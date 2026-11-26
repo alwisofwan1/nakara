@@ -1,5 +1,5 @@
 import type { Approval, Message, Run, Store, WorkItem } from "../db.ts";
-import type { Limits, Stage } from "../domain/policy.ts";
+import type { Stage } from "../domain/policy.ts";
 import type { ReviewVerdict } from "../domain/review.ts";
 import {
   AGENT_LOOK,
@@ -269,7 +269,6 @@ function actionCard(
   view: ItemViewDto,
   runs: Run[],
   approvals: Approval[],
-  limits: Limits,
 ): ActionCardDto {
   const pending = (kind: Approval["kind"]) =>
     approvals.findLast((a) => a.kind === kind && a.status === "pending");
@@ -310,8 +309,8 @@ function actionCard(
         kind: "pr",
         prUrl: item.pr_url,
         prLabel: `PR ${refLabel(item.pr_url)}`,
-        reviews: { used: item.review_count, max: limits.maxReviews },
-        revisions: { used: item.revision_count, max: limits.maxRevisions },
+        reviews: { used: item.review_count, max: item.max_reviews },
+        revisions: { used: item.revision_count, max: item.max_revisions },
       };
     case "failed": {
       const last = agentRuns.at(-1);
@@ -398,11 +397,10 @@ export function itemDetail(
   runs: Run[],
   approvals: Approval[],
   messages: Message[],
-  limits: Limits,
   factory = "",
 ): ItemDetailDto {
   const view = itemView(item, runs, approvals);
-  const card = actionCard(item, view, runs, approvals, limits);
+  const card = actionCard(item, view, runs, approvals);
   // The live run is the action card; it joins the history once it ends.
   const live = card.kind === "live" ? card.run.id : null;
   const conversation: ConversationEntryDto[] = [
@@ -491,19 +489,15 @@ export function itemDetail(
         : null,
     },
     counters: {
-      reviews: { used: item.review_count, max: limits.maxReviews },
-      revisions: { used: item.revision_count, max: limits.maxRevisions },
+      reviews: { used: item.review_count, max: item.max_reviews },
+      revisions: { used: item.revision_count, max: item.max_revisions },
     },
     runs: runRows(runs),
     closed: item.stage === "complete" || item.stage === "cancelled",
   };
 }
 
-export function readItem(
-  store: Store,
-  id: number,
-  limits: Limits,
-): ItemDetailDto | undefined {
+export function readItem(store: Store, id: number): ItemDetailDto | undefined {
   const item = store.item(id);
   if (!item) return undefined;
   return itemDetail(
@@ -511,7 +505,6 @@ export function readItem(
     store.runs(id),
     store.approvals(id),
     store.messages(id),
-    limits,
     store.repos.factories.factoryById(item.factory_id)?.slug,
   );
 }

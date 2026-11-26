@@ -127,12 +127,7 @@ export class HumanInput {
     const run = this.store.runById(runId);
     if (!run) return { ok: false, code: "not_found", reason: "Run not found." };
     const agent = this.definition()?.agents.get(run.agent);
-    const verdict = checkFollowUp(
-      this.store,
-      run,
-      agent?.type,
-      this.config.limits,
-    );
+    const verdict = checkFollowUp(this.store, run, agent?.type);
     if (!verdict.ok || !agent)
       return {
         ok: false,

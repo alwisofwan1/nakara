@@ -67,6 +67,13 @@ test("options list the definition's repositories, enabled automations and known 
     requester: "operator",
   });
   assert.deepEqual(options.requesters, ["operator", "zoe"]);
+  // The form starts from the factory's own Budget per Work Item.
+  const { id } = store.repos.factories.defaultFactory();
+  store.repos.factorySettings.saveLimits(id, { budgetUsd: 5 });
+  assert.equal(
+    readNewWorkOptions(store, factory.definition, id).defaults.budgetUsd,
+    5,
+  );
   assert.equal(readNewWorkOptions(store, undefined).ready, false);
   store.db.close();
 });

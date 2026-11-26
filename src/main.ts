@@ -28,6 +28,8 @@ const store = (() => {
     return new Store(config.dbPath, {
       defaultBudgetUsd: config.limits.budgetUsd,
       defaultMaxRuns: config.limits.maxRuns,
+      defaultMaxReviews: config.limits.maxReviews,
+      defaultMaxRevisions: config.limits.maxRevisions,
       backup: config.backup,
       factory: factorySeed,
     });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { Repositories } from "../db.ts";
 import type { FactoryRepository } from "../db/factories.ts";
 import type { Commit } from "../definition/history.ts";
 import { FOLDER, REPO } from "./wizard.ts";
@@ -16,7 +17,7 @@ export type FactoryDto = ReturnType<typeof readFactories>[number];
 
 /** A factory's Settings page; undefined for an unknown slug. */
 export function readFactorySettings(
-  factories: FactoryRepository,
+  repos: Pick<Repositories, "factories" | "factorySettings">,
   slug: string,
   running: {
     /** The `owner/name` repositories of the applied definition. */
@@ -31,6 +32,7 @@ export function readFactorySettings(
     backupDir: string;
   },
 ) {
+  const { factories, factorySettings } = repos;
   const record = factories.factory(slug);
   if (!record) return undefined;
   return {
@@ -43,6 +45,8 @@ export function readFactorySettings(
     isDefault: factories.defaultFactory().id === record.id,
     activeItems: factories.activeItems(record.id),
     backupDir: running.backupDir,
+    // What new Work Items copy; null-saved limits show their default.
+    limits: factorySettings.settings(record.id),
     definition: {
       mode: record.definition_mode,
       dir: record.definition_dir,
@@ -61,6 +65,23 @@ export const renameInput = z.object({
   avatarColor: z
     .string()
     .regex(/^#[0-9a-f]{6}$/i, "avatarColor must be #rrggbb"),
+});
+
+const limit = (min: number, max: number, step: number) =>
+  z
+    .number()
+    .min(min, `must be at least ${min}`)
+    .max(max, `must be at most ${max}`)
+    .multipleOf(step, `must be a multiple of ${step}`)
+    .nullable()
+    .optional();
+
+/** A limits edit: each key optional, null resets it to the environment default. */
+export const limitsInput = z.strictObject({
+  budgetUsd: limit(1, 100, 0.5),
+  maxReviews: limit(1, 5, 1),
+  maxRevisions: limit(0, 5, 1),
+  maxRuns: limit(5, 200, 1),
 });
 
 export const moveInput = z.object({

@@ -5,7 +5,6 @@ import type { AgentType } from "../domain/policy.ts";
 import { type ActionCardDto, readItem } from "./item-detail.ts";
 import { pullRequestDto } from "./pull-request.ts";
 
-const LIMITS = { maxReviews: 1, maxRevisions: 2 };
 const SPEC_PR = "https://github.com/acme/app/pull/12";
 const PR = "https://github.com/acme/app/pull/14";
 
@@ -60,7 +59,7 @@ function fixture(setup: (store: Store, item: WorkItem) => void = () => {}) {
   });
   setup(store, item);
   // biome-ignore lint/style/noNonNullAssertion: The item was just created.
-  const dto = readItem(store, item.id, LIMITS)!;
+  const dto = readItem(store, item.id)!;
   store.db.close();
   return dto;
 }
@@ -440,7 +439,7 @@ test("item detail: properties carry links, budget and counters", () => {
 
 test("item detail: an unknown item has no detail", () => {
   const store = new Store(":memory:", { defaultBudgetUsd: 15 });
-  assert.equal(readItem(store, 99, LIMITS), undefined);
+  assert.equal(readItem(store, 99), undefined);
   store.db.close();
 });
 

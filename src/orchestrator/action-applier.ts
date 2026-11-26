@@ -96,12 +96,7 @@ export class ActionApplier {
       // biome-ignore lint/style/noNonNullAssertion: Preserve the existing required-record assumption instead of silently skipping missing data.
       let item = this.store.item(itemId)!;
       const repositories = factoryRepositories(this.definition());
-      let verdict = check(
-        this.gate.policyFor(item),
-        action,
-        this.config.limits,
-        repositories,
-      );
+      let verdict = check(this.gate.policyFor(item), action, repositories);
       if (!verdict.ok) {
         log.info("action.refused", {
           action: action.type,
@@ -125,12 +120,7 @@ export class ActionApplier {
         // judge the handoff again against the state it will be applied to.
         // biome-ignore lint/style/noNonNullAssertion: Preserve the existing required-record assumption instead of silently skipping missing data.
         item = this.store.item(itemId)!;
-        verdict = check(
-          this.gate.policyFor(item),
-          action,
-          this.config.limits,
-          repositories,
-        );
+        verdict = check(this.gate.policyFor(item), action, repositories);
         if (!verdict.ok) {
           log.info("action.refused", {
             action: action.type,

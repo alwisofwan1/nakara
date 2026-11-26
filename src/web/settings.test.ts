@@ -63,7 +63,7 @@ test("factory settings: the record, its definition and its active items", () => 
     { sha: "a".repeat(40), at: "2026-10-24T10:00:00Z", message: "Edit" },
   ];
   assert.deepEqual(
-    readFactorySettings(factories, "harbor", {
+    readFactorySettings(store.repos, "harbor", {
       repositories: ["acme/widgets"],
       label: "factory:Harbor",
       history,
@@ -79,6 +79,18 @@ test("factory settings: the record, its definition and its active items", () => 
       isDefault: false,
       activeItems: 2,
       backupDir: "/data/backups",
+      limits: {
+        budgetUsd: 15,
+        maxReviews: 1,
+        maxRevisions: 2,
+        maxRuns: 50,
+        defaults: {
+          budgetUsd: 15,
+          maxReviews: 1,
+          maxRevisions: 2,
+          maxRuns: 50,
+        },
+      },
       definition: {
         mode: "managed",
         dir: "/data/factories/harbor",
@@ -89,7 +101,7 @@ test("factory settings: the record, its definition and its active items", () => 
     },
   );
   assert.equal(
-    readFactorySettings(factories, factories.defaultFactory().slug, {
+    readFactorySettings(store.repos, factories.defaultFactory().slug, {
       repositories: [],
       label: null,
       history: [],
@@ -99,7 +111,7 @@ test("factory settings: the record, its definition and its active items", () => 
     true,
   );
   assert.equal(
-    readFactorySettings(factories, "nope", {
+    readFactorySettings(store.repos, "nope", {
       repositories: [],
       label: null,
       history: [],
@@ -238,6 +250,114 @@ test("rename keeps the slug and URLs; another factory's name is refused", async 
       })
     ).status,
     400,
+  );
+});
+
+test("limits: a factory without settings uses the env defaults, a saved one its own, and items keep their snapshot", async (t) => {
+  const { store, harbor, call } = await setup(t);
+  const harborId = harbor.record?.id;
+  const other = store.repos.factories.defaultFactory();
+  const create = (factoryId: number | undefined) =>
+    store.createItem({ title: "T", request: "R", source: "manual", factoryId });
+  const limitsOf = (item: { id: number }) => {
+    // biome-ignore lint/style/noNonNullAssertion: Created above.
+    const row = store.item(item.id)!;
+    return [row.budget_usd, row.max_reviews, row.max_revisions, row.max_runs];
+  };
+  const defaults = {
+    budgetUsd: 15,
+    maxReviews: 1,
+    maxRevisions: 2,
+    maxRuns: 50,
+  };
+
+  // No saved settings: exactly the env limits.
+  const before = create(harborId);
+  assert.deepEqual(limitsOf(before), [15, 1, 2, 50]);
+  assert.deepEqual((await call("GET", "f/harbor/settings")).body.limits, {
+    ...defaults,
+    defaults,
+  });
+
+  const saved = await call("PUT", "f/harbor/settings/limits", {
+    budgetUsd: 5,
+    maxReviews: 3,
+    maxRevisions: 0,
+    maxRuns: 120,
+  });
+  assert.deepEqual(saved, {
+    status: 200,
+    body: {
+      budgetUsd: 5,
+      maxReviews: 3,
+      maxRevisions: 0,
+      maxRuns: 120,
+      defaults,
+    },
+  });
+  assert.deepEqual(limitsOf(create(harborId)), [5, 3, 0, 120]);
+  // Another factory keeps the env defaults.
+  assert.deepEqual(limitsOf(create(other.id)), [15, 1, 2, 50]);
+  // An explicit budget from New work still wins.
+  assert.equal(
+    store.createItem({
+      title: "T",
+      request: "R",
+      source: "manual",
+      factoryId: harborId,
+      budgetUsd: 8,
+    }).budget_usd,
+    8,
+  );
+  // Items created before the change keep the limits they copied (ADR-0006 rule 1).
+  assert.deepEqual(limitsOf(before), [15, 1, 2, 50]);
+
+  // An omitted key stays; null resets one to its default.
+  const reset = await call("PUT", "f/harbor/settings/limits", {
+    budgetUsd: null,
+    maxRevisions: 4,
+  });
+  assert.deepEqual(reset.body, {
+    budgetUsd: 15,
+    maxReviews: 3,
+    maxRevisions: 4,
+    maxRuns: 120,
+    defaults,
+  });
+  assert.deepEqual(limitsOf(create(harborId)), [15, 3, 4, 120]);
+});
+
+test("limits: out-of-range values are refused with 400 and change nothing", async (t) => {
+  const { call } = await setup(t);
+  for (const json of [
+    { budgetUsd: 0.5 },
+    { budgetUsd: 100.5 },
+    { budgetUsd: 5.25 },
+    { maxReviews: 0 },
+    { maxReviews: 6 },
+    { maxRevisions: -1 },
+    { maxRevisions: 6 },
+    { maxRevisions: 1.5 },
+    { maxRuns: 4 },
+    { maxRuns: 201 },
+    { maxRuns: "50" },
+    { budget: 5 },
+  ]) {
+    const refused = await call("PUT", "f/harbor/settings/limits", json);
+    assert.equal(refused.status, 400, JSON.stringify(json));
+    assert.equal(
+      refused.body.error.code,
+      "invalid_input",
+      JSON.stringify(json),
+    );
+  }
+  assert.equal(
+    (await call("PUT", "f/nope/settings/limits", { maxRuns: 60 })).status,
+    404,
+  );
+  assert.equal(
+    (await call("GET", "f/harbor/settings")).body.limits.budgetUsd,
+    15,
   );
 });
 

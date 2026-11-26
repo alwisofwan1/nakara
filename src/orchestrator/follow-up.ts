@@ -1,19 +1,13 @@
 // A human follow-up from the run page is the foreman's follow_up action: the
 // same policy check, plus the preconditions the foreman's MCP tool enforces.
 import type { Run, Store } from "../db.ts";
-import {
-  type AgentType,
-  check,
-  type Limits,
-  type Verdict,
-} from "../domain/policy.ts";
+import { type AgentType, check, type Verdict } from "../domain/policy.ts";
 import { policyFor } from "./pull-request-gate.ts";
 
 export function checkFollowUp(
   store: Store,
   run: Run,
   agentType: AgentType | undefined,
-  limits: Limits,
 ): Verdict {
   const refuse = (reason: string): Verdict => ({ ok: false, reason });
   if (run.role !== "agent")
@@ -40,7 +34,6 @@ export function checkFollowUp(
   return check(
     policyFor(store, item),
     { type: "follow_up", agent: run.agent, agentType, message: "" },
-    limits,
     // A follow-up names no URL.
     [],
   );

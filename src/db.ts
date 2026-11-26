@@ -2,11 +2,17 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { DEFAULT_MAX_RUNS, type PolicyState } from "./domain/policy.ts";
+import {
+  DEFAULT_MAX_REVIEWS,
+  DEFAULT_MAX_REVISIONS,
+  DEFAULT_MAX_RUNS,
+  type PolicyState,
+} from "./domain/policy.ts";
 import { ApprovalRepository } from "./db/approvals.ts";
 import { EventRepository } from "./db/events.ts";
 import { EvidenceRepository } from "./db/evidence.ts";
 import { FactoryRepository, type FactorySeed } from "./db/factories.ts";
+import { FactorySettingsRepository } from "./db/factory-settings.ts";
 import {
   INSTANCE_KEY,
   type Instance,
@@ -28,6 +34,11 @@ export type { Learning } from "./db/learnings.ts";
 export type { EventKind, ItemEvent } from "./db/events.ts";
 export type { Evidence } from "./db/evidence.ts";
 export type {
+  FactoryLimitSettings,
+  FactoryLimits,
+  LimitsEdit,
+} from "./db/factory-settings.ts";
+export type {
   DefinitionMode,
   FactoryRecord,
   FactorySeed,
@@ -46,6 +57,7 @@ export {
 /** The repositories of one database, sharing its connection and notifier. */
 export interface Repositories {
   factories: FactoryRepository;
+  factorySettings: FactorySettingsRepository;
   items: ItemRepository;
   events: EventRepository;
   runs: RunRepository;
@@ -77,6 +89,10 @@ export class Store {
   readonly defaultBudgetUsd: number;
   /** The run limit of new items, and of items that predate per-item run limits. */
   readonly defaultMaxRuns: number;
+  /** The review limit of new items in a factory without its own, and of items that predate per-item review limits. */
+  readonly defaultMaxReviews: number;
+  /** The revision limit of new items in a factory without its own, and of items that predate per-item revision limits. */
+  readonly defaultMaxRevisions: number;
   /** `PRAGMA user_version` after migrating. */
   readonly schemaVersion: number;
   /** This process; the runs it starts carry its id. */
@@ -104,6 +120,10 @@ export class Store {
       defaultBudgetUsd: number;
       /** The run limit of new items and of items that predate run limits; DEFAULT_MAX_RUNS when omitted. */
       defaultMaxRuns?: number;
+      /** The default review limit; DEFAULT_MAX_REVIEWS when omitted. */
+      defaultMaxReviews?: number;
+      /** The default revision limit; DEFAULT_MAX_REVISIONS when omitted. */
+      defaultMaxRevisions?: number;
       backup?: { dir: string; keep: number };
       /** The database's lock, already taken with lockDatabase(); close() releases it. */
       lock?: DatabaseSync;
@@ -121,6 +141,9 @@ export class Store {
     this.defaultMaxRuns = options.defaultMaxRuns ?? DEFAULT_MAX_RUNS;
     if (!(Number.isInteger(this.defaultMaxRuns) && this.defaultMaxRuns > 0))
       throw new Error("The default run limit must be a positive integer.");
+    this.defaultMaxReviews = options.defaultMaxReviews ?? DEFAULT_MAX_REVIEWS;
+    this.defaultMaxRevisions =
+      options.defaultMaxRevisions ?? DEFAULT_MAX_REVISIONS;
     const memory = path === ":memory:";
     if (!memory) mkdirSync(dirname(path), { recursive: true });
     this.lock = memory ? undefined : (options.lock ?? lockDatabase(path));
@@ -134,6 +157,8 @@ export class Store {
       this.schemaVersion = migrate(this.db, {
         defaultBudgetUsd: this.defaultBudgetUsd,
         defaultMaxRuns: this.defaultMaxRuns,
+        defaultMaxReviews: this.defaultMaxReviews,
+        defaultMaxRevisions: this.defaultMaxRevisions,
         backup: options.backup,
         factory: options.factory ?? (memory ? () => MEMORY_FACTORY : undefined),
       });
@@ -148,14 +173,16 @@ export class Store {
       if (this.lock) unlockDatabase(this.lock);
       throw error;
     }
-    const items = new ItemRepository(
-      db,
-      this.notifier,
-      this.defaultBudgetUsd,
-      this.defaultMaxRuns,
-    );
+    const factorySettings = new FactorySettingsRepository(db, this.notifier, {
+      budgetUsd: this.defaultBudgetUsd,
+      maxReviews: this.defaultMaxReviews,
+      maxRevisions: this.defaultMaxRevisions,
+      maxRuns: this.defaultMaxRuns,
+    });
+    const items = new ItemRepository(db, this.notifier, factorySettings);
     this.repos = {
       factories: new FactoryRepository(db, this.notifier),
+      factorySettings,
       items,
       events: new EventRepository(db, this.notifier),
       runs: new RunRepository(db, this.notifier, this.instance.id, items),

@@ -91,8 +91,8 @@ export class FactoryRepository extends Repository {
   /**
    * Remove the factory with its closed items and their runs, events,
    * messages, approvals and per-item settings (Telegram links, and the kv
-   * keys under `itemKeyPrefixes` that other modules own), and its repository
-   * status (`repo:<slug>`, see runner/repos.ts). The caller refuses a factory
+   * keys under `itemKeyPrefixes` that other modules own), its saved limits,
+   * and its repository status (`repo:<slug>`, see runner/repos.ts). The caller refuses a factory
    * with active items; the foreign keys refuse what is left behind.
    */
   deleteFactory(id: number, itemKeyPrefixes: readonly string[] = []): void {
@@ -125,6 +125,7 @@ export class FactoryRepository extends Repository {
       ])
         this.run(`DELETE FROM ${table} WHERE item_id IN (${items})`, id);
       this.run("DELETE FROM work_items WHERE factory_id = ?", id);
+      this.run("DELETE FROM factory_settings WHERE factory_id = ?", id);
       this.run("DELETE FROM factories WHERE id = ?", id);
     });
     for (const type of ["factories", "items", "runs", "status"] as const)
