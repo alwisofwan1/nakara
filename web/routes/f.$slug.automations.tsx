@@ -15,6 +15,8 @@ import { NewWorkDialog } from "../features/new-work/newWork";
 import { automationPrefill } from "../features/new-work/prefill";
 import { useToast } from "../app/toast";
 import { AutomationForm, utc } from "../features/automations/automation-form";
+import { DeleteAutomation } from "../features/automations/delete-automation";
+import { NewAutomationForm } from "../features/automations/new-automation";
 
 export const Route = createFileRoute("/f/$slug/automations")({
   // Started, not awaited: the page shows its frame and its own loading state.
@@ -38,6 +40,8 @@ function Automations() {
   const { data, isError, refetch } = useQuery(automationsQuery(slug));
   const [selected, setSelected] = useState<string | null>(null);
   const current = data?.find((automation) => automation.name === selected);
+  // New automation opens the drawer empty instead of on a row.
+  const [creating, setCreating] = useState(false);
   // Run now for an event-triggered automation opens New work on it.
   const [newWork, setNewWork] = useState<string | null>(null);
   // Unsaved instructions and the revision they started from; null shows the
@@ -149,6 +153,7 @@ function Automations() {
       }),
   });
   const select = (name: string) => {
+    setCreating(false);
     if (name === selected) return;
     setSelected(name);
     setDraft(null);
@@ -175,7 +180,22 @@ function Automations() {
   );
   return (
     <section>
-      <h1 className="mb-md text-heading font-semibold">Automations</h1>
+      <div className="mb-md flex flex-wrap items-center gap-md">
+        <h1 className="text-heading font-semibold">Automations</h1>
+        <button
+          type="button"
+          className="primary ml-auto"
+          aria-expanded={creating}
+          onClick={() => {
+            setSelected(null);
+            setDraft(null);
+            save.reset();
+            setCreating(true);
+          }}
+        >
+          New automation
+        </button>
+      </div>
       <p className="mb-xl text-muted">
         When something happens, create a work item with these instructions.
         Defined in factory/automations/*.
@@ -287,17 +307,42 @@ function Automations() {
           </div>
         )}
         <Dialog.Root
-          open={Boolean(current)}
+          open={Boolean(current) || creating}
           modal={false}
           onOpenChange={(open) => {
             if (!open) {
+              setCreating(false);
               setSelected(null);
               setDraft(null);
               save.reset();
             }
           }}
         >
-          {current && (
+          {creating && (
+            <Dialog.Content
+              className="automation-pane"
+              aria-describedby={undefined}
+              onInteractOutside={(event) => event.preventDefault()}
+            >
+              <div className="flex items-center justify-between gap-md">
+                <Dialog.Title className="font-semibold">
+                  New automation
+                </Dialog.Title>
+                <Dialog.Close
+                  className="ghost"
+                  aria-label="Close new automation"
+                >
+                  Close
+                </Dialog.Close>
+              </div>
+              <NewAutomationForm
+                slug={slug}
+                onCreated={(name) => select(name)}
+                onCancel={() => setCreating(false)}
+              />
+            </Dialog.Content>
+          )}
+          {current && !creating && (
             <Dialog.Content
               className="automation-pane"
               aria-describedby={undefined}
@@ -494,6 +539,17 @@ function Automations() {
                   <p className="text-muted">No items yet.</p>
                 )}
               </section>
+              <DeleteAutomation
+                key={current.name}
+                slug={slug}
+                name={current.name}
+                revision={current.revision}
+                onDeleted={() => {
+                  setSelected(null);
+                  setDraft(null);
+                }}
+                onConflict={() => reload.mutate()}
+              />
             </Dialog.Content>
           )}
         </Dialog.Root>

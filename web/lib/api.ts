@@ -243,6 +243,36 @@ export const saveAutomation = (
     "Unable to save the automation",
   );
 
+export type NewAutomation = InferRequestType<
+  typeof factoryApi.automations.$post
+>["json"];
+/**
+ * Writes automations/<name>/automation.md and reloads. A refused automation
+ * throws its problems; a taken name throws code "conflict".
+ */
+export const createAutomation = (slug: string, json: NewAutomation) =>
+  body(
+    factoryApi.automations.$post({ param: { slug }, json }),
+    "Unable to create the automation",
+  );
+
+/**
+ * Deletes the automation's folder and reloads; its work items stay. A page
+ * older than automation.md throws code "conflict".
+ */
+export const deleteAutomation = (
+  slug: string,
+  name: string,
+  revision: string,
+) =>
+  body(
+    factoryApi.automations[":name"].$delete({
+      param: { slug, name },
+      json: { revision },
+    }),
+    "Unable to delete the automation",
+  );
+
 /** The next fire time of a cron being edited, or valid: false. */
 export const cronPreviewQuery = (slug: string, cron: string) =>
   queryOptions({

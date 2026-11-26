@@ -55,12 +55,16 @@ const kindOf = (t: Trigger): Kind | null =>
           ? "telegram"
           : null;
 
-interface Form {
-  displayName: string;
+/** The drawer's trigger fields; only the chosen kind's value is sent. */
+export interface TriggerForm {
   kind: Kind | null;
   label: string;
   cron: string;
   members: string;
+}
+
+interface Form extends TriggerForm {
+  displayName: string;
   agent: string;
 }
 
@@ -79,6 +83,40 @@ function initial(automation: Automation): Form {
 }
 
 const memberIds = (text: string) => text.split(/[\s,]+/).filter(Boolean);
+
+/** The trigger the form describes, as the API takes it; null before a kind is chosen. */
+export function triggerOf(form: TriggerForm): AutomationSave["trigger"] | null {
+  switch (form.kind) {
+    case "github_label":
+      return { kind: form.kind, label: form.label.trim() };
+    case "schedule":
+      return { kind: form.kind, cron: form.cron.trim() };
+    case "slack":
+      return { kind: form.kind, members: memberIds(form.members) };
+    case "telegram":
+      return { kind: form.kind };
+    default:
+      return null;
+  }
+}
+
+/** The schedule's next run, and whether the chosen trigger is missing its value. */
+export function useTriggerCheck(slug: string, form: TriggerForm) {
+  const cron = useDeferredValue(form.cron.trim());
+  const preview = useQuery({
+    ...cronPreviewQuery(slug, cron),
+    enabled: form.kind === "schedule" && cron !== "",
+    placeholderData: keepPreviousData,
+  });
+  const invalidCron =
+    form.kind === "schedule" &&
+    (form.cron.trim() === "" || preview.data?.valid === false);
+  const incomplete =
+    invalidCron ||
+    (form.kind === "github_label" && !form.label.trim()) ||
+    (form.kind === "slack" && memberIds(form.members).length === 0);
+  return { preview: preview.data, invalidCron, incomplete };
+}
 
 /** Why the drawer cannot change the triggers, or null when it can. */
 function readOnly(automation: Automation): string | null {
@@ -111,15 +149,8 @@ function changes(
     (form.kind === "schedule" && form.cron.trim() !== saved.cron) ||
     (form.kind === "slack" &&
       memberIds(form.members).join() !== memberIds(saved.members).join());
-  if (triggerChanged && form.kind)
-    edit.trigger =
-      form.kind === "github_label"
-        ? { kind: form.kind, label: form.label.trim() }
-        : form.kind === "schedule"
-          ? { kind: form.kind, cron: form.cron.trim() }
-          : form.kind === "slack"
-            ? { kind: form.kind, members: memberIds(form.members) }
-            : { kind: form.kind };
+  const trigger = triggerChanged && triggerOf(form);
+  if (trigger) edit.trigger = trigger;
   return edit;
 }
 
@@ -149,21 +180,10 @@ export function AutomationForm({
   const locked = readOnly(automation);
   const editable = Boolean(automation.revision);
   const agents = useQuery(agentsQuery(slug));
-  const cron = useDeferredValue(form.cron.trim());
-  const preview = useQuery({
-    ...cronPreviewQuery(slug, cron),
-    enabled: form.kind === "schedule" && cron !== "",
-    placeholderData: keepPreviousData,
-  });
-  const invalidCron =
-    form.kind === "schedule" &&
-    (form.cron.trim() === "" || preview.data?.valid === false);
+  const check = useTriggerCheck(slug, form);
   const pending = changes(form, saved, automation.name);
   const dirty = Object.keys(pending).length > 0;
-  const incomplete =
-    invalidCron ||
-    (form.kind === "github_label" && !form.label.trim()) ||
-    (form.kind === "slack" && memberIds(form.members).length === 0);
+  const { incomplete } = check;
   const save = useMutation({
     mutationFn: () =>
       saveAutomation(slug, automation.name, {
@@ -224,23 +244,12 @@ export function AutomationForm({
           </>
         ) : (
           <>
-            <fieldset
-              className="flex flex-wrap gap-xs"
-              aria-label="Trigger"
+            <TriggerFields
+              form={form}
+              edit={edit}
               disabled={!editable}
-            >
-              {KINDS.map(({ kind, label }) => (
-                <button
-                  key={kind}
-                  type="button"
-                  className="kind-pill"
-                  aria-pressed={form.kind === kind}
-                  onClick={() => edit({ kind })}
-                >
-                  {label}
-                </button>
-              ))}
-            </fieldset>
+              check={check}
+            />
             {!form.kind &&
               automation.triggers.map((trigger) => (
                 <TriggerSummary
@@ -248,81 +257,6 @@ export function AutomationForm({
                   trigger={trigger}
                 />
               ))}
-            {form.kind === "github_label" && (
-              <label className="field">
-                <span className="field-label">
-                  Label
-                  <span className="field-hint">
-                    Labeling an issue with it creates a work item.
-                  </span>
-                </span>
-                <input
-                  className="input"
-                  value={form.label}
-                  disabled={!editable}
-                  onChange={(e) => edit({ label: e.target.value })}
-                />
-              </label>
-            )}
-            {form.kind === "schedule" && (
-              <label className="field">
-                <span className="field-label">
-                  Schedule
-                  <span className="field-hint">
-                    Cron, 5 fields or @daily, in UTC
-                  </span>
-                </span>
-                <input
-                  className="input font-mono"
-                  value={form.cron}
-                  placeholder="0 9 * * 1"
-                  spellCheck={false}
-                  disabled={!editable}
-                  aria-invalid={invalidCron}
-                  aria-describedby="automation-cron-preview"
-                  onChange={(e) => edit({ cron: e.target.value })}
-                />
-                <span
-                  id="automation-cron-preview"
-                  className={
-                    invalidCron
-                      ? "text-small text-bad"
-                      : "text-small text-muted"
-                  }
-                >
-                  {invalidCron
-                    ? "Not a valid schedule"
-                    : preview.data?.valid
-                      ? preview.data.nextFire
-                        ? `Next run: ${utc(preview.data.nextFire)}`
-                        : "Never runs within 5 years"
-                      : "Checking…"}
-                </span>
-              </label>
-            )}
-            {form.kind === "slack" && (
-              <label className="field">
-                <span className="field-label">
-                  Slack member IDs
-                  <span className="field-hint">
-                    Profile → ⋯ → Copy member ID; separate with commas
-                  </span>
-                </span>
-                <input
-                  className="input font-mono"
-                  value={form.members}
-                  placeholder="U0123ABC, U0456DEF"
-                  spellCheck={false}
-                  disabled={!editable}
-                  onChange={(e) => edit({ members: e.target.value })}
-                />
-              </label>
-            )}
-            {form.kind === "telegram" && (
-              <p className="field-hint">
-                A message from the trusted Telegram chat creates a work item.
-              </p>
-            )}
           </>
         )}
       </section>
@@ -398,6 +332,114 @@ export function AutomationForm({
         </div>
       )}
     </form>
+  );
+}
+
+/** The trigger kinds and the chosen kind's value, with the schedule's next run. */
+export function TriggerFields({
+  form,
+  edit,
+  disabled,
+  check,
+}: {
+  form: TriggerForm;
+  edit: (patch: Partial<TriggerForm>) => void;
+  disabled: boolean;
+  check: ReturnType<typeof useTriggerCheck>;
+}) {
+  return (
+    <>
+      <fieldset
+        className="flex flex-wrap gap-xs"
+        aria-label="Trigger"
+        disabled={disabled}
+      >
+        {KINDS.map(({ kind, label }) => (
+          <button
+            key={kind}
+            type="button"
+            className="kind-pill"
+            aria-pressed={form.kind === kind}
+            onClick={() => edit({ kind })}
+          >
+            {label}
+          </button>
+        ))}
+      </fieldset>
+      {form.kind === "github_label" && (
+        <label className="field">
+          <span className="field-label">
+            Label
+            <span className="field-hint">
+              Labeling an issue with it creates a work item.
+            </span>
+          </span>
+          <input
+            className="input"
+            value={form.label}
+            disabled={disabled}
+            onChange={(e) => edit({ label: e.target.value })}
+          />
+        </label>
+      )}
+      {form.kind === "schedule" && (
+        <label className="field">
+          <span className="field-label">
+            Schedule
+            <span className="field-hint">Cron, 5 fields or @daily, in UTC</span>
+          </span>
+          <input
+            className="input font-mono"
+            value={form.cron}
+            placeholder="0 9 * * 1"
+            spellCheck={false}
+            disabled={disabled}
+            aria-invalid={check.invalidCron}
+            aria-describedby="automation-cron-preview"
+            onChange={(e) => edit({ cron: e.target.value })}
+          />
+          <span
+            id="automation-cron-preview"
+            className={
+              check.invalidCron
+                ? "text-small text-bad"
+                : "text-small text-muted"
+            }
+          >
+            {check.invalidCron
+              ? "Not a valid schedule"
+              : check.preview?.valid
+                ? check.preview.nextFire
+                  ? `Next run: ${utc(check.preview.nextFire)}`
+                  : "Never runs within 5 years"
+                : "Checking…"}
+          </span>
+        </label>
+      )}
+      {form.kind === "slack" && (
+        <label className="field">
+          <span className="field-label">
+            Slack member IDs
+            <span className="field-hint">
+              Profile → ⋯ → Copy member ID; separate with commas
+            </span>
+          </span>
+          <input
+            className="input font-mono"
+            value={form.members}
+            placeholder="U0123ABC, U0456DEF"
+            spellCheck={false}
+            disabled={disabled}
+            onChange={(e) => edit({ members: e.target.value })}
+          />
+        </label>
+      )}
+      {form.kind === "telegram" && (
+        <p className="field-hint">
+          A message from the trusted Telegram chat creates a work item.
+        </p>
+      )}
+    </>
   );
 }
 
