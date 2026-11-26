@@ -4,6 +4,7 @@ import { type Definition, factoryRepositories } from "../definition/load.ts";
 import { type Action, check, runsUsed } from "../domain/policy.ts";
 import { pushOnlyPrompt, short } from "../domain/pushed.ts";
 import type { RecordedAction } from "../mcp/types.ts";
+import { agentGhEnv } from "../runner/agent-token.ts";
 import { removeWorkspace, run as runCmd } from "../runner/workspace.ts";
 import {
   envSecrets,
@@ -32,13 +33,33 @@ export interface ActionIO extends PullRequestPort {
   removeWorkspace(itemId: number, config: Config): Promise<unknown>;
 }
 
-export const GH_IO: ActionIO = {
+/**
+ * GitHub for the factory `slug`: its writes (marking a PR ready, mirroring
+ * on the issue) run with the factory's agent token, resolved at each call,
+ * so they reach repositories only that token can write to. Without an own
+ * or shared token they use gh's login, as before. Reads for the gate stay on
+ * gh's login: the agent token needs no Checks or Commit statuses permission.
+ */
+export const ghIO = (
+  slug?: string,
+  run: typeof runCmd = runCmd,
+  env: NodeJS.ProcessEnv = process.env,
+): ActionIO => ({
   ...GH_PULL_REQUESTS,
-  markReady: (prUrl) => runCmd("gh", ["pr", "ready", prUrl], undefined, 60_000),
+  markReady: (prUrl) =>
+    run("gh", ["pr", "ready", prUrl], undefined, 60_000, agentGhEnv(slug, env)),
   comment: (issueUrl, body) =>
-    runCmd("gh", ["issue", "comment", issueUrl, "--body", body]),
+    run(
+      "gh",
+      ["issue", "comment", issueUrl, "--body", body],
+      undefined,
+      undefined,
+      agentGhEnv(slug, env),
+    ),
   removeWorkspace,
-};
+});
+
+export const GH_IO: ActionIO = ghIO();
 
 /** The comment that mirrors an applied action on the work item's GitHub issue, if any. */
 export function mirrorBody(a: Action): string | null {

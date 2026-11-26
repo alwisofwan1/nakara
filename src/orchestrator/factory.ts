@@ -13,7 +13,7 @@ import {
   DefinitionService,
   type DefinitionWrite,
 } from "./definition-service.ts";
-import { ActionApplier } from "./action-applier.ts";
+import { ActionApplier, ghIO } from "./action-applier.ts";
 import { AgentRunner } from "./agent-runner.ts";
 import { ForemanRunner } from "./foreman-runner.ts";
 import { HumanInput } from "./human-input.ts";
@@ -106,7 +106,8 @@ export class Factory {
       store,
       config,
       () => this.def(),
-      undefined,
+      // Its writes on GitHub run with this factory's agent token.
+      ghIO(options.record?.slug),
       telemetry.log,
       this.control,
     );

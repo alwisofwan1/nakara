@@ -11,7 +11,12 @@ import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
 import type { PrCheck } from "../domain/checks.ts";
 import type { Action } from "../domain/policy.ts";
 import type { PrIO } from "../domain/pushed.ts";
-import { ActionApplier, type ActionIO, mirrorBody } from "./action-applier.ts";
+import {
+  ActionApplier,
+  type ActionIO,
+  ghIO,
+  mirrorBody,
+} from "./action-applier.ts";
 import { RunControl } from "./run-support.ts";
 
 const item0 = (s: Store) => s.items()[0]?.id ?? 0;
@@ -620,4 +625,62 @@ test("a mirrored update is posted with token-shaped strings redacted", async (t)
     await new Promise((resolve) => setTimeout(resolve, 10));
   const comment = calls.find((c) => c[0] === "comment");
   assert.equal(comment?.[2], "Found [redacted] in the log");
+});
+
+/** A `gh` on PATH that records the GH_TOKEN it ran with and its arguments. */
+function fakeGh(t: TestContext) {
+  const dir = mkdtempSync(join(tmpdir(), "nakara-gh-"));
+  const log = join(dir, "log");
+  writeFileSync(
+    join(dir, "gh"),
+    `#!/bin/sh\necho "token=\${GH_TOKEN:-<login>} args=$*" >> "${log}"\n`,
+    { mode: 0o755 },
+  );
+  const path = process.env.PATH;
+  process.env.PATH = `${dir}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return () =>
+    execFileSync("cat", [log], { encoding: "utf8" }).trim().split("\n");
+}
+
+test("two factories' host-side writes each run with their own agent token, in the environment only", async (t) => {
+  const calls = fakeGh(t);
+  const env = {
+    NAKARA_AGENT_GH_TOKEN: "shared-value",
+    NAKARA_AGENT_GH_TOKEN__ACME: "acme-value",
+    NAKARA_AGENT_GH_TOKEN__CLIENT_APP: "client-value",
+  };
+  const pr = "https://github.com/client/app/pull/1";
+  const issue = "https://github.com/acme/app/issues/2";
+  await ghIO("acme", undefined, env).markReady(pr);
+  await ghIO("client-app", undefined, env).comment(issue, "Done");
+  // A factory without its own token uses the shared one.
+  await ghIO("other", undefined, env).markReady(pr);
+  assert.deepEqual(calls(), [
+    `token=acme-value args=pr ready ${pr}`,
+    `token=client-value args=issue comment ${issue} --body Done`,
+    `token=shared-value args=pr ready ${pr}`,
+  ]);
+});
+
+test("without an own or shared token, host-side writes keep gh's login", async (t) => {
+  const calls = fakeGh(t);
+  const saved = process.env.GH_TOKEN;
+  delete process.env.GH_TOKEN;
+  t.after(() => {
+    if (saved !== undefined) process.env.GH_TOKEN = saved;
+  });
+  const pr = "https://github.com/acme/app/pull/1";
+  // none, and the personal opt-in (whose token is gh's login).
+  await ghIO("acme", undefined, {}).markReady(pr);
+  await ghIO("acme", undefined, {
+    NAKARA_ALLOW_PERSONAL_GH_TOKEN: "1",
+  }).markReady(pr);
+  assert.deepEqual(calls(), [
+    `token=<login> args=pr ready ${pr}`,
+    `token=<login> args=pr ready ${pr}`,
+  ]);
 });

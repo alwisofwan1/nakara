@@ -682,7 +682,11 @@ the agent's runner:
   page and `/healthz` name each factory's source and, after each repository
   check (every 10 minutes), warn when that token cannot push to one of the
   factory's repositories. The New factory wizard checks the repositories with
-  the token the factory will get. To hand agents your own `gh auth token`
+  the token the factory will get. Nakara marks a factory's pull requests ready
+  and mirrors its updates on issues with the same token (with neither an own
+  nor a shared token, with your gh login); it reads checks and PR state with
+  your gh login, since the agent token has no Checks or Commit statuses
+  permission. To hand agents your own `gh auth token`
   instead, which reaches every repo you can, set
   `NAKARA_ALLOW_PERSONAL_GH_TOKEN=1`; it applies to factories with neither
   their own nor the shared token, and the definition page and `/healthz` then

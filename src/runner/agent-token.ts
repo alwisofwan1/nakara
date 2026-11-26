@@ -57,6 +57,20 @@ export function agentTokenSecret(
   return variable ? env[variable] : undefined;
 }
 
+/**
+ * The environment a host-side `gh` call made for the factory's work runs
+ * with: its own or the shared token as GH_TOKEN. Undefined for the personal
+ * opt-in, whose token is gh's own login, and for none, which keeps gh's
+ * login as before per-factory tokens.
+ */
+export function agentGhEnv(
+  slug: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> | undefined {
+  const token = agentTokenSecret(slug, env);
+  return token ? { GH_TOKEN: token, GITHUB_TOKEN: "" } : undefined;
+}
+
 /** How the UI and /healthz name a source. */
 export const agentTokenLabel = ({ source, variable }: AgentToken): string =>
   source === "own"
