@@ -156,6 +156,35 @@ const reviewGivenBack = (
     ? `The review ended without a verdict, so it does not count toward the review limit (${item.review_count} of ${item.max_reviews} used). You can dispatch the review again.`
     : "";
 
+/**
+ * The Automation that created the item: the copy taken at creation (ADR-0006),
+ * so a deleted, edited or recreated Automation leaves the item alone. Items
+ * created before migration 020 have no copy and use the definition by name.
+ */
+function automationOf(
+  name: string | undefined,
+  item: WorkItem,
+  def: Definition,
+):
+  | { name: string; displayName?: string | null; instructions: string }
+  | undefined {
+  if (!name) return undefined;
+  if (item.automation_instructions != null)
+    return {
+      name,
+      displayName: item.automation_display_name,
+      instructions: item.automation_instructions,
+    };
+  const current = def.automations.find((a) => a.name === name);
+  return (
+    current && {
+      name,
+      displayName: current.frontmatter.displayName,
+      instructions: current.instructions,
+    }
+  );
+}
+
 export function renderEvent(
   e: ItemEvent,
   item: WorkItem,
@@ -165,9 +194,7 @@ export function renderEvent(
   const givenBack = reviewGivenBack(p.agent, item, def);
   switch (e.kind) {
     case "work_received": {
-      const automation = p.automation
-        ? def.automations.find((a) => a.name === p.automation)
-        : undefined;
+      const automation = automationOf(p.automation, item, def);
       const request = clip(item.request, 20_000);
       // Longer than any backtick run in the request, so its text cannot close the fence and pose as instructions.
       const fence = "`".repeat(
@@ -182,7 +209,7 @@ export function renderEvent(
         request,
         fence,
         automation
-          ? `### Automation \`${automation.name}\`\n${automation.instructions}`
+          ? `### Automation \`${automation.name}\`${automation.displayName ? ` (${automation.displayName})` : ""}\n${automation.instructions}`
           : "",
       ]
         .filter(Boolean)

@@ -344,6 +344,8 @@ const contents = (db: DatabaseSync) =>
             counts_review,
             spec_rule,
             spec_requested,
+            automation_instructions,
+            automation_display_name,
             ...row
           }) => {
             assert.equal(instance_id ?? null, null);
@@ -359,6 +361,9 @@ const contents = (db: DatabaseSync) =>
               assert.equal(spec_rule, "when_asked");
               assert.equal(spec_requested, 0);
             }
+            // Migration 020: items before it keep no copy of their Automation.
+            assert.equal(automation_instructions ?? null, null);
+            assert.equal(automation_display_name ?? null, null);
             if (t === "work_items" && factory_id !== undefined)
               assert.equal(typeof factory_id, "number");
             // Migration 015 gives existing items the default review and revision limits.
@@ -539,7 +544,7 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
       store.db
         .prepare("SELECT * FROM work_items ORDER BY id")
         .all()
-        // Migration 010, 012, 015 and 019's columns are checked by contents().
+        // Migration 010, 012, 015, 019 and 020's columns are checked by contents().
         .map(
           ({
             max_runs,
@@ -549,6 +554,8 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
             max_revisions,
             spec_rule,
             spec_requested,
+            automation_instructions,
+            automation_display_name,
             ...row
           }) => row,
         ),
@@ -938,5 +945,48 @@ test("migration 019 adds the Spec rule, when_asked for existing factories and it
     (db.prepare("SELECT COUNT(*) AS n FROM work_items").get() as { n: number })
       .n,
     1,
+  );
+});
+
+test("migration 020 adds the Automation copy, empty for existing items, and down restores version 19", (t) => {
+  const dir = tempDir(t);
+  const db = new DatabaseSync(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 19),
+  });
+  const version19 = schema(db);
+  db.exec(`
+    INSERT INTO work_items (title, request, source, automation, factory_id, budget_usd, created_at, updated_at)
+    VALUES ('T', 'R', 'schedule', 'nightly', 1, 15, 't', 't');`);
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  // An existing item has no copy, so it renders the instructions found by name.
+  assert.deepEqual(
+    {
+      ...db
+        .prepare(
+          "SELECT automation, automation_instructions, automation_display_name FROM work_items",
+        )
+        .get(),
+    },
+    {
+      automation: "nightly",
+      automation_instructions: null,
+      automation_display_name: null,
+    },
+  );
+  db.exec(
+    "UPDATE work_items SET automation_instructions = 'Report', automation_display_name = 'Nightly'",
+  );
+
+  assert.equal(migrateDown(db, 19), 19);
+  assert.deepEqual(schema(db), version19);
+  assert.deepEqual(
+    { ...db.prepare("SELECT title, automation FROM work_items").get() },
+    { title: "T", automation: "nightly" },
   );
 });
