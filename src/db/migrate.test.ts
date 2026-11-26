@@ -723,3 +723,90 @@ test("migration 015 adds factory settings, gives existing items the default limi
     "Old",
   );
 });
+
+test("migration 016 marks the in-flight dispatched reviews, and their continuations, so a stop after the upgrade gives the review back", (t) => {
+  const dir = tempDir(t);
+  const path = join(dir, "nakara.db");
+  const db = new DatabaseSync(path);
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 15),
+  });
+  for (let i = 0; i < 7; i++)
+    db.exec(`INSERT INTO work_items (title, request, source, budget_usd, factory_id, review_count, created_at, updated_at)
+             VALUES ('Item', 'r', 'manual', 15, 1, 1, 'now', 'now')`);
+  const run = (
+    item: number,
+    status: string,
+    session: string | null,
+    input: string,
+    agentType = "REVIEW",
+  ) =>
+    Number(
+      db
+        .prepare(
+          "INSERT INTO runs (item_id, role, agent, agent_type, harness, session_id, status, input, started_at) VALUES (?, 'agent', ?, ?, 'codex', ?, ?, ?, 'now')",
+        )
+        .run(
+          item,
+          agentType === "REVIEW" ? "review" : "implement",
+          agentType,
+          session,
+          status,
+          input,
+        ).lastInsertRowid,
+    );
+  const resume =
+    "Nakara restarted while you were working, and your run was interrupted. Continue the task where you left off; the workspace still has the work you already did.";
+  // A dispatch, queued: no session yet.
+  const queued = run(1, "queued", null, "Review the PR.");
+  // A follow-up of a finished review resumes its session: it never counted.
+  run(2, "succeeded", "s-2", "Review the PR.");
+  run(2, "running", "s-2", "Look again at a.ts.");
+  // A dispatch, running: its session is new.
+  const running = run(3, "running", "s-3", "Review the PR.");
+  // The run that resumes an interrupted dispatch counts; one that resumes an interrupted follow-up does not.
+  run(4, "interrupted", "s-4", "Review the PR.");
+  const resumed = run(4, "queued", "s-4", resume);
+  run(5, "succeeded", "s-5", "Review the PR.");
+  run(5, "interrupted", "s-5", "Look again.");
+  run(5, "queued", "s-5", resume);
+  // The operator's retry of a failed dispatch counts.
+  run(6, "failed", "s-6", "Review the PR.");
+  const retried = run(
+    6,
+    "queued",
+    "s-6",
+    "Your previous run failed: boom. Continue the task where you left off.\n\nThe task was:\n\nReview the PR.",
+  );
+  // Not a review.
+  run(7, "queued", null, "Build it.", "IMPLEMENT");
+  db.close();
+
+  const store = new Store(path, {
+    factory: stubFactorySeed,
+    defaultBudgetUsd: 15,
+  });
+  t.after(() => store.close());
+  assert.deepEqual(
+    store.db
+      .prepare("SELECT id FROM runs WHERE counts_review = 1 ORDER BY id")
+      .all()
+      .map((r) => r.id),
+    [queued, running, resumed, retried],
+  );
+  // Stopped after the upgrade, the dispatch that counted gives its review back.
+  store.markRunStarted(queued, "log");
+  store.finishRun(queued, {
+    status: "cancelled",
+    result: null,
+    error: "Stopped by the operator.",
+    cost_usd: 0,
+    num_turns: null,
+    duration_ms: 0,
+    session_id: null,
+    log_path: "log",
+  });
+  assert.equal(store.item(1)?.review_count, 0);
+});

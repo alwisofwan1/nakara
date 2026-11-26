@@ -227,7 +227,7 @@ export class RunRepository extends Repository {
     if (before) this.giveBackReview(before, patch.status);
     this.run(
       `UPDATE runs SET status = ?, result = ?, error = ?, cost_usd = ?, num_turns = ?, duration_ms = ?,
-              session_id = COALESCE(?, session_id), log_path = ?, review_verdict = ?, ended_at = ? WHERE id = ?`,
+              session_id = COALESCE(?, session_id), log_path = ?, review_verdict = COALESCE(?, review_verdict), ended_at = ? WHERE id = ?`,
       patch.status,
       patch.result,
       patch.error,
@@ -246,13 +246,15 @@ export class RunRepository extends Repository {
 
   /**
    * Only a review that ran counts toward its item's max_reviews: a counted
-   * review run that ends stopped, cancelled or failed (so without a verdict)
-   * gives its review back. An interrupted one does not: the run that resumes
-   * it carries the count on. Call before the run's status changes.
+   * review run that ends stopped, cancelled or failed without a recorded
+   * verdict gives its review back. One with a verdict ran, whatever it ends
+   * as (finishRun keeps the verdict). An interrupted one does not: the run
+   * that resumes it carries the count on. Call before the run's status changes.
    */
   private giveBackReview(run: Run, status: RunStatus): void {
     if (
       !run.counts_review ||
+      run.review_verdict !== null ||
       (run.status !== "queued" && run.status !== "running") ||
       (status !== "failed" && status !== "cancelled")
     )
