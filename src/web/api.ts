@@ -667,7 +667,10 @@ function createFactoryApi(
             refusedWrite("policy", result.message, result.problems ?? []),
             409,
           );
-        return c.json({ dir: result.dir, history: result.history }, 200);
+        return c.json(
+          { dir: result.dir, history: result.history, note: result.note },
+          200,
+        );
       })
       .get("/new-work", (c) =>
         c.json(

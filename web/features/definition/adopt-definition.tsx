@@ -31,9 +31,7 @@ export function AdoptDefinition({
       void client.invalidateQueries({ queryKey: ["definition"] });
       toast({
         title: "Nakara manages the definition",
-        description: result.history
-          ? `The factory now runs the definition in ${result.dir}; its history continues from ${result.history}.`
-          : `The factory now runs the definition in ${result.dir}, with a new history.`,
+        description: `The factory now runs the definition in ${result.dir}. ${result.note}`,
         tone: "ok",
       });
     },

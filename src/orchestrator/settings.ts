@@ -14,6 +14,7 @@ import {
   loadDefinition,
   type Problem,
 } from "../definition/load.ts";
+import type { FactoryRecord } from "../db/factories.ts";
 import type { FactoryCreation } from "./creation.ts";
 import type { Factory } from "./factory.ts";
 import { MERGE_SUBMITTED } from "./operator-merge.ts";
@@ -244,7 +245,11 @@ export class FactorySettings {
           return late;
         }
         this.factories.moveDefinition(record.id, dir, "repo");
-        Object.assign(record, { definition_dir: dir, definition_mode: "repo" });
+        Object.assign(record, {
+          definition_dir: dir,
+          definition_mode: "repo",
+          archive_dir: null,
+        });
         return { ok: true, dir };
       },
       (prepared) => (prepared.ok ? prepared.dir : null),
@@ -262,35 +267,29 @@ export class FactorySettings {
         archive,
         error,
       });
+      // The history stayed in this factory's own managed folder.
+      this.recordArchive(record, from);
       return { ...moved, archive: null };
     }
+    this.recordArchive(record, archive);
     return { ...moved, archive };
   }
 
-  /**
-   * The archive of the factory's last move, with its git history: the
-   * highest of `<slug>`, `<slug>-2`, … in archiveDir's sequence that has
-   * one; null when none does.
-   */
-  latestArchive(slug: string): string | null {
-    const base = join(this.registry.config.dataDir, "archive", "factories");
-    let latest: string | null = null;
-    for (
-      let n = 1, dir = join(base, slug);
-      existsSync(dir);
-      n++, dir = join(base, `${slug}-${n}`)
-    )
-      if (existsSync(join(dir, ".git"))) latest = dir;
-    return latest;
+  /** Record on the factory where its move left the managed history. */
+  private recordArchive(record: FactoryRecord, dir: string): void {
+    this.factories.recordArchive(record.id, dir);
+    record.archive_dir = dir;
   }
 
   /**
    * The reverse of move: copy a Repository Definition's files (only those
    * the loader reads) into the Nakara-managed folder for the slug, then run
-   * it from there. The history continues from the managed folder a move left
-   * in place, or else from the latest archive (latestArchive), with the
-   * repository's files committed on top; without either, a history starts.
-   * The copy must load, and the repository folder is left as it is.
+   * it from there. The history continues only from the archive recorded on
+   * this factory by its move (archive_dir), with the repository's files
+   * committed on top. Without one (no move, or a move made before archives
+   * were recorded) a new history starts: archives are never matched by slug,
+   * so a deleted factory's history is never attached to a new one. The copy
+   * must load, and the repository folder is left as it is.
    */
   async adopt(factory: Factory): Promise<
     | {
@@ -298,6 +297,8 @@ export class FactorySettings {
         dir: string;
         /** Where the history was restored from; null when a new one started. */
         history: string | null;
+        /** What happened to the history, for the Operator. */
+        note: string;
       }
     | SettingsRefusal
   > {
@@ -322,17 +323,27 @@ export class FactorySettings {
     const staging = join(dataDir, "factories", `.${record.slug}.adopting`);
     return factory.definitions.relocate(
       async (): Promise<
-        { ok: true; dir: string; history: string | null } | SettingsRefusal
+        | { ok: true; dir: string; history: string | null; note: string }
+        | SettingsRefusal
       > => {
         const from = resolve(record.definition_dir);
-        // A move whose archive failed left the managed folder, with its
-        // history, in place; other files there are not overwritten.
-        const leftover = existsSync(join(dir, ".git"));
-        if (!leftover && (await hasFiles(dir)))
+        // Only this factory's own recorded history, and only if it is still there.
+        const recorded = record.archive_dir;
+        const history =
+          recorded && existsSync(join(recorded, ".git")) ? recorded : null;
+        // The managed folder is replaced only when it is that history (a move
+        // whose archive failed left it in place); other files are kept.
+        const ownLeftover =
+          history !== null && resolve(history) === resolve(dir);
+        if (!ownLeftover && (await hasFiles(dir)))
           return refuse(
             `${dir} already has files; move or delete them before Nakara manages the definition.`,
           );
-        const history = leftover ? dir : this.latestArchive(record.slug);
+        const note = history
+          ? `The history continues from ${history}.`
+          : recorded
+            ? `The recorded archive ${recorded} has no history any more, so a new history starts.`
+            : "No archive is recorded for this factory, so a new history starts. An archive left by a move made before Nakara recorded archives is not attached.";
         const failed = async (message: string, problems?: Problem[]) => {
           await rm(staging, { recursive: true, force: true });
           return {
@@ -398,8 +409,9 @@ export class FactorySettings {
         Object.assign(record, {
           definition_dir: dir,
           definition_mode: "managed",
+          archive_dir: null,
         });
-        return { ok: true, dir, history };
+        return { ok: true, dir, history, note };
       },
       (prepared) => (prepared.ok ? prepared.dir : null),
     );

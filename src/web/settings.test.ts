@@ -744,7 +744,8 @@ test("move refuses a tree that does not load and a failed clone, and moves nothi
 });
 
 test("move then adopt round-trips the files and continues the history from the archive", async (t) => {
-  const { dataDir, harborDir, harbor, call } = await setup(t);
+  const { dataDir, store, harborDir, harbor, call } = await setup(t);
+  const recorded = () => store.repos.factories.factory("harbor")?.archive_dir;
   const target = join(dataDir, "checkouts", "acme", "harbor", "ops", "factory");
   await call("POST", "f/harbor/agents", {
     name: "helper",
@@ -758,6 +759,9 @@ test("move then adopt round-trips the files and continues the history from the a
   });
   assert.equal(moved.status, 200);
   const archive = moved.body.archive;
+  // The move records its archive on the factory.
+  assert.equal(recorded(), archive);
+  assert.equal(harbor.record?.archive_dir, archive);
   // Edited in the repository while it ran from there, next to other files.
   await call("POST", "f/harbor/agents", {
     name: "second",
@@ -771,8 +775,15 @@ test("move then adopt round-trips the files and continues the history from the a
   const adopted = await call("POST", "f/harbor/definition/adopt");
   assert.deepEqual(adopted, {
     status: 200,
-    body: { dir: harborDir, history: archive },
+    body: {
+      dir: harborDir,
+      history: archive,
+      note: `The history continues from ${archive}.`,
+    },
   });
+  // Restored, the archive is no longer recorded; it stays on disk.
+  assert.equal(recorded(), null);
+  assert.ok(await exists(join(archive, ".git")));
   // The files the loader reads round-trip; the rest of the folder stays out.
   const files = async (dir: string) =>
     (await readdir(dir, { recursive: true, withFileTypes: true }))
@@ -834,7 +845,11 @@ test("adopt without an archive starts a history", async (t) => {
   const adopted = await call("POST", "f/default/definition/adopt");
   assert.deepEqual(adopted, {
     status: 200,
-    body: { dir: managed, history: null },
+    body: {
+      dir: managed,
+      history: null,
+      note: "No archive is recorded for this factory, so a new history starts. An archive left by a move made before Nakara recorded archives is not attached.",
+    },
   });
   assert.deepEqual(
     (await definitionHistory(managed)).map((c) => c.message),
@@ -842,6 +857,94 @@ test("adopt without an archive starts a history", async (t) => {
   );
   assert.equal(registry.default.config.definitionDir, managed);
   assert.ok(await exists(join(dataDir, "default", "factory.yaml")));
+});
+
+test("a new factory that reuses a deleted factory's slug does not continue its history", async (t) => {
+  const { dataDir, store, registry, harborDir, call } = await setup(t);
+  const target = join(dataDir, "checkouts", "acme", "harbor", "factory");
+  await call("POST", "f/harbor/agents", {
+    name: "helper",
+    type: "CUSTOM",
+    description: null,
+    prompt: "Help.",
+  });
+  const moved = await call("POST", "f/harbor/definition/move", {
+    repo: "acme/harbor",
+    folder: "factory",
+  });
+  assert.equal(moved.status, 200);
+  const archive = moved.body.archive;
+  // Deleting a repository-kept factory leaves its archive behind.
+  assert.equal((await call("DELETE", "f/harbor")).status, 200);
+  assert.deepEqual(
+    (await definitionHistory(archive)).map((c) => c.message),
+    ["Create agent helper", "Initial definition"],
+  );
+
+  // A new Harbor, kept in the same repository folder.
+  const record = store.repos.factories.createFactory({
+    ...stubFactorySeed(),
+    slug: "harbor",
+    name: "Harbor",
+    avatar_color: "#0e7490",
+    foreman_handle: "harbor",
+    definition_dir: target,
+    definition_mode: "repo",
+  });
+  const again = await registry.register(record);
+  again.pump = async () => {};
+  assert.ok((await again.reloadDefinition()).ok);
+
+  const adopted = await call("POST", "f/harbor/definition/adopt");
+  assert.equal(adopted.status, 200);
+  assert.equal(adopted.body.dir, harborDir);
+  assert.equal(adopted.body.history, null);
+  assert.match(adopted.body.note, /No archive is recorded/);
+  // A fresh history: the deleted factory's commits are not attached.
+  assert.deepEqual(
+    (await definitionHistory(harborDir)).map((c) => c.message),
+    ["Initial definition"],
+  );
+  // The old archive is left as it is.
+  assert.deepEqual(
+    (await definitionHistory(archive)).map((c) => c.message),
+    ["Create agent helper", "Initial definition"],
+  );
+});
+
+test("a move whose archive failed leaves the history in place, and adopt continues it", async (t) => {
+  const { dataDir, store, harborDir, call } = await setup(t);
+  await call("POST", "f/harbor/agents", {
+    name: "helper",
+    type: "CUSTOM",
+    description: null,
+    prompt: "Help.",
+  });
+  // The archive folder cannot be created.
+  await writeFile(join(dataDir, "archive"), "");
+  const moved = await call("POST", "f/harbor/definition/move", {
+    repo: "acme/harbor",
+    folder: "factory",
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.archive, null);
+  // The factory's own managed folder, with its history, is what is recorded.
+  assert.equal(store.repos.factories.factory("harbor")?.archive_dir, harborDir);
+
+  const adopted = await call("POST", "f/harbor/definition/adopt");
+  assert.equal(adopted.status, 200);
+  assert.equal(adopted.body.history, harborDir);
+  assert.deepEqual(
+    (await definitionHistory(harborDir)).map((c) => c.message),
+    [
+      "Adopt definition from acme/harbor:factory",
+      "Create agent helper",
+      "Initial definition",
+    ],
+  );
+  assert.deepEqual((await readdir(join(dataDir, "factories"))).sort(), [
+    "harbor",
+  ]);
 });
 
 test("adopt is refused while a run is in progress and for a definition that does not load", async (t) => {
