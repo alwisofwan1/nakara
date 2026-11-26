@@ -243,6 +243,21 @@ export const saveAutomation = (
     "Unable to save the automation",
   );
 
+/** The next fire time of a cron being edited, or valid: false. */
+export const cronPreviewQuery = (slug: string, cron: string) =>
+  queryOptions({
+    queryKey: ["cron-preview", slug, cron],
+    queryFn: () =>
+      body(
+        factoryApi.automations["cron-preview"].$get({
+          param: { slug },
+          query: { cron },
+        }),
+        "Unable to check the schedule",
+      ),
+    staleTime: 60_000,
+  });
+
 /** Run now: creates a work item for the automation, as its trigger would. */
 export const runAutomation = (slug: string, name: string) =>
   body(

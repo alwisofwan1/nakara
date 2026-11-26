@@ -14,6 +14,7 @@ import { Icon } from "../ui/icons";
 import { NewWorkDialog } from "../features/new-work/newWork";
 import { automationPrefill } from "../features/new-work/prefill";
 import { useToast } from "../app/toast";
+import { AutomationForm, utc } from "../features/automations/automation-form";
 
 export const Route = createFileRoute("/f/$slug/automations")({
   // Started, not awaited: the page shows its frame and its own loading state.
@@ -23,7 +24,6 @@ export const Route = createFileRoute("/f/$slug/automations")({
   component: Automations,
   staticData: { title: "Automations" },
 });
-const utc = (value: string) => `${value.slice(0, 16).replace("T", " ")} UTC`;
 
 type Automation = NonNullable<
   Awaited<
@@ -47,6 +47,8 @@ function Automations() {
     instructions: string;
     revision: string | null;
   } | null>(null);
+  // Bumped by Reload, so the settings form starts again from the file.
+  const [reloads, setReloads] = useState(0);
   const instructions =
     draft && draft.name === current?.name
       ? draft.instructions
@@ -126,6 +128,7 @@ function Automations() {
       await client.invalidateQueries({ queryKey: ["automations"] });
       setDraft(null);
       save.reset();
+      setReloads((n) => n + 1);
     },
   });
   const run = useMutation({
@@ -346,29 +349,20 @@ function Automations() {
                   Disabled automations do not run. Turn it on to run it now.
                 </p>
               )}
-              <section>
-                <h2 className="pane-heading">Trigger</h2>
-                {current.triggers.map((trigger) => (
-                  <div key={JSON.stringify(trigger)} className="mb-md">
-                    <p>
-                      {trigger.provider} · {trigger.event.replaceAll("_", " ")}
-                    </p>
-                    {trigger.cron && (
-                      <p className="text-small">{trigger.cron} · UTC</p>
-                    )}
-                    {trigger.nextFire && (
-                      <p className="text-small">
-                        Next schedule: {utc(trigger.nextFire)}
-                      </p>
-                    )}
-                    {Object.entries(trigger.filter).map(([key, value]) => (
-                      <p key={key} className="text-small text-muted">
-                        {key}: {JSON.stringify(value)}
-                      </p>
-                    ))}
-                  </div>
-                ))}
-              </section>
+              <AutomationForm
+                key={`${current.name}:${reloads}`}
+                slug={slug}
+                automation={current}
+                onSaved={(revision) =>
+                  // A draft of the same file continues from the file as it is now.
+                  setDraft((d) =>
+                    d?.name === current.name && d.revision === current.revision
+                      ? { ...d, revision }
+                      : d,
+                  )
+                }
+                onConflict={() => reload.mutate()}
+              />
               <section>
                 <h2 className="pane-heading">
                   <label htmlFor="automation-instructions">
@@ -463,8 +457,6 @@ function Automations() {
               <section>
                 <h2 className="pane-heading">Settings</h2>
                 <dl className="automation-settings">
-                  <dt>Starts with</dt>
-                  <dd>{current.agent}</dd>
                   <dt>Runner</dt>
                   <dd>{current.runner ?? "Agent default"}</dd>
                   <dt>Model</dt>
