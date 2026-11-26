@@ -68,6 +68,7 @@ import {
 } from "../definition/scaffold.ts";
 import { slugify } from "../definition/seed.ts";
 import { FactoryCreation } from "../orchestrator/creation.ts";
+import { mergePullRequest } from "../orchestrator/operator-merge.ts";
 import {
   ensureBareClone,
   internalFile,
@@ -967,6 +968,16 @@ export function createApi(
         return c.json(apiError("policy", "The work item is closed."), 409);
       await orchestrator(id).cancel(id);
       return c.json({ item: { id } }, 200);
+    })
+    .post("/items/:id/merge", itemParam, async (c) => {
+      // The Operator's merge; agents can never merge (ADR-0006 rule 6).
+      const { id } = c.req.valid("param");
+      const result = await mergePullRequest(store, id);
+      if (!result.ok)
+        return result.code === "not_found"
+          ? c.json(apiError("not_found", result.reason), 404)
+          : c.json(apiError("policy", result.reason), 409);
+      return c.json({ item: { id }, method: result.method }, 200);
     })
     .post("/items/:id/retry", itemParam, (c) => {
       const { id } = c.req.valid("param");

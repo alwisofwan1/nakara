@@ -12,6 +12,7 @@ const PATHS: Record<
   | "commit"
   | "folder"
   | "folder-git-2"
+  | "git-merge"
   | "inbox"
   | "refresh"
   | "circle-check"
@@ -60,6 +61,13 @@ const PATHS: Record<
       <circle cx="18" cy="18" r="3" />
       <circle cx="6" cy="6" r="3" />
       <path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12" />
+    </>
+  ),
+  "git-merge": (
+    <>
+      <circle cx="18" cy="18" r="3" />
+      <circle cx="6" cy="6" r="3" />
+      <path d="M6 21V9a9 9 0 0 0 9 9" />
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,

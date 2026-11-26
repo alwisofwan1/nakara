@@ -3,17 +3,24 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { type TestContext, test } from "node:test";
 import type { HttpBindings } from "@hono/node-server";
 import { loadConfig } from "../config.ts";
 import { Store } from "../db.ts";
+import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
 import { GithubPoller } from "../intake/github.ts";
+import { ActionApplier } from "../orchestrator/action-applier.ts";
+import {
+  GH_PULL_REQUESTS,
+  PullRequestGate,
+} from "../orchestrator/pull-request-gate.ts";
 import { FactoryRegistry } from "../orchestrator/registry.ts";
 import { internalDir } from "../runner/workspace.ts";
 import type { ActivityDto, ItemDetailDto } from "./api.ts";
@@ -797,4 +804,222 @@ test("retry, raise-budget and raise-run-limit endpoints map refusals to 409 and 
   assert.equal((await post(`${item.id}/raise-budget`)).status, 409);
   assert.equal((await post(`${item.id}/raise-run-limit`)).status, 409);
   store.db.close();
+});
+
+/**
+ * A fake gh on PATH for the Operator's merge: answers `pr checks`, `repo view`,
+ * `pr merge` and `pr view` from github.json (rewritten between requests) and
+ * records every call.
+ */
+async function fakeMergeGh(t: TestContext) {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-merge-gh-"));
+  const state = join(dir, "github.json");
+  const calls = join(dir, "calls.jsonl");
+  await writeFile(
+    join(dir, "gh"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + "\\n");
+const gh = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, "utf8"));
+const cmd = args.slice(0, 2).join(" ");
+if (cmd === "pr checks") console.log(JSON.stringify(gh.checks));
+else if (cmd === "repo view") console.log(JSON.stringify(gh.allowed));
+else if (cmd === "pr view") console.log(JSON.stringify({ state: gh.state }));
+else if (cmd === "pr merge" && gh.mergeError) {
+  console.error(gh.mergeError);
+  process.exit(1);
+} else if (cmd === "pr merge") gh.state = "MERGED";
+else process.exit(2);
+fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(gh));
+`,
+    { mode: 0o755 },
+  );
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath}`;
+  t.after(async () => {
+    process.env.PATH = oldPath;
+    await rm(dir, { recursive: true, force: true });
+  });
+  const github = (value: {
+    checks: { name: string; bucket: string }[];
+    allowed: Record<string, boolean>;
+    state?: string;
+    mergeError?: string;
+  }) => writeFile(state, JSON.stringify({ state: "OPEN", ...value }));
+  const read = async () =>
+    (await readFile(calls, "utf8").catch(() => ""))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+  const merges = async () =>
+    (await read()).filter((a) => a[0] === "pr" && a[1] === "merge");
+  return { github, merges };
+}
+
+const MERGE_PR = "https://github.com/o/r/pull/7";
+const ALL_METHODS = {
+  squashMergeAllowed: true,
+  mergeCommitAllowed: true,
+  rebaseMergeAllowed: true,
+};
+
+test("the Operator merges a PR only at handoff with passing checks, by the repository's first allowed method", async (t) => {
+  const { app, store } = fixture();
+  t.after(() => store.db.close());
+  const gh = await fakeMergeGh(t);
+  const merge = (id: number) =>
+    app.request(`/api/items/${id}/merge`, { method: "POST" }, bindings());
+  const refusal = async (response: Response) => {
+    assert.equal(response.status, 409);
+    const body = (await response.json()) as {
+      error: { code: string; message: string };
+    };
+    assert.equal(body.error.code, "policy");
+    return body.error.message;
+  };
+  const item = store.createItem({
+    title: "Merge",
+    request: "Test",
+    source: "manual",
+  });
+  const nothingRecorded = () => {
+    assert.deepEqual(store.messages(item.id), []);
+    assert.deepEqual(store.events(item.id), []);
+    assert.equal(store.item(item.id)?.pr_merged, 0);
+  };
+  await gh.github({
+    checks: [{ name: "CI", bucket: "pass" }],
+    allowed: ALL_METHODS,
+  });
+
+  assert.equal((await merge(999)).status, 404);
+  // Not at handoff, then at handoff without a PR.
+  store.updateItem(item.id, { stage: "building", pr_url: MERGE_PR });
+  assert.match(await refusal(await merge(item.id)), /Handoff/);
+  store.updateItem(item.id, { stage: "handoff", pr_url: null });
+  assert.match(await refusal(await merge(item.id)), /no pull request/);
+  store.updateItem(item.id, { pr_url: MERGE_PR, pr_merged: 1 });
+  assert.match(await refusal(await merge(item.id)), /already merged/);
+  store.updateItem(item.id, { pr_merged: 0 });
+  // Checks failing or pending.
+  for (const bucket of ["fail", "pending"]) {
+    await gh.github({ checks: [{ name: "CI", bucket }], allowed: ALL_METHODS });
+    assert.match(await refusal(await merge(item.id)), /Checks are not passing/);
+  }
+  assert.deepEqual(await gh.merges(), []);
+  nothingRecorded();
+
+  // GitHub refuses: its message is returned and nothing is recorded.
+  const protectedBranch =
+    "GraphQL: Base branch policy prohibits the merge (mergePullRequest)";
+  await gh.github({
+    checks: [{ name: "CI", bucket: "pass" }],
+    allowed: ALL_METHODS,
+    mergeError: protectedBranch,
+  });
+  assert.equal(await refusal(await merge(item.id)), protectedBranch);
+  nothingRecorded();
+
+  // The method follows the repository settings: squash, merge, then rebase.
+  await gh.github({
+    checks: [{ name: "CI", bucket: "pass" }],
+    allowed: {
+      squashMergeAllowed: false,
+      mergeCommitAllowed: false,
+      rebaseMergeAllowed: false,
+    },
+  });
+  assert.match(await refusal(await merge(item.id)), /no merge method/);
+  nothingRecorded();
+  await gh.github({
+    checks: [
+      { name: "CI", bucket: "pass" },
+      { name: "Optional", bucket: "skipping" },
+    ],
+    allowed: { ...ALL_METHODS, squashMergeAllowed: false },
+  });
+  const merged = await merge(item.id);
+  assert.equal(merged.status, 200);
+  assert.deepEqual(await merged.json(), {
+    item: { id: item.id },
+    method: "merge",
+  });
+  // No --admin and no branch deletion, ever.
+  assert.deepEqual(
+    (await gh.merges()).map((a) => a.slice(2)),
+    [
+      [MERGE_PR, "--squash"],
+      [MERGE_PR, "--merge"],
+    ],
+  );
+  assert.deepEqual(
+    store.messages(item.id).map((m) => [m.author, m.body]),
+    [["factory", "Merged by the Operator"]],
+  );
+  // The merge itself completes nothing: the poller reports it.
+  assert.equal(store.item(item.id)?.stage, "handoff");
+  assert.equal(store.item(item.id)?.pr_merged, 0);
+  assert.deepEqual(store.events(item.id), []);
+});
+
+test("after the poller reports the Operator's merge, the item completes through the normal path", async (t) => {
+  const { app, store, config } = fixture();
+  t.after(() => store.db.close());
+  const gh = await fakeMergeGh(t);
+  const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  const definition = {
+    ...loaded.definition,
+    factory: {
+      ...loaded.definition.factory,
+      repositories: [{ owner: "o", name: "r" }],
+    },
+  };
+  const applier = new ActionApplier(store, config, () => definition, {
+    ...GH_PULL_REQUESTS,
+    markReady: async () => {},
+    comment: async () => {},
+    removeWorkspace: async () => {},
+  });
+  const item = store.createItem({
+    title: "Merge",
+    request: "Test",
+    source: "manual",
+  });
+  store.updateItem(item.id, {
+    stage: "handoff",
+    status: "waiting_human",
+    pr_url: MERGE_PR,
+  });
+  const complete = () =>
+    applier.applyActions(item.id, [
+      {
+        action: { type: "complete_task", summary: "Merged and done." },
+        accepted: true,
+      },
+    ]);
+  await gh.github({
+    checks: [{ name: "CI", bucket: "pass" }],
+    allowed: ALL_METHODS,
+  });
+  const merged = await app.request(
+    `/api/items/${item.id}/merge`,
+    { method: "POST" },
+    bindings(),
+  );
+  assert.equal(merged.status, 200);
+  // Until the poller reports the merge, the foreman cannot complete.
+  assert.deepEqual(await complete(), []);
+  assert.equal(store.item(item.id)?.stage, "handoff");
+
+  await new PullRequestGate(store).poll(item.id);
+  assert.equal(store.item(item.id)?.pr_merged, 1);
+  assert.deepEqual(
+    store.pendingEvents(item.id).map((e) => e.kind),
+    ["pr_merged"],
+  );
+  assert.equal((await complete()).length, 1);
+  assert.equal(store.item(item.id)?.stage, "complete");
 });
