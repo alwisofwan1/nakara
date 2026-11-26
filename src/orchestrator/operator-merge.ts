@@ -2,7 +2,9 @@
 // Only the human Operator merges, through the web API: agents keep `gh pr
 // merge` on their deny lists (NEVER in run-support.ts, CODEX_RULES). The merge
 // completes nothing itself; the poller sees the PR merged and delivers
-// pr_merged, so the item completes through the normal path.
+// pr_merged, so the item completes through the normal path. Until it does,
+// kv `merge-submitted:<item>` holds the PR the Operator merged, so a repeat
+// request (even after a restart) never runs gh pr merge again.
 import type { Store } from "../db.ts";
 import { checksStatus } from "../domain/checks.ts";
 import { run } from "../runner/workspace.ts";
@@ -12,6 +14,9 @@ export const MERGE_METHODS = ["squash", "merge", "rebase"] as const;
 export type MergeMethod = (typeof MERGE_METHODS)[number];
 
 export const MERGED_MESSAGE = "Merged by the Operator";
+
+/** The kv key prefix of the PR a successful merge was submitted for. */
+export const MERGE_SUBMITTED = "merge-submitted:";
 
 /** GitHub as the merge reads and writes it, with Nakara's own gh; tests replace gh. */
 export interface MergeIO extends Pick<PullRequestPort, "readPrChecks"> {
@@ -92,6 +97,11 @@ export async function mergePullRequest(
   const prUrl = item.pr_url;
   if (!prUrl) return refuse("The work item has no pull request.");
   if (item.pr_merged) return refuse("The pull request is already merged.");
+  const submitted = MERGE_SUBMITTED + itemId;
+  if (store.getKv(submitted) === prUrl)
+    return refuse(
+      "The pull request was merged; waiting for GitHub to report the merge.",
+    );
   const repo = PR_URL.exec(prUrl);
   if (!repo) return refuse("The pull request is not a GitHub pull request.");
   if (merging.has(itemId)) return refuse("The pull request is being merged.");
@@ -120,7 +130,10 @@ export async function mergePullRequest(
       return refuse(ghMessage(error));
     }
     // The poller reports the merge as pr_merged; the foreman then completes.
-    store.addMessage(itemId, "factory", MERGED_MESSAGE);
+    store.transaction(() => {
+      store.setKv(submitted, prUrl);
+      store.addMessage(itemId, "factory", MERGED_MESSAGE);
+    });
     return { ok: true, method };
   } finally {
     merging.delete(itemId);

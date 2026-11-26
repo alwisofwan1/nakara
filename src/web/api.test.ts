@@ -962,6 +962,10 @@ test("the Operator merges a PR only at handoff with passing checks, by the repos
   assert.equal(store.item(item.id)?.stage, "handoff");
   assert.equal(store.item(item.id)?.pr_merged, 0);
   assert.deepEqual(store.events(item.id), []);
+  // A repeat before the poller reports the merge never merges again.
+  assert.match(await refusal(await merge(item.id)), /waiting for GitHub/);
+  assert.equal((await gh.merges()).length, 2);
+  assert.equal(store.messages(item.id).length, 1);
 });
 
 test("after the poller reports the Operator's merge, the item completes through the normal path", async (t) => {
