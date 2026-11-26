@@ -15,9 +15,12 @@ import {
   appendLearning,
   type AutomationEdit,
   createAgent,
+  createAutomation,
   type FactoryEdit,
   deleteAgent,
+  deleteAutomation,
   type NewAgent,
+  type NewAutomation,
   type WriteResult,
   writeAgent,
   writeAutomation,
@@ -188,6 +191,28 @@ export class DefinitionService {
       writeFactoryFile(
         this.config.definitionDir,
         edit,
+        revision,
+        HARNESS_FALLBACK,
+      ),
+    );
+  }
+
+  /** Create automations/<name>/automation.md and reload; an invalid or taken automation writes nothing. */
+  createAutomation(automation: NewAutomation): Promise<DefinitionWrite> {
+    return this.writeDefinition(`Create automation ${automation.name}`, () =>
+      createAutomation(this.config.definitionDir, automation, HARNESS_FALLBACK),
+    );
+  }
+
+  /**
+   * Delete an automation's folder and reload, so its triggers stop; the work
+   * items it created stay.
+   */
+  deleteAutomation(name: string, revision: string): Promise<DefinitionWrite> {
+    return this.writeDefinition(`Delete automation ${name}`, () =>
+      deleteAutomation(
+        this.config.definitionDir,
+        name,
         revision,
         HARNESS_FALLBACK,
       ),

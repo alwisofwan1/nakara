@@ -19,9 +19,11 @@ import {
   readAgents,
 } from "./agents.ts";
 import {
+  automationDeleteInput,
   automationEditInput,
   cronPreview,
   cronPreviewInput,
+  newAutomationInput,
   readAutomations,
 } from "./automations.ts";
 import {
@@ -233,6 +235,8 @@ const agentEditBody = jsonBody(agentEditInput, "Invalid agent settings");
 const newAgentBody = jsonBody(newAgentInput, "Invalid agent");
 const agentDeleteBody = jsonBody(agentDeleteInput, "Invalid request");
 const automationEditBody = jsonBody(automationEditInput, "Invalid automation");
+const newAutomationBody = jsonBody(newAutomationInput, "Invalid automation");
+const automationDeleteBody = jsonBody(automationDeleteInput, "Invalid request");
 const creationBody = jsonBody(creationInput, "Invalid factory");
 const renameBody = jsonBody(renameInput, "Invalid factory settings");
 const factoryFileBody = jsonBody(factoryFileInput, "Invalid factory settings");
@@ -370,6 +374,26 @@ function createFactoryApi(
           ),
         );
       })
+      // Writes automations/<name>/automation.md only when the tree loads with it, then reloads.
+      .post("/automations", newAutomationBody, async (c) => {
+        const automation = c.req.valid("json");
+        const result = await c.var.factory.createAutomation(automation);
+        if (!result.ok && result.code === "conflict")
+          return c.json(apiError("conflict", result.message), 409);
+        if (!result.ok)
+          return c.json(
+            refusedWrite(
+              "invalid_definition",
+              "The new automation would make the definition invalid; nothing was saved",
+              result.errors,
+            ),
+            422,
+          );
+        return c.json(
+          { name: automation.name, ...reloaded(result.reload) },
+          201,
+        );
+      })
       // The next fire time of the cron the drawer is editing.
       .get("/automations/cron-preview", queryOf(cronPreviewInput), (c) =>
         c.json(cronPreview(c.req.valid("query").cron, new Date())),
@@ -426,6 +450,36 @@ function createFactoryApi(
             { ...check, revision: result.revision ?? revision },
             200,
           );
+        },
+      )
+      // Deletes the automation's folder only when the definition still loads
+      // without it; the work items it created stay.
+      .delete(
+        "/automations/:name",
+        automationParam,
+        automationDeleteBody,
+        async (c) => {
+          const { name } = c.req.valid("param");
+          if (
+            !c.var.factory.definition?.automations.some((a) => a.name === name)
+          )
+            return c.json(apiError("not_found", "Automation not found"), 404);
+          const result = await c.var.factory.deleteAutomation(
+            name,
+            c.req.valid("json").revision,
+          );
+          if (!result.ok && result.code !== "invalid")
+            return c.json(apiError(result.code, result.message), 409);
+          if (!result.ok)
+            return c.json(
+              refusedWrite(
+                "policy",
+                `${name} cannot be deleted: ${result.errors.map((e) => e.message).join("; ")}`,
+                result.errors,
+              ),
+              409,
+            );
+          return c.json(reloaded(result.reload), 200);
         },
       )
       // Run now: a work item for a scheduled automation, as its schedule would create it.

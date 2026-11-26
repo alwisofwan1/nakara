@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -482,6 +490,161 @@ test("the name, trigger and starting agent save through the API; refused edits r
       "00:00:00.000Z",
     );
     assert.equal(((await preview("nope")) as { valid: boolean }).valid, false);
+  } finally {
+    store.db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an automation created through the API is listed and fires; deleting it stops it and keeps its work items", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-automations-"));
+  const root = join(dir, "factory");
+  await cp("factory", root, { recursive: true });
+  const store = new Store(":memory:", {
+    defaultBudgetUsd: 15,
+    factory: () => ({ ...stubFactorySeed(), definition_dir: root }),
+  });
+  const registry = new FactoryRegistry(
+    store,
+    loadConfig({ NAKARA_DATA_DIR: dir }),
+  );
+  const factory = registry.default;
+  // Items are created, but no foreman turn starts.
+  factory.pump = async () => {};
+  try {
+    assert.ok((await factory.reloadDefinition())?.ok);
+    const api = createApi(registry, factory.config);
+    const scheduler = new Scheduler(factory);
+    const send = (method: string, path: string, body?: unknown) =>
+      api.request(`/f/default${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const error = async (response: Response, status: number) => {
+      assert.equal(response.status, status);
+      return (
+        (await response.json()) as {
+          error: { code: string; message: string; problems?: unknown[] };
+        }
+      ).error;
+    };
+    const read = async () =>
+      (
+        (await (
+          await api.request("/f/default/automations")
+        ).json()) as AutomationDto[]
+      ).find((a) => a.name === "nightly-report");
+    const folder = join(root, "automations/nightly-report");
+    const nightly = {
+      name: "nightly-report",
+      displayName: "Nightly report",
+      trigger: { kind: "schedule", cron: "0 3 * * *" },
+      agent: "foreman",
+      instructions: "Report the night.",
+      enabled: true,
+    };
+
+    // Refused before anything is written: a bad name, a missing agent, a bad cron.
+    assert.equal(
+      (
+        await error(
+          await send("POST", "/automations", { ...nightly, name: "Nightly" }),
+          400,
+        )
+      ).code,
+      "invalid_input",
+    );
+    const ghost = await error(
+      await send("POST", "/automations", { ...nightly, agent: "ghost" }),
+      422,
+    );
+    assert.equal(ghost.code, "invalid_definition");
+    assert.equal(ghost.problems?.length, 1);
+    await error(
+      await send("POST", "/automations", {
+        ...nightly,
+        trigger: { kind: "schedule", cron: "every night" },
+      }),
+      422,
+    );
+    await assert.rejects(stat(folder));
+
+    const created = await send("POST", "/automations", nightly);
+    assert.equal(created.status, 201);
+    assert.deepEqual(
+      { ...((await created.json()) as object), warnings: [] },
+      { name: "nightly-report", ok: true, errors: [], warnings: [] },
+    );
+    const listed = await read();
+    assert.equal(listed?.displayName, "Nightly report");
+    assert.equal(listed?.enabled, true);
+    assert.equal(listed?.agent, "foreman");
+    assert.equal(listed?.instructions, "Report the night.");
+    assert.deepEqual(
+      listed?.triggers.map((t) => [t.provider, t.event, t.cron]),
+      [["schedule", "cron_fired", "0 3 * * *"]],
+    );
+    // 03:00 UTC: the new schedule fires on the fake clock.
+    scheduler.tick(new Date("2026-11-27T03:00:10Z"));
+    const fired = store.automationHistory("nightly-report");
+    assert.equal(fired.count, 1);
+    assert.equal(fired.items[0]?.source, "schedule");
+
+    // A taken name is refused and the existing file is untouched.
+    const path = join(folder, "automation.md");
+    const before = await readFile(path, "utf8");
+    const taken = await error(
+      await send("POST", "/automations", {
+        ...nightly,
+        displayName: "Other",
+        trigger: { kind: "telegram" },
+      }),
+      409,
+    );
+    assert.deepEqual(taken, {
+      code: "conflict",
+      message: "automations/nightly-report already exists; choose another name",
+    });
+    assert.equal(await readFile(path, "utf8"), before);
+
+    // A delete from a stale drawer is a conflict.
+    const revision = listed?.revision ?? "";
+    await writeFile(path, before.replace("the night", "last night"));
+    assert.equal(
+      (
+        await error(
+          await send("DELETE", "/automations/nightly-report", { revision }),
+          409,
+        )
+      ).code,
+      "conflict",
+    );
+    assert.ok(await stat(path));
+    assert.equal(
+      (await send("DELETE", "/automations/missing", { revision })).status,
+      404,
+    );
+    assert.equal(
+      (await send("DELETE", "/automations/nightly-report", {})).status,
+      400,
+    );
+
+    await factory.reloadDefinition();
+    const deleted = await send("DELETE", "/automations/nightly-report", {
+      revision: (await read())?.revision,
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal(((await deleted.json()) as { ok: boolean }).ok, true);
+    await assert.rejects(stat(folder));
+    assert.equal(await read(), undefined);
+    // It no longer fires, and the work item it created stays.
+    scheduler.tick(new Date("2026-11-28T03:00:10Z"));
+    assert.equal(store.automationHistory("nightly-report").count, 1);
+    assert.equal(
+      store.item(fired.items[0]?.id ?? 0)?.automation,
+      "nightly-report",
+    );
   } finally {
     store.db.close();
     await rm(dir, { recursive: true, force: true });

@@ -518,6 +518,56 @@ test("each web edit of a managed definition is a commit", async (t) => {
   assert.equal((await definitionHistory(harborDir)).length, 4);
 });
 
+test("creating and deleting an automation in a managed definition is one commit each", async (t) => {
+  const { harborDir, call } = await setup(t);
+  const nightly = {
+    name: "nightly",
+    displayName: "Nightly",
+    trigger: { kind: "schedule", cron: "0 3 * * *" },
+    agent: "foreman",
+    instructions: "Report.",
+    enabled: true,
+  };
+  const created = await call("POST", "f/harbor/automations", nightly);
+  assert.equal(created.status, 201);
+  // A taken name commits nothing.
+  assert.equal(
+    (await call("POST", "f/harbor/automations", nightly)).status,
+    409,
+  );
+  const listed = await call("GET", "f/harbor/automations");
+  const revision = listed.body.find(
+    (a: { name: string }) => a.name === "nightly",
+  )?.revision;
+  // A stale delete commits nothing.
+  assert.equal(
+    (
+      await call("DELETE", "f/harbor/automations/nightly", {
+        revision: "0".repeat(64),
+      })
+    ).status,
+    409,
+  );
+  const deleted = await call("DELETE", "f/harbor/automations/nightly", {
+    revision,
+  });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(
+    (await definitionHistory(harborDir)).map((c) => c.message),
+    [
+      "Delete automation nightly",
+      "Create automation nightly",
+      "Initial definition",
+    ],
+  );
+  const { stdout } = await promisify(execFile)(
+    "git",
+    ["status", "--porcelain"],
+    { cwd: harborDir },
+  );
+  assert.equal(stdout, "");
+});
+
 test("move writes the tree into the repository folder and switches the mode", async (t) => {
   const { dataDir, harborDir, harbor, call, cloned } = await setup(t);
   const target = join(dataDir, "checkouts", "acme", "harbor", "ops", "factory");
