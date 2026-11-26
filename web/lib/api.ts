@@ -405,13 +405,15 @@ export const wizardReposQuery = (owner: string) =>
         "Unable to list the repositories",
       ),
   });
-/** Which of the repositories the token agents get can see. */
-export const wizardAccessQuery = (repos: string[]) =>
+/** Which of the repositories the token agents of the factory `slug` get can see. */
+export const wizardAccessQuery = (repos: string[], slug?: string) =>
   queryOptions({
-    queryKey: ["wizard", "access", repos],
+    queryKey: ["wizard", "access", repos, slug ?? null],
     queryFn: () =>
       body(
-        client.wizard.access.$get({ query: { repos: repos.join(",") } }),
+        client.wizard.access.$get({
+          query: { repos: repos.join(","), ...(slug && { slug }) },
+        }),
         "Unable to check the agent token",
       ),
   });

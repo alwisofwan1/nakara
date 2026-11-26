@@ -12,6 +12,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { backupHealth } from "../backup.ts";
 import type { Config } from "../config.ts";
 import type { GithubPoller } from "../intake/github.ts";
+import { agentTokenOf } from "../runner/agent-token.ts";
 import {
   definitionDirWarning,
   type FactoryRegistry,
@@ -224,7 +225,11 @@ export function createApp(
       factories: Object.fromEntries(
         registry.factories.map((f) => [
           f.record?.slug ?? "",
-          { definition: Boolean(f.definition) },
+          {
+            definition: Boolean(f.definition),
+            // The source only, never the value.
+            agentToken: agentTokenOf(f.record?.slug).source,
+          },
         ]),
       ),
       lastPoll: poller.lastPoll,
@@ -232,7 +237,7 @@ export function createApp(
       warnings: [
         ...new Set(
           registry.factories.flatMap((f) =>
-            securityWarnings(store, f.definition),
+            securityWarnings(store, f.definition, f.record?.slug),
           ),
         ),
         ...(mismatch ? [definitionDirWarning(mismatch)] : []),

@@ -5,6 +5,12 @@ import type { Store } from "../db.ts";
 import type { Definition, LoadResult, Problem } from "../definition/load.ts";
 import type { McpServer } from "../definition/schema.ts";
 import { hostForemanAllowed } from "../orchestrator/foreman-runner.ts";
+import {
+  type AgentTokenSource,
+  agentTokenLabel,
+  agentTokenOf,
+  agentTokenWarnings,
+} from "../runner/agent-token.ts";
 import { credentialWarning, foremanTokenWarning } from "../runner/docker.ts";
 import { protectionWarnings, readRepoStatus } from "../runner/repos.ts";
 
@@ -20,6 +26,19 @@ export interface RepositoryDto {
   defaultBranch: string | null;
   fetchedAt: string | null;
   error: string | null;
+}
+
+/** Where a factory's agent token comes from: the source and the variable's name, never the value. */
+export interface AgentTokenDto {
+  source: AgentTokenSource;
+  variable: string | null;
+  /** The source as the page shows it. */
+  label: string;
+}
+
+export function agentTokenDto(slug: string | undefined): AgentTokenDto {
+  const token = agentTokenOf(slug);
+  return { ...token, label: agentTokenLabel(token) };
 }
 
 export interface FileDto {
@@ -47,6 +66,8 @@ export interface DefinitionDto {
   repositories: RepositoryDto[];
   /** Agent credentials and repository protection that leave agents too much power. */
   security: string[];
+  /** Where the factory's agent token comes from; never its value. */
+  agentToken: AgentTokenDto;
   agentDefaults: { key: string; value: string }[];
   mcpServers: {
     name: string;
@@ -178,8 +199,9 @@ function agentDefaults(def: Definition) {
 export function securityWarnings(
   store: Store,
   def: Definition | undefined,
+  slug?: string,
 ): string[] {
-  const credential = credentialWarning();
+  const credential = credentialWarning(slug);
   const foremanToken = foremanTokenWarning();
   return [
     ...(credential ? [credential] : []),
@@ -190,6 +212,7 @@ export function securityWarnings(
         ]
       : []),
     ...(def ? protectionWarnings(store, def) : []),
+    ...(def ? agentTokenWarnings(store, slug) : []),
   ];
 }
 
@@ -202,6 +225,8 @@ export function readDefinition(
     problems: { errors: Problem[]; warnings: Problem[] };
     pendingReach?: string[] | null;
     files: string[];
+    /** The factory's slug, which picks its agent token. */
+    slug?: string | undefined;
   },
 ): DefinitionDto {
   const def = state.definition;
@@ -236,7 +261,8 @@ export function readDefinition(
         error: repo.deferred ? null : (status?.error ?? null),
       };
     }),
-    security: securityWarnings(store, def),
+    security: securityWarnings(store, def, state.slug),
+    agentToken: agentTokenDto(state.slug),
     agentDefaults: def ? agentDefaults(def) : [],
     mcpServers: Object.entries({
       ...def?.factory.mcpServers,

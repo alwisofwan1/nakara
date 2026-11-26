@@ -210,6 +210,12 @@ const probe: Factory["probeRepository"] = async (_cache, owner, name) => {
       "main allows direct pushes or merges without an approving review. Protect it on GitHub: agents run with a token that can push.",
   };
 };
+// The agent token check asks no real GitHub: it can push everywhere.
+const tokenGh: Factory["agentTokenGh"] = async () => ({
+  ok: true,
+  stdout: "true\n",
+  stderr: "",
+});
 for (const f of registry.factories) {
   const reload = f.reloadDefinition.bind(f);
   f.reloadDefinition = async () => {
@@ -218,6 +224,7 @@ for (const f of registry.factories) {
     return result;
   };
   f.probeRepository = probe;
+  f.agentTokenGh = tokenGh;
   await f.reloadDefinition();
 }
 if (!factory.definition || !harbor.definition)
@@ -854,6 +861,7 @@ const wizardWarp = async (dest: string) => {
 registry.onAdded((created) => {
   created.pump = async () => {};
   created.probeRepository = probe;
+  created.agentTokenGh = tokenGh;
 });
 // The registry is never started, so its scheduler starts no work either.
 const poller = new GithubPoller(registry.factories);

@@ -77,6 +77,8 @@ export class AgentRunner {
   private readonly turn: typeof runTurn;
   /** Reads the PR head on GitHub; tests replace it. */
   private readonly pr: PrIO;
+  /** The factory's slug, which picks its agent token; none when standalone. */
+  private readonly slug: string | undefined;
 
   constructor(
     store: Store,
@@ -86,6 +88,7 @@ export class AgentRunner {
     telemetry: Telemetry = quietTelemetry(),
     turn: typeof runTurn = runTurn,
     pr: PrIO = GH_PR,
+    slug?: string,
   ) {
     this.store = store;
     this.config = config;
@@ -94,6 +97,7 @@ export class AgentRunner {
     this.telemetry = telemetry;
     this.turn = turn;
     this.pr = pr;
+    this.slug = slug;
   }
 
   async run(scheduled: ScheduledRun): Promise<void> {
@@ -190,7 +194,10 @@ export class AgentRunner {
     try {
       docker = await dockerSpec(def, agent.runner, ws);
       if (docker)
-        Object.assign(env, await agentCredentials(agent.harness.kind));
+        Object.assign(
+          env,
+          await agentCredentials(agent.harness.kind, "agent", this.slug),
+        );
     } catch (error) {
       return fail(
         `Could not prepare the ${agent.runner} runner: ${String(error).slice(0, 1500)}`,

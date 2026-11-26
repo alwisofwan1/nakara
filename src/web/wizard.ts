@@ -2,7 +2,6 @@
 // and repositories it can list, what the agent token can see, the slug a
 // factory name would get, the preview of the files Create writes, and the
 // progress of a creation job. Nothing here writes; FactoryCreation does.
-import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,22 +23,21 @@ import {
   staleCreation,
 } from "../orchestrator/creation.ts";
 import type { FactoryRegistry } from "../orchestrator/registry.ts";
+import {
+  type AgentToken,
+  agentTokenOf,
+  agentTokenSecret,
+  type Gh,
+  type GhResult,
+  pushAccess,
+} from "../runner/agent-token.ts";
 import { problemDto } from "./definition.ts";
 
-export interface GhResult {
-  ok: boolean;
-  stdout: string;
-  stderr: string;
-}
-/** Runs `gh` with `args`; `env` overrides Nakara's environment, e.g. GH_TOKEN. */
-export type Gh = (
-  args: string[],
-  env?: Record<string, string>,
-) => Promise<GhResult>;
+export { type Gh, type GhResult, runGh } from "../runner/agent-token.ts";
 
 export interface WizardDeps {
   gh: Gh;
-  /** Where NAKARA_AGENT_GH_TOKEN is read from. */
+  /** Where NAKARA_AGENT_GH_TOKEN and the factories' own tokens are read from. */
   env: NodeJS.ProcessEnv;
   /** Templates; the Warp examples clone is cached by default. */
   scaffold?: ScaffoldDeps;
@@ -56,26 +54,6 @@ export const ghCheckout =
     if (!result.ok)
       throw new Error(result.stderr.trim() || "gh repo clone failed");
   };
-
-export const runGh: Gh = (args, env) =>
-  new Promise((resolve) => {
-    execFile(
-      "gh",
-      args,
-      {
-        env: env ? { ...process.env, ...env } : process.env,
-        timeout: 60_000,
-        maxBuffer: 16 * 1024 * 1024,
-      },
-      (error, stdout, stderr) =>
-        resolve({
-          ok: !error,
-          stdout: String(stdout),
-          // A missing gh binary fails before it writes anything.
-          stderr: String(stderr) || (error ? error.message : ""),
-        }),
-    );
-  });
 
 export interface GhLoginDto {
   loggedIn: boolean;
@@ -171,6 +149,8 @@ export const accessQuery = z.object({
         .min(1)
         .max(100),
     ),
+  /** The slug the new factory gets, so its own token is checked when it has one. */
+  slug: z.string().regex(HANDLE, "slug must be a factory slug").optional(),
 });
 export const nameQuery = z.object({ name: z.string().max(200) });
 
@@ -225,43 +205,34 @@ export interface RepoAccessDto {
 }
 
 /**
- * Asks GitHub for each repository with the token agents push with: the agent
- * token when it is set, otherwise the operator's gh login, which agents
- * running outside Docker use (runner-specific limits are for the agents step).
+ * Asks GitHub for each repository with the token agents push with: the
+ * factory's own token (by the slug the factory gets) or the shared agent token
+ * when one is set, otherwise the operator's gh login, which agents running
+ * outside Docker use (runner-specific limits are for the agents step).
  * A repository counts only with push permission: any token can read a public one.
+ * Returns where the token came from, never its value.
  */
 export async function repoAccess(
   deps: WizardDeps,
   repos: string[],
-): Promise<RepoAccessDto[]> {
-  const token = agentToken(deps.env);
-  const secret = deps.env.NAKARA_AGENT_GH_TOKEN;
-  const env = secret ? { GH_TOKEN: secret, GITHUB_TOKEN: "" } : undefined;
-  return Promise.all(
-    repos.map(async (repo) => {
-      const result = await deps.gh(
-        ["api", `repos/${repo}`, "--jq", ".permissions.push"],
-        env,
-      );
-      const who = token.state === "set" ? "agent token" : "gh login";
-      if (result.ok)
-        return result.stdout.trim() === "true"
-          ? { repo, visible: true, message: null }
-          : {
-              repo,
-              visible: false,
-              message: `The ${who} can't push to ${repo}.`,
-            };
-      const notFound = /HTTP 40[34]|Not Found/i.test(result.stderr);
-      return {
-        repo,
-        visible: false,
-        message: notFound
-          ? `The ${who} can't see ${repo}.`
-          : `Could not check ${repo}: ${result.stderr.trim().slice(0, 200)}`,
-      };
-    }),
+  slug?: string,
+): Promise<{ repos: RepoAccessDto[]; token: AgentToken }> {
+  const token = agentTokenOf(slug, deps.env);
+  const who = token.variable ? "agent token" : "gh login";
+  const access = await pushAccess(
+    deps.gh,
+    agentTokenSecret(slug, deps.env),
+    who,
+    repos,
   );
+  return {
+    repos: access.map(({ repo, canPush, message }) => ({
+      repo,
+      visible: canPush,
+      message,
+    })),
+    token,
+  };
 }
 
 export interface FactoryNameDto {

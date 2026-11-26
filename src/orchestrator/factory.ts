@@ -6,6 +6,7 @@ import type { Definition, LoadResult } from "../definition/load.ts";
 import type { Action } from "../domain/policy.ts";
 import { scheduledWork } from "../intake/schedule.ts";
 import type { RecordedAction } from "../mcp/types.ts";
+import { checkAgentToken, type Gh, runGh } from "../runner/agent-token.ts";
 import type { RepoProbe } from "../runner/repos.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
 import {
@@ -116,6 +117,7 @@ export class Factory {
       {
         definition: () => this.def(),
         pause: (item, reason) => this.actions.pause(item, reason),
+        slug: options.record?.slug,
       },
       telemetry,
     );
@@ -125,6 +127,9 @@ export class Factory {
       this.control,
       () => this.def(),
       telemetry,
+      undefined,
+      undefined,
+      options.record?.slug,
     );
     // Work starts and re-pumps through the Factory, so replacing pump (as
     // tests and the smoke server do) applies to the scheduler and to input.
@@ -278,9 +283,25 @@ export class Factory {
     return this.definitions.rejectReach();
   }
 
-  /** Clone or fetch every factory repository; see DefinitionService.checkRepositories. */
-  checkRepositories(): Promise<void> {
-    return this.definitions.checkRepositories();
+  /** Runs `gh` for the agent token check; replaced in tests to stay offline. */
+  agentTokenGh: Gh = runGh;
+
+  /**
+   * Clone or fetch every factory repository (see
+   * DefinitionService.checkRepositories), then check that the factory's agent
+   * token can push to them.
+   */
+  async checkRepositories(): Promise<void> {
+    await this.definitions.checkRepositories();
+    if (this.definition)
+      await checkAgentToken(
+        this.store,
+        this.record?.slug,
+        this.definition,
+        this.agentTokenGh,
+      ).catch((error) =>
+        this.telemetry.log.warn("agent_token.check_failed", { error }),
+      );
   }
 
   private def(): Definition {

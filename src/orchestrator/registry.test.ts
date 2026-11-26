@@ -505,3 +505,105 @@ test("NAKARA_DEFINITION_DIR set to another directory than the first factory's wa
     assert.deepEqual(mentions(quiet.warnings), []);
   }
 });
+
+test("each factory names its agent token source in /healthz and its definition page, warns where it cannot push, and never shows the value", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-registry-"));
+  const secondDir = join(dir, "second");
+  await copyDefinition(secondDir, "Second", ["client/app"]);
+  const vars = {
+    NAKARA_AGENT_GH_TOKEN: "github_pat_shared_value",
+    NAKARA_AGENT_GH_TOKEN__SECOND: "github_pat_second_value",
+  };
+  const saved = Object.fromEntries(
+    Object.keys(vars).map((k) => [k, process.env[k]]),
+  );
+  Object.assign(process.env, vars);
+  const lines: string[] = [];
+  const store = new Store(":memory:", { defaultBudgetUsd: 15 });
+  store.repos.factories.createFactory({
+    ...stubFactorySeed(),
+    slug: "second",
+    name: "Second",
+    definition_dir: secondDir,
+  });
+  const config = loadConfig({
+    NAKARA_GITHUB_MIRROR: "false",
+    NAKARA_BACKUP_DIR: join(dir, "backups"),
+  });
+  const registry = new FactoryRegistry(store, config, {
+    log: new Logger({ write: (l) => lines.push(l) }),
+    metrics: new Metrics(),
+  });
+  t.after(async () => {
+    for (const [k, v] of Object.entries(saved))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    await registry.drain(0);
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  await registry.start();
+  // Offline: the clones succeed, and GitHub answers per token.
+  const asked: [string, string | undefined, string | undefined][] = [];
+  for (const factory of registry.factories) {
+    factory.probeRepository = async () => ({ defaultBranch: "main" });
+    factory.agentTokenGh = async (args, env) => {
+      asked.push([factory.record?.slug ?? "", args[1], env?.GH_TOKEN]);
+      return { ok: true, stdout: "false\n", stderr: "" };
+    };
+  }
+  await registry.checkRepositories();
+  // Each factory is checked with its own token.
+  assert.ok(asked.length > 0);
+  for (const [slug, , token] of asked)
+    assert.equal(
+      token,
+      slug === "second" ? "github_pat_second_value" : "github_pat_shared_value",
+    );
+
+  const app = createApp(
+    registry,
+    new GithubPoller(registry.default),
+    config,
+    "test",
+  );
+  const health = await (
+    await app.request("/healthz", {}, {
+      incoming: { socket: { remoteAddress: "127.0.0.1" } },
+    } as HttpBindings)
+  ).text();
+  const parsed = JSON.parse(health) as {
+    factories: Record<string, { agentToken: string }>;
+    warnings: string[];
+  };
+  assert.equal(parsed.factories.default?.agentToken, "shared");
+  assert.equal(parsed.factories.second?.agentToken, "own");
+  assert.ok(
+    parsed.warnings.includes(
+      "The agent token can't push to client/app. Agents of second could not push branches or open pull requests there.",
+    ),
+    health,
+  );
+
+  const api = createApi(registry, config);
+  const page = await (await api.request("/f/second/definition")).text();
+  assert.deepEqual((JSON.parse(page) as { agentToken: unknown }).agentToken, {
+    source: "own",
+    variable: "NAKARA_AGENT_GH_TOKEN__SECOND",
+    label: "own token (NAKARA_AGENT_GH_TOKEN__SECOND)",
+  });
+  const setup = await (await api.request("/setup")).text();
+  assert.match(
+    setup,
+    /Agents use the own token \(NAKARA_AGENT_GH_TOKEN__SECOND\)/,
+  );
+  for (const out of [health, page, setup, lines.join("\n")])
+    for (const value of Object.values(vars))
+      assert.ok(!out.includes(value), out);
+  // The definition files hold no token either.
+  assert.ok(
+    !(await readFile(join(secondDir, "factory.yaml"), "utf8")).includes(
+      "github_pat_",
+    ),
+  );
+});

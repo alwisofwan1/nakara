@@ -92,6 +92,8 @@ export class ForemanRunner {
   private readonly definition: () => Definition;
   /** Pause the work item with a reason for the operator. */
   private readonly pause: (item: WorkItem, reason: string) => void;
+  /** The factory's slug, which picks the agent token the foreman falls back to. */
+  private readonly slug: string | undefined;
   private readonly telemetry: Telemetry;
 
   constructor(
@@ -101,6 +103,7 @@ export class ForemanRunner {
     hooks: {
       definition: () => Definition;
       pause: (item: WorkItem, reason: string) => void;
+      slug?: string | undefined;
     },
     telemetry: Telemetry = quietTelemetry(),
   ) {
@@ -109,6 +112,7 @@ export class ForemanRunner {
     this.control = control;
     this.definition = hooks.definition;
     this.pause = hooks.pause;
+    this.slug = hooks.slug;
     this.telemetry = telemetry;
   }
 
@@ -135,7 +139,11 @@ export class ForemanRunner {
         readOnly: [ws.root, ...(spec.readOnly ?? []), ...MCP_CODE],
         home,
       },
-      env: await agentCredentials(def.foreman.harness.kind, "foreman"),
+      env: await agentCredentials(
+        def.foreman.harness.kind,
+        "foreman",
+        this.slug,
+      ),
       fresh,
     };
   }

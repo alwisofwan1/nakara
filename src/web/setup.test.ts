@@ -71,7 +71,12 @@ test("setup reports a missing image, missing tokens and the way to fix each", as
   assert.equal(check(dto, "claude-token")?.state, "fail");
   assert.equal(check(dto, "foreman:box")?.state, "ok");
   assert.equal(check(dto, "github-poll")?.state, "warn");
-  assert.equal(dto.counts.fail, 4);
+  assert.equal(check(dto, "agent-token:box")?.state, "fail");
+  assert.match(
+    check(dto, "agent-token:box")?.fix ?? "",
+    /NAKARA_AGENT_GH_TOKEN__BOX/,
+  );
+  assert.equal(dto.counts.fail, 5);
 });
 
 test("setup is green with the tokens set, and never carries a token's value", async () => {

@@ -143,12 +143,14 @@ test("repo access asks GitHub with the agent token and flags what it can't see",
   };
   const env = { NAKARA_AGENT_GH_TOKEN: "github_pat_agent" };
   assert.deepEqual(
-    await repoAccess({ gh, env }, [
-      "acme/widgets",
-      "other/public",
-      "acme/secret",
-      "acme/flaky",
-    ]),
+    (
+      await repoAccess({ gh, env }, [
+        "acme/widgets",
+        "other/public",
+        "acme/secret",
+        "acme/flaky",
+      ])
+    ).repos,
     [
       { repo: "acme/widgets", visible: true, message: null },
       // Public: any token reads it with 200, but the agents can't push.
@@ -179,9 +181,11 @@ test("repo access asks GitHub with the agent token and flags what it can't see",
   // Agents get the operator's gh login: that is what is checked.
   calls.length = 0;
   assert.deepEqual(
-    await repoAccess({ gh, env: { NAKARA_ALLOW_PERSONAL_GH_TOKEN: "1" } }, [
-      "acme/secret",
-    ]),
+    (
+      await repoAccess({ gh, env: { NAKARA_ALLOW_PERSONAL_GH_TOKEN: "1" } }, [
+        "acme/secret",
+      ])
+    ).repos,
     [
       {
         repo: "acme/secret",
@@ -195,7 +199,7 @@ test("repo access asks GitHub with the agent token and flags what it can't see",
   // No agent token: agents outside Docker push with the gh login, so it is checked.
   calls.length = 0;
   assert.deepEqual(
-    await repoAccess({ gh, env: {} }, ["acme/widgets", "other/public"]),
+    (await repoAccess({ gh, env: {} }, ["acme/widgets", "other/public"])).repos,
     [
       { repo: "acme/widgets", visible: true, message: null },
       {
@@ -212,6 +216,32 @@ test("repo access asks GitHub with the agent token and flags what it can't see",
       [["api", "repos/other/public", "--jq", ".permissions.push"], undefined],
     ],
   );
+});
+
+test("repo access checks the new factory's own token when it has one, and says which", async () => {
+  const seen: (string | undefined)[] = [];
+  const gh: Gh = async (_args, env) => {
+    seen.push(env?.GH_TOKEN);
+    return ok("true\n");
+  };
+  const env = {
+    NAKARA_AGENT_GH_TOKEN: "github_pat_shared",
+    NAKARA_AGENT_GH_TOKEN__CLIENT_APP: "github_pat_client",
+  };
+  const own = await repoAccess({ gh, env }, ["client/app"], "client-app");
+  assert.deepEqual(own.token, {
+    source: "own",
+    variable: "NAKARA_AGENT_GH_TOKEN__CLIENT_APP",
+  });
+  // A slug without its own token is checked with the shared one.
+  const shared = await repoAccess({ gh, env }, ["acme/app"], "acme");
+  assert.deepEqual(shared.token, {
+    source: "shared",
+    variable: "NAKARA_AGENT_GH_TOKEN",
+  });
+  assert.deepEqual(seen, ["github_pat_client", "github_pat_shared"]);
+  // The source and the name, never the value.
+  assert.ok(!JSON.stringify([own, shared]).includes("github_pat_"));
 });
 
 test("factory name suggests the slug and handle, and refuses ones in use", () => {
@@ -352,8 +382,13 @@ test("wizard API: gh status, repositories, token access and the name check", asy
           message: "The agent token can't see acme/secret.",
         },
       ],
+      token: { source: "shared", variable: "NAKARA_AGENT_GH_TOKEN" },
     },
   });
+  assert.equal(
+    (await get("access?repos=acme/widgets&slug=Not_A_Slug")).status,
+    400,
+  );
   const invalid = await get("access?repos=not-a-repo");
   assert.equal(invalid.status, 400);
   assert.equal(invalid.body.error.code, "invalid_input");

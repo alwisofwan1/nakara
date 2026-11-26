@@ -235,6 +235,15 @@ function DefinitionPage() {
                 {data.repositories.map((repo) => (
                   <Repository key={repo.slug} repo={repo} />
                 ))}
+                <p className="box-row flex-wrap">
+                  <Icon name="key-round" className="icon" />
+                  <span className="text-muted">Agents push with</span>
+                  <span>
+                    {data.agentToken.source === "none"
+                      ? "no token: docker agent runs fail"
+                      : data.agentToken.label}
+                  </span>
+                </p>
               </Box>
               <Box title="agentDefaults">
                 {data.agentDefaults.map((row) => (
