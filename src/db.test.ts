@@ -64,3 +64,56 @@ test("items that predate per-item budgets are migrated to the configured default
   );
   reopened.close();
 });
+
+test("an interrupted review keeps its count; the run that resumes it gives it back if it fails", () => {
+  const store = new Store(":memory:", { defaultBudgetUsd: 15 });
+  const item = store.createItem({
+    title: "T",
+    request: "R",
+    source: "manual",
+  });
+  store.updateItem(item.id, { review_count: 1 });
+  const run = store.createRun({
+    item_id: item.id,
+    role: "agent",
+    agent: "review",
+    agent_type: "REVIEW",
+    harness: "claude",
+    model: null,
+    session_id: null,
+    status: "queued",
+    input: "Review",
+    counts_review: 1,
+  });
+  store.markRunStarted(run.id, "log");
+  const { status, resume } = store.transaction(() =>
+    store.interruptRun(
+      run.id,
+      {
+        result: null,
+        cost_usd: 0,
+        num_turns: null,
+        duration_ms: null,
+        session_id: "s-1",
+      },
+      "Restarted.",
+    ),
+  );
+  assert.equal(status, "interrupted");
+  assert.equal(resume?.counts_review, 1);
+  assert.equal(store.item(item.id)?.review_count, 1);
+  assert.ok(resume);
+  store.markRunStarted(resume.id, "log");
+  store.finishRun(resume.id, {
+    status: "failed",
+    result: null,
+    error: "boom",
+    cost_usd: 0,
+    num_turns: null,
+    duration_ms: 0,
+    session_id: "s-1",
+    log_path: "log",
+  });
+  assert.equal(store.item(item.id)?.review_count, 0);
+  store.db.close();
+});

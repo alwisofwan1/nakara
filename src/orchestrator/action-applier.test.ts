@@ -621,3 +621,65 @@ test("a mirrored update is posted with token-shaped strings redacted", async (t)
   const comment = calls.find((c) => c[0] === "comment");
   assert.equal(comment?.[2], "Found [redacted] in the log");
 });
+
+test("only a review that ran counts toward the review limit: stopped, cancelled and failed ones give it back", async (t) => {
+  const { store, item, apply } = setup(t);
+  store.updateItem(item.id, { stage: "building", pr_url: PR });
+  const review = {
+    type: "dispatch_agent",
+    agent: "review",
+    agentType: "REVIEW",
+    brief: "Review the PR.",
+  } as const;
+  const end = (status: "succeeded" | "failed" | "cancelled") => {
+    const run = store.runs(item.id).at(-1);
+    assert.ok(run);
+    store.markRunStarted(run.id, "log");
+    store.finishRun(run.id, {
+      status,
+      result: status === "succeeded" ? "Verdict: accepted" : null,
+      error: status === "succeeded" ? null : "Stopped by the operator.",
+      cost_usd: 0,
+      num_turns: null,
+      duration_ms: 0,
+      session_id: "s-review",
+      log_path: "log",
+    });
+  };
+  const reviews = () => store.item(item.id)?.review_count;
+
+  // Stopped by the operator: the run is cancelled and no review was used.
+  assert.deepEqual(await apply(review), [review]);
+  assert.equal(store.runs(item.id).at(-1)?.counts_review, 1);
+  assert.equal(reviews(), 1);
+  end("cancelled");
+  assert.equal(reviews(), 0);
+
+  // Failed without a verdict: the same; the limit (1) still allows a review.
+  assert.deepEqual(await apply(review), [review]);
+  end("failed");
+  assert.equal(reviews(), 0);
+
+  // Cancelled before it started, with the item's other queued runs.
+  assert.deepEqual(await apply(review), [review]);
+  store.cancelQueuedRuns(item.id);
+  assert.equal(reviews(), 0);
+
+  // A follow-up never counted, so its failure gives nothing back.
+  assert.deepEqual(await apply(review), [review]);
+  end("succeeded");
+  assert.equal(reviews(), 1);
+  const followUp = {
+    type: "follow_up",
+    agent: "review",
+    agentType: "REVIEW",
+    message: "Look again.",
+  } as const;
+  assert.deepEqual(await apply(followUp), [followUp]);
+  assert.equal(store.runs(item.id).at(-1)?.counts_review, 0);
+  end("failed");
+  assert.equal(reviews(), 1);
+
+  // The review that ran still counts: the limit refuses another.
+  assert.deepEqual(await apply(review), []);
+});

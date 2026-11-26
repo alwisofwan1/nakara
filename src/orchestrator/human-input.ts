@@ -232,7 +232,13 @@ export class HumanInput {
     if (!verdict.ok) return refuse(verdict.reason);
     const session = this.store.latestAgentSession(itemId, agent.name);
     const queued = this.store.transaction(() => {
-      this.store.applyPolicyState(itemId, verdict.next);
+      // A failed review gave its review back; its retry takes it again.
+      this.store.applyPolicyState(
+        itemId,
+        last.counts_review
+          ? { ...verdict.next, reviewCount: verdict.next.reviewCount + 1 }
+          : verdict.next,
+      );
       this.store.addMessage(
         itemId,
         "human",
@@ -250,6 +256,7 @@ export class HumanInput {
         input: session
           ? `Your previous run failed${last.error ? `: ${last.error}` : ""}. Continue the task where you left off.\n\nThe task was:\n\n${last.input}`
           : last.input,
+        counts_review: last.counts_review,
       });
     });
     this.pump();

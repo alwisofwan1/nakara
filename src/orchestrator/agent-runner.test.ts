@@ -22,6 +22,7 @@ import type { runTurn } from "../harness/claude.ts";
 import { diffFile, type RepoSnapshot } from "../runner/snapshot.ts";
 import { readRunDiff } from "../web/run-diff.ts";
 import { AgentRunner } from "./agent-runner.ts";
+import { renderEvent } from "./prompts.ts";
 import { RunControl } from "./run-support.ts";
 
 const git = (cwd: string, ...args: string[]) =>
@@ -100,7 +101,18 @@ async function fixture(t: TestContext, agentName = "implement") {
     ).run(queued);
   const snapshots = (): RepoSnapshot[] =>
     JSON.parse(store.runById(queued.id)?.snapshots ?? "[]");
-  return { config, store, item, seed, queued, worktree, run, snapshots, agent };
+  return {
+    config,
+    store,
+    item,
+    seed,
+    queued,
+    worktree,
+    run,
+    snapshots,
+    agent,
+    def,
+  };
 }
 
 const succeeded = {
@@ -470,4 +482,67 @@ test("a reflect run that proposes nothing or fails leaves no proposal and no for
   // A failed reflect run checked nothing.
   assert.equal(failed.store.getKv(uncheckedKey(failed.item.factory_id)), "1");
   assert.equal(none.store.getKv(uncheckedKey(none.item.factory_id)), undefined);
+});
+
+test("a review run that is stopped or fails gives its review back and tells the foreman it can run again; a succeeded one keeps it", async (t) => {
+  for (const end of ["stopped", "failed", "succeeded"] as const) {
+    const review = await fixture(t, "review");
+    review.store.updateItem(review.item.id, { review_count: 1 });
+    review.store.db
+      .prepare("UPDATE runs SET counts_review = 1 WHERE id = ?")
+      .run(review.queued.id);
+    const control = new RunControl();
+    let started = false;
+    const running = new AgentRunner(
+      review.store,
+      review.config,
+      control,
+      () => review.def,
+      undefined,
+      async (req) => {
+        if (end === "succeeded")
+          return { ...succeeded, result: "Verdict: accepted" };
+        if (end === "failed")
+          return { ...succeeded, ok: false, result: null, error: "boom" };
+        // Stopped by the operator: the harness ends when its signal aborts.
+        started = true;
+        await new Promise((resolve) =>
+          req.signal?.addEventListener("abort", resolve, { once: true }),
+        );
+        return { ...succeeded, ok: false, result: null, error: "Cancelled." };
+      },
+    ).run(review.queued);
+    if (end === "stopped") {
+      while (!started) await new Promise((resolve) => setTimeout(resolve, 5));
+      control.stopped.add(review.queued.id);
+      control.controllers.get(review.queued.id)?.abort();
+    }
+    await running;
+    const run = review.store.runById(review.queued.id);
+    assert.equal(
+      run?.status,
+      end === "stopped" ? "cancelled" : end,
+      `${end}: status`,
+    );
+    assert.equal(
+      review.store.item(review.item.id)?.review_count,
+      end === "succeeded" ? 1 : 0,
+      `${end}: review_count`,
+    );
+    const [event] = review.store.pendingEvents(review.item.id);
+    assert.ok(event);
+    const rendered = renderEvent(
+      event,
+      // biome-ignore lint/style/noNonNullAssertion: The item exists.
+      review.store.item(review.item.id)!,
+      review.def,
+    );
+    if (end === "succeeded")
+      assert.doesNotMatch(rendered, /dispatch the review again/);
+    else
+      assert.match(
+        rendered,
+        /does not count toward the review limit \(0 of 1 used\)\. You can dispatch the review again\./,
+      );
+  }
 });
