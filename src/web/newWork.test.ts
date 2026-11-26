@@ -67,12 +67,19 @@ test("options list the definition's repositories, enabled automations and known 
     requester: "operator",
   });
   assert.deepEqual(options.requesters, ["operator", "zoe"]);
+  assert.equal(options.specRule, "when_asked");
   // The form starts from the factory's own Budget per Work Item.
   const { id } = store.repos.factories.defaultFactory();
   store.repos.factorySettings.saveLimits(id, { budgetUsd: 5 });
   assert.equal(
     readNewWorkOptions(store, factory.definition, id).defaults.budgetUsd,
     5,
+  );
+  // The form shows the factory's own Spec rule.
+  store.repos.factorySettings.saveLimits(id, { specRule: "always" });
+  assert.equal(
+    readNewWorkOptions(store, factory.definition, id).specRule,
+    "always",
   );
   assert.equal(readNewWorkOptions(store, undefined).ready, false);
   store.db.close();
@@ -255,5 +262,41 @@ test("refuses invalid input with 400 and definition violations with 409", async 
   factory.definition = undefined;
   assert.equal((await post(form)).status, 409);
   assert.equal(store.items().length, 0);
+  store.db.close();
+});
+
+test("spec: true asks for a Spec under when_asked and is refused with 400 under always and never", async () => {
+  const { store, post } = await fixture();
+  const { id } = store.repos.factories.defaultFactory();
+  const requested = async (body: object) => {
+    const { status, body: created } = await post(body);
+    assert.equal(status, 201);
+    const item = store.item(created.id ?? 0);
+    return [item?.spec_rule, item?.spec_requested];
+  };
+  assert.deepEqual(await requested(form), ["when_asked", 0]);
+  assert.deepEqual(await requested({ ...form, spec: true }), ["when_asked", 1]);
+  assert.equal((await post({ ...form, spec: "yes" })).status, 400);
+
+  for (const [specRule, message] of [
+    [
+      "always",
+      "This factory always writes a Spec first, so a Work Item does not ask for one.",
+    ],
+    [
+      "never",
+      "This factory does not write Specs, so a Work Item cannot ask for one.",
+    ],
+  ] as const) {
+    store.repos.factorySettings.saveLimits(id, { specRule });
+    const refused = await post({ ...form, spec: true });
+    assert.deepEqual(refused, {
+      status: 400,
+      body: { error: { code: "invalid", message } },
+    });
+    // Without the switch the item copies the factory's rule.
+    assert.deepEqual(await requested(form), [specRule, 0]);
+  }
+  assert.equal(store.items().length, 4);
   store.db.close();
 });

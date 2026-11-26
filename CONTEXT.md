@@ -95,6 +95,9 @@ _Avoid_: Suspended, halted
 The written plan for a **Work Item**, committed to its **Pull Request**, that a human must approve before implementation.
 _Avoid_: Design doc, plan, spec PR
 
+**Spec rule**:
+Whether a **Factory** writes a **Spec** before code: always, when asked (the **Work Item** asks for one, or the **Foreman** decides) or never. A **Work Item** copies its factory's rule when it is created.
+
 **Pull Request**:
 The single pull request that carries a **Work Item**'s change, first as a draft and later ready for a human to merge.
 _Avoid_: PR as a separate "spec PR" and "implementation PR"

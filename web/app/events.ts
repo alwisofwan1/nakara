@@ -16,7 +16,8 @@ const QUERY_KEYS: Record<ChangeEvent["type"], string[]> = {
   // A factory's Settings page lists its definition's history.
   definition: ["definition", "factories"],
   creation: ["creation"],
-  factories: ["factories"],
+  // The New work form starts from the factory's budget and Spec rule.
+  factories: ["factories", "new-work"],
 };
 
 export function invalidateChange(client: QueryClient, data: string) {

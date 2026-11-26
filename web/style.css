@@ -430,6 +430,26 @@
   .limit-input {
     @apply flex shrink-0 items-center gap-xs;
   }
+  /* A label and its hint, with a switch at the end of the row. */
+  .switch-field {
+    @apply flex items-center justify-between gap-md;
+  }
+  /* A one-of-three choice, such as Spec before code. */
+  .segmented {
+    @apply flex shrink-0 overflow-hidden rounded-control border border-line;
+  }
+  .segmented-option {
+    @apply px-md py-xs text-small text-muted;
+  }
+  .segmented-option + .segmented-option {
+    @apply border-l border-line;
+  }
+  .segmented-option[aria-pressed="true"] {
+    @apply bg-nav-active font-semibold text-text;
+  }
+  .segmented:disabled .segmented-option {
+    cursor: progress;
+  }
   .input {
     @apply w-full rounded-control border border-line bg-bg px-md py-sm font-sans text-body text-text;
   }

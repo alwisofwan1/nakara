@@ -73,6 +73,7 @@ ${agents || "(none: you do the work yourself)"}
 ## Policy enforced in code
 A tool call that violates these rules is refused with the reason:
 - Implementation waits for the human to approve a drafted spec.
+- Each work item has its own spec rule, shown in its current state: \`always\`, or \`when asked\` by the item, means implement waits for an approved spec; \`never\` refuses the spec agent.
 - Review runs at most ${limits.maxReviews} time(s), and only after record_refs has a PR. Only a review that ran counts: a review run that is stopped, cancelled or fails without a verdict gives its review back, so you can dispatch the review again.
 - After review, fixes go to the same implementation agent with follow_up, at most ${limits.maxRevisions} time(s).
 - Handoff is checked after your turn and requires the implementation worktree's HEAD to be on the PR (pushed: the PR head or an ancestor of it) and passing CI (absent checks pass only when the PR head has no files under .github/workflows/). When the work is not on the PR, follow_up the implementation agent with push_only: true; it does not count toward the revision cap and is offered once per refusal. If the work is still not on the PR after it, the item waits for a human. Failed checks return their names: use follow_up for implementation fixes, which count toward the revision cap even before review. Unreadable checks pause for a human to resolve gh Checks/Actions read access or connectivity; no automatic retry. Pending checks are polled and wake you on completion; end your turn. If the cap is reached, ask_human; never bypass CI.
@@ -210,6 +211,17 @@ export function renderEvent(
   }
 }
 
+/** The item's Spec rule, worded as what the Foreman may dispatch. */
+function specRuleLine(item: WorkItem): string {
+  if (item.spec_rule === "never")
+    return "never (this factory does not write Specs: dispatch implement directly, never the spec agent)";
+  if (item.spec_rule === "always")
+    return "always (this factory writes a Spec first: implement waits until the spec agent's Spec is approved)";
+  return item.spec_requested
+    ? "when asked, and this item asked for one (write a Spec first: implement waits until the spec agent's Spec is approved)"
+    : "when asked (you decide whether this item needs a Spec)";
+}
+
 export function renderState(item: WorkItem, runs: Run[]): string {
   const active = runs.filter(
     (r) =>
@@ -219,6 +231,7 @@ export function renderState(item: WorkItem, runs: Run[]): string {
     "## Current state",
     `- stage: ${item.stage} · spec: ${item.spec_state} · reviews: ${item.review_count}/${item.max_reviews} · revisions: ${item.revision_count}/${item.max_revisions}`,
     `- issue: ${item.issue_url ?? "none"} · PR: ${item.pr_url ?? "none"}${item.pr_merged ? " (merged)" : ""}`,
+    `- spec rule: ${specRuleLine(item)}`,
     `- cost: $${item.cost_usd.toFixed(2)} of $${item.budget_usd.toFixed(2)} · runs: ${item.run_count + 1} of ${item.max_runs} (this turn included)`,
     `- agents in progress: ${active.length ? active.map((r) => `${r.agent} (#${r.id}, ${r.status})`).join(", ") : "none"}`,
   ].join("\n");

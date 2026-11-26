@@ -79,6 +79,8 @@ function NewWorkForm({
   const [automation, setAutomation] = useState(initial.automation);
   const [budget, setBudget] = useState(options.defaults.budgetUsd.toFixed(2));
   const [requester, setRequester] = useState(options.defaults.requester);
+  // Only a `when_asked` factory lets the item choose; `always` asks for it anyway.
+  const [spec, setSpec] = useState(false);
   const navigate = useNavigate();
   const create = useMutation({
     mutationFn: (json: NewWork) => createWork(slug, json),
@@ -103,6 +105,7 @@ function NewWorkForm({
       automation: automation || null,
       budgetUsd: Number(budget),
       requester,
+      spec: options.specRule === "when_asked" && spec,
     });
   };
   const shortcut = (event: KeyboardEvent<HTMLFormElement>) => {
@@ -225,6 +228,27 @@ function NewWorkForm({
             </datalist>
           </label>
         </div>
+        {options.specRule !== "never" && (
+          <label className="switch-field">
+            <span className="grid">
+              <span className="field-label">Write a Spec first</span>
+              <span className="field-hint">
+                {options.specRule === "always"
+                  ? `#${slug} always asks for one.`
+                  : "The Spec is written into the Pull Request, and you approve it before implement starts."}
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="automation-switch"
+              aria-checked={options.specRule === "always" || spec}
+              checked={options.specRule === "always" || spec}
+              disabled={options.specRule === "always"}
+              onChange={(e) => setSpec(e.target.checked)}
+            />
+          </label>
+        )}
         <label className="import-issue">
           <span className="field-hint">
             Or paste a GitHub issue URL to import it

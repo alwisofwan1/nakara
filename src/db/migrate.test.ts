@@ -342,6 +342,8 @@ const contents = (db: DatabaseSync) =>
             max_revisions,
             request_edited,
             counts_review,
+            spec_rule,
+            spec_requested,
             ...row
           }) => {
             assert.equal(instance_id ?? null, null);
@@ -352,6 +354,11 @@ const contents = (db: DatabaseSync) =>
             assert.equal(request_edited ?? 0, 0);
             // Migration 016 marks no run that existed before it as a counted review.
             assert.equal(counts_review ?? 0, 0);
+            // Migration 019: existing items keep today's Spec behaviour and asked for none.
+            if (t === "work_items" && spec_rule !== undefined) {
+              assert.equal(spec_rule, "when_asked");
+              assert.equal(spec_requested, 0);
+            }
             if (t === "work_items" && factory_id !== undefined)
               assert.equal(typeof factory_id, "number");
             // Migration 015 gives existing items the default review and revision limits.
@@ -532,7 +539,7 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
       store.db
         .prepare("SELECT * FROM work_items ORDER BY id")
         .all()
-        // Migration 010, 012 and 015's columns are checked by contents().
+        // Migration 010, 012, 015 and 019's columns are checked by contents().
         .map(
           ({
             max_runs,
@@ -540,6 +547,8 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
             request_edited,
             max_reviews,
             max_revisions,
+            spec_rule,
+            spec_requested,
             ...row
           }) => row,
         ),
@@ -874,6 +883,59 @@ test("migration 018 adds the factories' recorded archive, none for existing fact
   assert.deepEqual(schema(db), version17);
   assert.equal(
     (db.prepare("SELECT COUNT(*) AS n FROM factories").get() as { n: number })
+      .n,
+    1,
+  );
+});
+
+test("migration 019 adds the Spec rule, when_asked for existing factories and items, and down restores version 18", (t) => {
+  const dir = tempDir(t);
+  const db = new DatabaseSync(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 18),
+  });
+  const version18 = schema(db);
+  db.exec(`
+    INSERT INTO factory_settings (factory_id, budget_usd, updated_at) VALUES (1, 5, 'now');
+    INSERT INTO work_items (title, request, source, factory_id, budget_usd, created_at, updated_at)
+    VALUES ('T', 'R', 'manual', 1, 15, 't', 't');`);
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  // Saved settings have no rule (when_asked); the item keeps today's behaviour.
+  assert.deepEqual(
+    {
+      ...db.prepare("SELECT budget_usd, spec_rule FROM factory_settings").get(),
+    },
+    { budget_usd: 5, spec_rule: null },
+  );
+  assert.deepEqual(
+    { ...db.prepare("SELECT spec_rule, spec_requested FROM work_items").get() },
+    { spec_rule: "when_asked", spec_requested: 0 },
+  );
+  // Only the three rules are stored.
+  assert.throws(
+    () => db.exec("UPDATE factory_settings SET spec_rule = 'sometimes'"),
+    /CHECK constraint failed/,
+  );
+  assert.throws(
+    () => db.exec("UPDATE work_items SET spec_rule = 'sometimes'"),
+    /CHECK constraint failed/,
+  );
+  db.exec(`UPDATE factory_settings SET spec_rule = 'always';
+    UPDATE work_items SET spec_rule = 'never', spec_requested = 1;`);
+
+  assert.equal(migrateDown(db, 18), 18);
+  assert.deepEqual(schema(db), version18);
+  assert.deepEqual(
+    { ...db.prepare("SELECT budget_usd FROM factory_settings").get() },
+    { budget_usd: 5 },
+  );
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS n FROM work_items").get() as { n: number })
       .n,
     1,
   );

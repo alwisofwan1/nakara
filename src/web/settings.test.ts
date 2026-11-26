@@ -87,6 +87,7 @@ test("factory settings: the record, its definition and its active items", () => 
         maxReviews: 1,
         maxRevisions: 2,
         maxRuns: 50,
+        specRule: "when_asked",
         defaults: {
           budgetUsd: 15,
           maxReviews: 1,
@@ -283,6 +284,7 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
   assert.deepEqual(limitsOf(before), [15, 1, 2, 50]);
   assert.deepEqual((await call("GET", "f/harbor/settings")).body.limits, {
     ...defaults,
+    specRule: "when_asked",
     defaults,
   });
 
@@ -299,6 +301,7 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
       maxReviews: 3,
       maxRevisions: 0,
       maxRuns: 120,
+      specRule: "when_asked",
       defaults,
     },
   });
@@ -329,9 +332,74 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
     maxReviews: 3,
     maxRevisions: 4,
     maxRuns: 120,
+    specRule: "when_asked",
     defaults,
   });
   assert.deepEqual(limitsOf(create(harborId)), [15, 3, 4, 120]);
+});
+
+test("spec rule: saved with the limits, copied by new items, and items created before a change keep their rule", async (t) => {
+  const { store, harbor, call } = await setup(t);
+  const harborId = harbor.record?.id;
+  const create = (specRequested?: boolean) =>
+    store.createItem({
+      title: "T",
+      request: "R",
+      source: "manual",
+      factoryId: harborId,
+      specRequested,
+    });
+  const ruleOf = (item: { id: number }) => {
+    // biome-ignore lint/style/noNonNullAssertion: Created above.
+    const row = store.item(item.id)!;
+    return [row.spec_rule, row.spec_requested];
+  };
+
+  // No saved rule: the Foreman decides, and an item may ask for a Spec.
+  const plain = create();
+  const asked = create(true);
+  assert.deepEqual(ruleOf(plain), ["when_asked", 0]);
+  assert.deepEqual(ruleOf(asked), ["when_asked", 1]);
+
+  const always = await call("PUT", "f/harbor/settings/limits", {
+    specRule: "always",
+  });
+  assert.equal(always.status, 200);
+  assert.equal(always.body.specRule, "always");
+  // Only the rule changed; the limits keep their defaults.
+  assert.equal(always.body.budgetUsd, 15);
+  assert.equal(
+    (await call("GET", "f/harbor/settings")).body.limits.specRule,
+    "always",
+  );
+  const strict = create();
+  assert.deepEqual(ruleOf(strict), ["always", 0]);
+  // An item cannot opt out of always, nor into never.
+  assert.throws(() => create(true), /always writes a Spec first/);
+
+  assert.equal(
+    (await call("PUT", "f/harbor/settings/limits", { specRule: "never" })).body
+      .specRule,
+    "never",
+  );
+  assert.deepEqual(ruleOf(create()), ["never", 0]);
+  assert.throws(() => create(true), /does not write Specs/);
+  // Items created before each change keep the rule they copied (ADR-0006 rule 1).
+  assert.deepEqual(ruleOf(plain), ["when_asked", 0]);
+  assert.deepEqual(ruleOf(asked), ["when_asked", 1]);
+  assert.deepEqual(ruleOf(strict), ["always", 0]);
+
+  // null resets to when_asked; an unknown rule is refused.
+  assert.equal(
+    (await call("PUT", "f/harbor/settings/limits", { specRule: null })).body
+      .specRule,
+    "when_asked",
+  );
+  assert.equal(
+    (await call("PUT", "f/harbor/settings/limits", { specRule: "sometimes" }))
+      .status,
+    400,
+  );
 });
 
 test("pause and resume are idempotent, return the new state, and show in the settings and the factory list", async (t) => {

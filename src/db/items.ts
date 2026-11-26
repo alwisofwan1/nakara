@@ -1,10 +1,12 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
-import type {
-  ItemStatus,
-  PolicyState,
-  SpecState,
-  Stage,
+import {
+  type ItemStatus,
+  type PolicyState,
+  type SpecRule,
+  type SpecState,
+  type Stage,
+  specRequestRefused,
 } from "../domain/policy.ts";
 import type { FactorySettingsRepository } from "./factory-settings.ts";
 import type { Notifier } from "./notifier.ts";
@@ -35,6 +37,10 @@ export interface WorkItem {
   max_reviews: number;
   /** How many revisions the item may take, copied from its factory when it was created. */
   max_revisions: number;
+  /** Whether the item needs a Spec, copied from its factory when it was created. */
+  spec_rule: SpecRule;
+  /** 1 when the item asked for a Spec, which only the `when_asked` rule allows. */
+  spec_requested: number;
   /** 1 when someone without write access edited the request after the Factory Label was applied. */
   request_edited: number;
   issue_url: string | null;
@@ -60,6 +66,8 @@ export function policyState(item: WorkItem): PolicyState {
     maxRuns: item.max_runs,
     maxReviews: item.max_reviews,
     maxRevisions: item.max_revisions,
+    specRule: item.spec_rule,
+    specRequested: item.spec_requested === 1,
     prUrl: item.pr_url,
     prMerged: item.pr_merged === 1,
   };
@@ -96,6 +104,8 @@ export class ItemRepository extends Repository {
     automation?: string | null;
     issueUrl?: string | null;
     requestEdited?: boolean;
+    /** Ask for a Spec; refused unless the factory's rule is `when_asked`. */
+    specRequested?: boolean;
     /** Overrides the factory's Budget per Work Item. */
     budgetUsd?: number;
     /** The owning factory; the first factory when omitted. */
@@ -108,9 +118,12 @@ export class ItemRepository extends Repository {
       this.get<{ id: number }>("SELECT MIN(id) AS id FROM factories")!.id;
     // A snapshot: changing the factory's limits later leaves this item alone.
     const limits = this.settings.settings(factoryId);
+    // ADR-0006 rule 3: an item cannot opt out of `always` or into `never`.
+    if (input.specRequested && limits.specRule !== "when_asked")
+      throw new Error(specRequestRefused(limits.specRule));
     const id = this.run(
-      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, factory_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, spec_rule, spec_requested, factory_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.title,
       input.request,
       input.requester ?? null,
@@ -125,6 +138,8 @@ export class ItemRepository extends Repository {
       limits.maxRuns,
       limits.maxReviews,
       limits.maxRevisions,
+      limits.specRule,
+      input.specRequested ? 1 : 0,
       factoryId,
       t,
       t,

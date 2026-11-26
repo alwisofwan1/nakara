@@ -53,10 +53,10 @@ test("downgrade takes a stopped database to the version an older release knows",
   assert.equal(usage.status, 1);
   assert.match(
     usage.stdout,
-    /reversible: 9, 10, 11, 12, 13, 14, 15, 16, 17, 18/,
+    /reversible: 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19/,
   );
   const result = downgrade("8");
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /schema version 18 -> 8/);
+  assert.match(result.stdout, /schema version 19 -> 8/);
   assert.equal(version(), 8);
 });

@@ -23,6 +23,7 @@ import { factorySettings } from "./migrations/015-factory-settings.ts";
 import { countedReviews } from "./migrations/016-counted-reviews.ts";
 import { factoryPaused } from "./migrations/017-factory-paused.ts";
 import { factoryArchive } from "./migrations/018-factory-archive.ts";
+import { specRule } from "./migrations/019-spec-rule.ts";
 
 export interface MigrationContext {
   /** The budget of items that predate per-item budgets. */
@@ -69,6 +70,7 @@ export const MIGRATIONS: readonly Migration[] = [
   countedReviews,
   factoryPaused,
   factoryArchive,
+  specRule,
 ];
 
 export const schemaVersion = (db: DatabaseSync): number =>
