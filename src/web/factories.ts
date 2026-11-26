@@ -65,7 +65,6 @@ export const pauseState = (pausedAt: string | null) => ({
   paused: pausedAt !== null,
   pausedAt,
 });
-export type PauseStateDto = ReturnType<typeof pauseState>;
 
 export type FactorySettingsDto = NonNullable<
   ReturnType<typeof readFactorySettings>

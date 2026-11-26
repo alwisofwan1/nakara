@@ -140,11 +140,7 @@ export type {
   BlueprintStageDto,
   BlueprintTransitionDto,
 } from "./blueprint.ts";
-export type {
-  FactoryDto,
-  FactorySettingsDto,
-  PauseStateDto,
-} from "./factories.ts";
+export type { FactoryDto, FactorySettingsDto } from "./factories.ts";
 export type { PullRequestDto } from "./pull-request.ts";
 export type { RepoDiffDto, RunDiffDto } from "./run-diff.ts";
 export type { RunDetailDto, RunRowDto, RunsDto } from "./runs.ts";
