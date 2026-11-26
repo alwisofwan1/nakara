@@ -214,10 +214,40 @@ function Description({
     committed.current = saved;
     setValue(saved);
   }, [saved]);
+  // The revision of factory.yaml as last loaded or written. A save takes it
+  // from the previous save's response, so back-to-back saves never send the
+  // revision the page loaded with while the settings refetch.
+  const revision = useRef(file.revision);
+  useEffect(() => {
+    revision.current = file.revision;
+  }, [file.revision]);
+  // Saves run one after another, each with the revision the one before wrote.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const save = useMutation({
-    mutationFn: (description: string) =>
-      saveFactoryFile(slug, { revision: file.revision, description }),
-    onSuccess: (_, description) => {
+    mutationFn: (description: string) => {
+      const run = queue.current.then(async () => {
+        const result = await saveFactoryFile(slug, {
+          revision: revision.current,
+          description,
+        });
+        revision.current = result.revision;
+        return result;
+      });
+      queue.current = run.catch(() => {});
+      return run;
+    },
+    onSuccess: (result, description) => {
+      client.setQueryData(
+        factorySettingsQuery(slug).queryKey,
+        (current) =>
+          current && {
+            ...current,
+            factoryFile: {
+              description: description || null,
+              revision: result.revision,
+            },
+          },
+      );
       void client.invalidateQueries({ queryKey: ["factories"] });
       toast({
         title: "Description saved",
