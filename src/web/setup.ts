@@ -328,7 +328,7 @@ export async function readSetup(
         token.source === "none" || token.source === "personal"
           ? `Set ${own} (this factory only) or NAKARA_AGENT_GH_TOKEN. ${ENV_FILE}`
           : problems.length
-            ? `Give ${token.variable} Contents, Pull requests and Issues read/write on these repositories. A fine-grained token has one resource owner: repositories under another owner need ${own}.`
+            ? `Give ${token.variable} Contents, Pull requests and Issues read/write on these repositories. A fine-grained token has one resource owner${token.source === "own" ? ", so they must all be under that owner." : `: for repositories under another owner, give this factory its own token, ${own}.`}`
             : null,
       );
     }
