@@ -66,14 +66,59 @@ export interface AutomationDto {
   }[];
 }
 
-/** The enabled switch or the instructions; an omitted field keeps its value. */
+/** The one trigger the drawer edits; see TriggerEdit. */
+const triggerEditInput = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("github_label"),
+      label: z.string().trim().min(1).max(255),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("schedule"),
+      cron: z.string().trim().min(1).max(255),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("slack"),
+      members: z.array(z.string().trim().min(1).max(64)).min(1).max(500),
+    })
+    .strict(),
+  z.object({ kind: z.literal("telegram") }).strict(),
+]);
+
+/**
+ * Any of the switch, instructions, display name, starting agent and trigger; an
+ * omitted field keeps its value. A null or empty displayName removes it.
+ */
 export const automationEditInput = z
   .object({
     enabled: z.boolean().optional(),
     instructions: z.string().max(200_000).optional(),
+    displayName: z.string().max(200).nullable().optional(),
+    agent: z.string().min(1).max(255).optional(),
+    trigger: triggerEditInput.optional(),
     revision: z.string().regex(/^[0-9a-f]{64}$/),
   })
   .strict();
+
+export const cronPreviewInput = z
+  .object({ cron: z.string().max(255) })
+  .strict();
+
+/** The next fire time of a cron the drawer is editing, or why it is not valid. */
+export function cronPreview(
+  cron: string,
+  now: Date,
+): { valid: true; nextFire: string | null } | { valid: false; error: string } {
+  try {
+    return { valid: true, nextFire: nextFire(cron, now) };
+  } catch (error) {
+    return { valid: false, error: (error as Error).message };
+  }
+}
 
 /**
  * Pure projection of the Store and active definition; the caller supplies the

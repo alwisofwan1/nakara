@@ -18,7 +18,12 @@ import {
   readAgent,
   readAgents,
 } from "./agents.ts";
-import { automationEditInput, readAutomations } from "./automations.ts";
+import {
+  automationEditInput,
+  cronPreview,
+  cronPreviewInput,
+  readAutomations,
+} from "./automations.ts";
 import {
   type CheckResultDto,
   checkResultDto,
@@ -362,6 +367,10 @@ function createFactoryApi(
           ),
         );
       })
+      // The next fire time of the cron the drawer is editing.
+      .get("/automations/cron-preview", queryOf(cronPreviewInput), (c) =>
+        c.json(cronPreview(c.req.valid("query").cron, new Date())),
+      )
       // Writes automation.md only when the edited tree loads and the page is not
       // stale, then reloads; an omitted field keeps its value.
       .put(
@@ -385,6 +394,9 @@ function createFactoryApi(
             {
               enabled: edit.enabled ?? automation.frontmatter.enabled,
               instructions: edit.instructions ?? automation.instructions,
+              displayName: edit.displayName,
+              agent: edit.agent,
+              trigger: edit.trigger,
             },
             revision,
           );
