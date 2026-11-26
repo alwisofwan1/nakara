@@ -316,7 +316,7 @@ function LimitRow({
   const id = `limit-${row.key}`;
   return (
     <div className="box-row grid gap-xs">
-      <div className="flex flex-wrap items-center justify-between gap-md">
+      <div className="limit-row">
         <label htmlFor={id} className="field-label">
           {row.label}
           {row.hint && <span className="field-hint">{row.hint}</span>}
