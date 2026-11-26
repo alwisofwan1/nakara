@@ -2,15 +2,20 @@ import { z } from "zod";
 
 import type { Repositories } from "../db.ts";
 import type { Commit } from "../definition/history.ts";
+import { FACTORY_DESCRIPTION_MAX } from "../definition/write.ts";
 import { FOLDER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
 export function readFactories(
   repos: Pick<Repositories, "factories" | "factorySettings">,
+  /** The description of the factory's applied definition, if any. */
+  description: (slug: string) => string | null = () => null,
 ) {
   return repos.factories.factories().map((f) => ({
     slug: f.slug,
     name: f.name,
+    // The channel header shows it under the name.
+    description: description(f.slug),
     avatarColor: f.avatar_color,
     // The sidebar shows a Paused chip.
     paused: repos.factorySettings.pausedAt(f.id) !== null,
@@ -33,6 +38,8 @@ export function readFactorySettings(
     archiveDir: string | null;
     /** Where a delete saves its database snapshot. */
     backupDir: string;
+    /** factory.yaml on disk, as the Description row edits it; null when unreadable. */
+    factoryFile: { description: string | null; revision: string } | null;
   },
 ) {
   const { factories, factorySettings } = repos;
@@ -48,6 +55,7 @@ export function readFactorySettings(
     isDefault: factories.defaultFactory().id === record.id,
     activeItems: factories.activeItems(record.id),
     backupDir: running.backupDir,
+    factoryFile: running.factoryFile,
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
     ...pauseState(factorySettings.pausedAt(record.id)),
@@ -92,6 +100,19 @@ export const limitsInput = z.strictObject({
   maxReviews: limit(1, 5, 1),
   maxRevisions: limit(0, 5, 1),
   maxRuns: limit(5, 200, 1),
+});
+
+/** A factory.yaml edit from Settings; an empty description removes the key. */
+export const factoryFileInput = z.strictObject({
+  revision: z.string().regex(/^[0-9a-f]{64}$/),
+  description: z
+    .string()
+    .trim()
+    .max(
+      FACTORY_DESCRIPTION_MAX,
+      `must be at most ${FACTORY_DESCRIPTION_MAX} characters`,
+    )
+    .nullable(),
 });
 
 export const moveInput = z.object({

@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parseDocument, stringify } from "yaml";
+import { isMap, isScalar, parseDocument, stringify } from "yaml";
 
 import type { AgentType } from "../domain/policy.ts";
 import { parseCron } from "../intake/schedule.ts";
@@ -257,6 +257,68 @@ export function serializeAutomation(
   });
 }
 
+export const FACTORY_FILE = "factory.yaml";
+/** The longest factory description Settings accepts. */
+export const FACTORY_DESCRIPTION_MAX = 500;
+
+/** The editable settings of factory.yaml; an omitted key keeps its value. */
+export interface FactoryEdit {
+  /** Null or blank removes `description`. */
+  description?: string | null | undefined;
+}
+
+/**
+ * Apply `edit` to the text of factory.yaml. Values, key order, unknown keys and
+ * comments are kept, though a changed file is re-serialized, so its formatting
+ * (flow style spacing) may be normalized; an edit that changes nothing returns
+ * the text as it was.
+ */
+export function serializeFactory(text: string, edit: FactoryEdit): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const doc = parseDocument(text.replaceAll("\r\n", "\n"));
+  if (doc.errors[0]) throw new Error(doc.errors[0].message);
+  let changed = false;
+  if (edit.description !== undefined) {
+    const next = edit.description?.trim() || null;
+    if (next === null) {
+      if (doc.hasIn(["description"])) {
+        doc.deleteIn(["description"]);
+        changed = true;
+      }
+    } else if (doc.getIn(["description"]) !== next) {
+      const items = isMap(doc.contents) ? doc.contents.items : [];
+      const name = items.findIndex(
+        (pair) => isScalar(pair.key) && pair.key.value === "name",
+      );
+      // A new description goes under the name, where Settings shows it.
+      if (!doc.hasIn(["description"]) && name >= 0)
+        items.splice(name + 1, 0, doc.createPair("description", next));
+      else doc.setIn(["description"], next);
+      changed = true;
+    }
+  }
+  if (!changed) return text;
+  const out = doc.toString();
+  return eol === "\n" ? out : out.replaceAll("\n", eol);
+}
+
+/**
+ * The description and revision of factory.yaml as it is on disk, for the
+ * Settings editor; null when the file cannot be read.
+ */
+export async function readFactoryFile(
+  root: string,
+): Promise<{ description: string | null; revision: string } | null> {
+  const bytes = await readFile(join(root, FACTORY_FILE)).catch(() => null);
+  if (!bytes) return null;
+  const doc = parseDocument(bytes.toString("utf8"));
+  const description = doc.errors.length ? null : doc.get("description");
+  return {
+    description: typeof description === "string" ? description : null,
+    revision: fileRevision(bytes),
+  };
+}
+
 const tracked = (p: string) =>
   stat(join(p, ".git")).then(
     () => true,
@@ -290,7 +352,7 @@ export function writeAgent(
   /** Runs after validation, right before the swap; tests use it to race the file. */
   beforeSwap?: () => Promise<void>,
 ): Promise<WriteResult> {
-  return writeMarkdown(
+  return writeTextFile(
     root,
     join("agents", name, "agent.md"),
     (text) => serializeAgent(text, edit),
@@ -312,7 +374,7 @@ export function writeAutomation(
   defaults: ResolvedHarness,
   beforeSwap?: () => Promise<void>,
 ): Promise<WriteResult> {
-  return writeMarkdown(
+  return writeTextFile(
     root,
     join("automations", name, "automation.md"),
     (text) => serializeAutomation(text, edit),
@@ -322,7 +384,34 @@ export function writeAutomation(
   );
 }
 
-async function writeMarkdown(
+/**
+ * Write `edit` into factory.yaml through the yaml Document API, so comments,
+ * key order and unknown keys survive; revision check, validation and swap as
+ * in writeAgent.
+ */
+export function writeFactoryFile(
+  root: string,
+  edit: FactoryEdit,
+  revision: string,
+  defaults: ResolvedHarness,
+  beforeSwap?: () => Promise<void>,
+): Promise<WriteResult> {
+  return writeTextFile(
+    root,
+    FACTORY_FILE,
+    (text) => serializeFactory(text, edit),
+    revision,
+    defaults,
+    beforeSwap,
+  );
+}
+
+/**
+ * Replace the definition file at `relPath` with `serialize` of its text. A file
+ * changed since `revision` is a conflict; the new text is validated in a copy
+ * of the tree, then swapped in by a rename. Shared by every single-file edit.
+ */
+async function writeTextFile(
   root: string,
   relPath: string,
   serialize: (text: string) => string,
@@ -458,7 +547,7 @@ export async function appendLearning(
   await writeFile(path, LEARNINGS_HEADER, { flag: "wx" }).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   });
-  return writeMarkdown(
+  return writeTextFile(
     root,
     LEARNINGS_PATH,
     (text) => serializeLearnings(text, lines),

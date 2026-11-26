@@ -37,6 +37,7 @@ import {
   serializeAgent,
   writeAgent,
   writeAutomation,
+  writeFactoryFile,
 } from "./write.ts";
 
 const HELPER = `---
@@ -964,4 +965,105 @@ test("an invalid cron, a missing agent or several triggers are refused and write
   // Without a trigger, the other fields still save.
   assert.equal((await several.save({ displayName: "Chat" })).ok, true);
   assert.match(await readFile(several.path, "utf8"), /provider: slack/);
+});
+
+const FACTORY = `# The factory, as the team wrote it.
+schemaVersion: v1alpha1
+name: t # display name
+repositories:
+  - owner: o
+    name: r
+agentDefaults: { model: auto, runner: std }
+`;
+
+test("factory.yaml: a description is added under the name, changed and removed, keeping comments", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  await writeFile(path, FACTORY);
+  const current = async () => fileRevision(await readFile(path));
+
+  const added = await writeFactoryFile(
+    root,
+    { description: "  Ships the web app.  " },
+    await current(),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(added.ok && added.changed);
+  assert.equal(
+    await readFile(path, "utf8"),
+    FACTORY.replace(
+      "name: t # display name\n",
+      "name: t # display name\ndescription: Ships the web app.\n",
+    ),
+  );
+  assert.equal(added.revision, await current());
+  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  assert.equal(loaded.definition.factory.description, "Ships the web app.");
+
+  const changed = await writeFactoryFile(
+    root,
+    { description: "Ships: the API" },
+    await current(),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(changed.ok && changed.changed);
+  const text = await readFile(path, "utf8");
+  assert.match(text, /^# The factory, as the team wrote it\.\n/);
+  assert.match(text, /name: t # display name\ndescription: "Ships: the API"\n/);
+
+  // The same value again writes nothing.
+  const same = await writeFactoryFile(
+    root,
+    { description: "Ships: the API" },
+    await current(),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(same.ok && !same.changed);
+
+  // Blank and null both remove the key; the file is back to what it was.
+  for (const description of ["  ", null]) {
+    const removed = await writeFactoryFile(
+      root,
+      { description },
+      await current(),
+      HARNESS_FALLBACK,
+    );
+    assert.ok(removed.ok);
+    assert.equal(await readFile(path, "utf8"), FACTORY);
+  }
+});
+
+test("factory.yaml: a stale revision is a conflict and writes nothing", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  const stale = fileRevision(await readFile(path));
+  await writeFile(path, FACTORY);
+  const before = await snapshot(root);
+  const result = await writeFactoryFile(
+    root,
+    { description: "Late." },
+    stale,
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!result.ok && result.code === "conflict");
+  assert.match(result.message, /factory\.yaml changed on disk/);
+  assert.deepEqual(await snapshot(root), before);
+});
+
+test("factory.yaml: an edit the loader rejects writes nothing", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  // Broken by hand already: the edit cannot make it load, so it is refused.
+  await writeFile(path, FACTORY.replace("schemaVersion: v1alpha1\n", ""));
+  const before = await snapshot(root);
+  const result = await writeFactoryFile(
+    root,
+    { description: "Anything." },
+    fileRevision(await readFile(path)),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!result.ok && result.code === "invalid");
+  assert.ok(result.errors.some((e) => e.path === "factory.yaml"));
+  assert.deepEqual(await snapshot(root), before);
 });

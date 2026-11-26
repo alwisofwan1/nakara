@@ -15,11 +15,13 @@ import {
   appendLearning,
   type AutomationEdit,
   createAgent,
+  type FactoryEdit,
   deleteAgent,
   type NewAgent,
   type WriteResult,
   writeAgent,
   writeAutomation,
+  writeFactoryFile,
 } from "../definition/write.ts";
 import { commitDefinition, ensureHistory } from "../definition/history.ts";
 import { RUNNER_LINE, reachOf, widening } from "../definition/reach.ts";
@@ -173,6 +175,18 @@ export class DefinitionService {
       writeAutomation(
         this.config.definitionDir,
         name,
+        edit,
+        revision,
+        HARNESS_FALLBACK,
+      ),
+    );
+  }
+
+  /** Write factory.yaml settings (the description), then reload. Saved like an agent edit. */
+  saveFactory(edit: FactoryEdit, revision: string): Promise<DefinitionWrite> {
+    return this.writeDefinition("Edit factory settings", () =>
+      writeFactoryFile(
+        this.config.definitionDir,
         edit,
         revision,
         HARNESS_FALLBACK,
