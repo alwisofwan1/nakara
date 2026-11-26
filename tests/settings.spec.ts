@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { smokeDefinitionDir } from "./smoke.ts";
 
 // See tests/server.ts: Quarry is a Nakara-managed factory with one active item.
@@ -40,6 +40,7 @@ test("factory settings: rename, managed history, delete refused, move and delete
     path: testInfo.outputPath("settings-desktop.png"),
     fullPage: true,
   });
+  await expectLimitsBesideLabels(page);
 
   // Rename: the sidebar follows, the URL stays.
   const name = page.getByRole("textbox", { name: "Display name" });
@@ -123,6 +124,11 @@ test("factory settings: rename, managed history, delete refused, move and delete
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  await expectLimitsBesideLabels(page);
+  // A phone's wider fonts wrap labels at 390px that headless Chromium's fit;
+  // 360px makes the same squeeze here.
+  await page.setViewportSize({ width: 360, height: 800 });
+  await expectLimitsBesideLabels(page);
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Move writes the tree into the repository folder and switches the mode.
@@ -183,6 +189,44 @@ test("factory settings: rename, managed history, delete refused, move and delete
   expect((await request.get("./api/f/quarry/settings")).status()).toBe(404);
   expect(errors).toEqual([]);
 });
+
+/**
+ * Every Limits input sits beside its label, right-aligned in one column,
+ * whatever the label's length; the `$` sits just left of the budget input.
+ */
+async function expectLimitsBesideLabels(page: Page) {
+  type Box = Record<"top" | "bottom" | "left" | "right", number>;
+  const rows = await page
+    .getByRole("region", { name: "Limits" })
+    .locator(".limit-input")
+    .evaluateAll((spans) =>
+      spans.map((span) => {
+        const box = (element: Element | null | undefined) =>
+          element?.getBoundingClientRect().toJSON() as Box | undefined;
+        return {
+          label: box(span.parentElement?.querySelector("label")),
+          input: box(span.querySelector("input")),
+          dollar: box(span.querySelector("span")),
+        };
+      }),
+    );
+  expect(rows).toHaveLength(4);
+  const right = rows[0]?.input?.right;
+  for (const { label, input } of rows) {
+    if (!label || !input)
+      throw new Error("A Limits row lacks its label or input");
+    expect(input.left).toBeGreaterThanOrEqual(label.right);
+    expect(input.top).toBeLessThan(label.bottom);
+    expect(input.bottom).toBeGreaterThan(label.top);
+    expect(input.right).toBe(right);
+  }
+  const { input, dollar } = rows[0] ?? {};
+  if (!input || !dollar) throw new Error("The budget row lacks its `$`");
+  expect(dollar.right).toBeLessThanOrEqual(input.left);
+  expect(input.left - dollar.right).toBeLessThan(8);
+  expect(dollar.top).toBeLessThan(input.bottom);
+  expect(dollar.bottom).toBeGreaterThan(input.top);
+}
 
 /** The id of the item titled `title` anywhere in an API response. */
 function findItem(value: unknown, title: string): number | undefined {
