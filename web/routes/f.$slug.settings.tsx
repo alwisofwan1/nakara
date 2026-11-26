@@ -16,6 +16,7 @@ import {
   pauseFactory,
   renameFactory,
   resumeFactory,
+  saveFactoryFile,
   saveLimits,
 } from "../lib/api";
 import {
@@ -136,6 +137,9 @@ function General({ settings }: { settings: Settings }) {
             </span>
           </label>
         </div>
+        {settings.factoryFile && (
+          <Description slug={settings.slug} file={settings.factoryFile} />
+        )}
         <fieldset className="grid gap-sm">
           <legend className="field-label mb-sm">Avatar color</legend>
           <div className="flex flex-wrap gap-md">
@@ -188,6 +192,124 @@ function General({ settings }: { settings: Settings }) {
         </div>
       </div>
     </form>
+  );
+}
+
+/** The description in factory.yaml, saved on blur or Enter; empty removes it. */
+function Description({
+  slug,
+  file,
+}: {
+  slug: string;
+  file: NonNullable<Settings["factoryFile"]>;
+}) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const saved = file.description ?? "";
+  const [value, setValue] = useState(saved);
+  // The text last saved or sent: Enter then blur saves once.
+  const committed = useRef(saved);
+  // Another tab's edit arrives through /api/events.
+  useEffect(() => {
+    committed.current = saved;
+    setValue(saved);
+  }, [saved]);
+  // The revision of factory.yaml as last loaded or written. A save takes it
+  // from the previous save's response, so back-to-back saves never send the
+  // revision the page loaded with while the settings refetch.
+  const revision = useRef(file.revision);
+  useEffect(() => {
+    revision.current = file.revision;
+  }, [file.revision]);
+  // Saves run one after another, each with the revision the one before wrote.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const save = useMutation({
+    mutationFn: (description: string) => {
+      const run = queue.current.then(async () => {
+        const result = await saveFactoryFile(slug, {
+          revision: revision.current,
+          description,
+        });
+        revision.current = result.revision;
+        return result;
+      });
+      queue.current = run.catch(() => {});
+      return run;
+    },
+    onSuccess: (result, description) => {
+      client.setQueryData(
+        factorySettingsQuery(slug).queryKey,
+        (current) =>
+          current && {
+            ...current,
+            factoryFile: {
+              description: description || null,
+              revision: result.revision,
+            },
+          },
+      );
+      void client.invalidateQueries({ queryKey: ["factories"] });
+      toast({
+        title: "Description saved",
+        description: description
+          ? "factory.yaml has the new description."
+          : "The description was removed from factory.yaml.",
+        tone: "ok",
+      });
+    },
+  });
+  const commit = () => {
+    const text = value.trim();
+    if (text === committed.current) return;
+    committed.current = text;
+    save.mutate(text, {
+      onError: () => {
+        committed.current = saved;
+      },
+    });
+  };
+  const problems = save.error instanceof ApiError ? save.error.problems : [];
+  return (
+    <div className="grid gap-xs">
+      <label className="field">
+        <span className="field-label">Description</span>
+        <input
+          className="input"
+          value={value}
+          maxLength={500}
+          autoComplete="off"
+          onChange={(event) => {
+            setValue(event.target.value);
+            save.reset();
+          }}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            // Enter saves the description, not the rename form around it.
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+          }}
+        />
+        <span className="text-small text-muted">
+          Shown under the channel name.
+        </span>
+      </label>
+      {save.error && (
+        <p className="form-error" role="alert">
+          {save.error.message}
+        </p>
+      )}
+      {problems.length > 0 && (
+        <ul className="grid gap-xs">
+          {problems.map((problem, index) => (
+            <li key={problemKey(problem, index)} className="problem">
+              <code>{problemLocation(problem)}</code> {problem.message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

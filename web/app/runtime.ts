@@ -6,12 +6,14 @@ export const basePath: string = config.basePath ?? "";
 export const factories: {
   slug: string;
   name: string;
+  description: string | null;
   avatarColor: string;
   paused: boolean;
 }[] = config.factories ?? [];
 export const defaultFactory = factories[0] ?? {
   slug: "default",
   name: "Default",
+  description: null,
   avatarColor: "",
   paused: false,
 };

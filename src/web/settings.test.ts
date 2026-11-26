@@ -20,6 +20,7 @@ import type { HttpBindings } from "@hono/node-server";
 import { loadConfig } from "../config.ts";
 import { Store, stubFactorySeed } from "../db.ts";
 import { definitionHistory } from "../definition/history.ts";
+import { fileRevision } from "../definition/load.ts";
 import { GithubPoller } from "../intake/github.ts";
 import type { Factory } from "../orchestrator/factory.ts";
 import { FactoryRegistry } from "../orchestrator/registry.ts";
@@ -69,6 +70,7 @@ test("factory settings: the record, its definition and its active items", () => 
       history,
       archiveDir: "/data/archive/factories/harbor",
       backupDir: "/data/backups",
+      factoryFile: { description: "Ships.", revision: "r" },
     }),
     {
       slug: "harbor",
@@ -79,6 +81,7 @@ test("factory settings: the record, its definition and its active items", () => 
       isDefault: false,
       activeItems: 2,
       backupDir: "/data/backups",
+      factoryFile: { description: "Ships.", revision: "r" },
       limits: {
         budgetUsd: 15,
         maxReviews: 1,
@@ -110,6 +113,7 @@ test("factory settings: the record, its definition and its active items", () => 
       history: [],
       archiveDir: null,
       backupDir: "/data/backups",
+      factoryFile: null,
     })?.isDefault,
     true,
   );
@@ -120,6 +124,7 @@ test("factory settings: the record, its definition and its active items", () => 
       history: [],
       archiveDir: null,
       backupDir: "/data/backups",
+      factoryFile: null,
     }),
     undefined,
   );
@@ -579,6 +584,56 @@ test("each web edit of a managed definition is a commit", async (t) => {
     409,
   );
   assert.equal((await definitionHistory(harborDir)).length, 4);
+});
+
+test("creating and deleting an automation in a managed definition is one commit each", async (t) => {
+  const { harborDir, call } = await setup(t);
+  const nightly = {
+    name: "nightly",
+    displayName: "Nightly",
+    trigger: { kind: "schedule", cron: "0 3 * * *" },
+    agent: "foreman",
+    instructions: "Report.",
+    enabled: true,
+  };
+  const created = await call("POST", "f/harbor/automations", nightly);
+  assert.equal(created.status, 201);
+  // A taken name commits nothing.
+  assert.equal(
+    (await call("POST", "f/harbor/automations", nightly)).status,
+    409,
+  );
+  const listed = await call("GET", "f/harbor/automations");
+  const revision = listed.body.find(
+    (a: { name: string }) => a.name === "nightly",
+  )?.revision;
+  // A stale delete commits nothing.
+  assert.equal(
+    (
+      await call("DELETE", "f/harbor/automations/nightly", {
+        revision: "0".repeat(64),
+      })
+    ).status,
+    409,
+  );
+  const deleted = await call("DELETE", "f/harbor/automations/nightly", {
+    revision,
+  });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(
+    (await definitionHistory(harborDir)).map((c) => c.message),
+    [
+      "Delete automation nightly",
+      "Create automation nightly",
+      "Initial definition",
+    ],
+  );
+  const { stdout } = await promisify(execFile)(
+    "git",
+    ["status", "--porcelain"],
+    { cwd: harborDir },
+  );
+  assert.equal(stdout, "");
 });
 
 test("move writes the tree into the repository folder and switches the mode", async (t) => {
@@ -1052,4 +1107,106 @@ test("adopt is refused while a run is in progress and for a definition that does
   assert.equal(broken.body.error.problems[0].path, "factory.yaml");
   await unchanged();
   assert.equal(await exists(managed), false);
+});
+
+test("the factory description: saved through the API, committed once in a managed definition, refused when stale or too long", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  const yaml = join(harborDir, "factory.yaml");
+  const before = (await call("GET", "f/harbor/settings")).body.factoryFile;
+  assert.equal(before.revision, fileRevision(await readFile(yaml)));
+
+  const saved = await call("PUT", "f/harbor/settings/definition", {
+    revision: before.revision,
+    description: "  Ships the harbor.  ",
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.ok, true);
+  assert.equal(saved.body.revision, fileRevision(await readFile(yaml)));
+  assert.equal(harbor.definition?.factory.description, "Ships the harbor.");
+  assert.deepEqual((await call("GET", "f/harbor/settings")).body.factoryFile, {
+    description: "Ships the harbor.",
+    revision: saved.body.revision,
+  });
+  assert.equal(
+    (await call("GET", "factories")).body.find(
+      (f: { slug: string }) => f.slug === "harbor",
+    ).description,
+    "Ships the harbor.",
+  );
+  // One commit, and nothing left uncommitted.
+  assert.deepEqual(
+    (await definitionHistory(harborDir)).map((c) => c.message),
+    ["Edit factory settings", "Initial definition"],
+  );
+  const { stdout } = await exec("git", ["status", "--porcelain"], {
+    cwd: harborDir,
+  });
+  assert.equal(stdout, "");
+
+  // The revision the page loaded before the save is stale now.
+  const stale = await call("PUT", "f/harbor/settings/definition", {
+    revision: before.revision,
+    description: "Late.",
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error.code, "conflict");
+
+  for (const json of [
+    { revision: saved.body.revision, description: "x".repeat(501) },
+    { revision: "nope", description: "Fine." },
+    { revision: saved.body.revision },
+  ]) {
+    const refused = await call("PUT", "f/harbor/settings/definition", json);
+    assert.equal(refused.status, 400, JSON.stringify(json).slice(0, 80));
+    assert.equal(refused.body.error.code, "invalid_input");
+  }
+
+  // A factory.yaml broken on disk cannot be saved into a loadable tree.
+  const text = await readFile(yaml, "utf8");
+  await writeFile(yaml, text.replace(/^schemaVersion: .*\n/m, ""));
+  const invalid = await call("PUT", "f/harbor/settings/definition", {
+    revision: fileRevision(await readFile(yaml)),
+    description: "Anything.",
+  });
+  assert.equal(invalid.status, 422);
+  assert.equal(invalid.body.error.code, "invalid_definition");
+  assert.ok(invalid.body.error.problems.length > 0);
+  await writeFile(yaml, text);
+
+  // Empty removes the key.
+  const cleared = await call("PUT", "f/harbor/settings/definition", {
+    revision: fileRevision(await readFile(yaml)),
+    description: "",
+  });
+  assert.equal(cleared.status, 200);
+  assert.doesNotMatch(await readFile(yaml, "utf8"), /^description:/m);
+  assert.equal(
+    (await call("GET", "f/harbor/settings")).body.factoryFile.description,
+    null,
+  );
+  assert.equal((await definitionHistory(harborDir)).length, 3);
+});
+
+test("the factory description in a repository definition is an uncommitted change", async (t) => {
+  const { dataDir, store, call } = await setup(t);
+  const repo = join(dataDir, "default");
+  for (const args of [
+    ["init", "--quiet"],
+    ["add", "--all"],
+    ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "Initial"],
+  ])
+    await exec("git", args, { cwd: repo });
+  const slug = store.repos.factories.defaultFactory().slug;
+  const { factoryFile } = (await call("GET", `f/${slug}/settings`)).body;
+  const saved = await call("PUT", `f/${slug}/settings/definition`, {
+    revision: factoryFile.revision,
+    description: "The default factory.",
+  });
+  assert.equal(saved.status, 200);
+  const status = await exec("git", ["status", "--porcelain"], { cwd: repo });
+  assert.equal(status.stdout, " M factory.yaml\n");
+  const log = await exec("git", ["rev-list", "--count", "HEAD"], {
+    cwd: repo,
+  });
+  assert.equal(log.stdout.trim(), "1");
 });

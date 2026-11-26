@@ -243,6 +243,36 @@ export const saveAutomation = (
     "Unable to save the automation",
   );
 
+export type NewAutomation = InferRequestType<
+  typeof factoryApi.automations.$post
+>["json"];
+/**
+ * Writes automations/<name>/automation.md and reloads. A refused automation
+ * throws its problems; a taken name throws code "conflict".
+ */
+export const createAutomation = (slug: string, json: NewAutomation) =>
+  body(
+    factoryApi.automations.$post({ param: { slug }, json }),
+    "Unable to create the automation",
+  );
+
+/**
+ * Deletes the automation's folder and reloads; its work items stay. A page
+ * older than automation.md throws code "conflict".
+ */
+export const deleteAutomation = (
+  slug: string,
+  name: string,
+  revision: string,
+) =>
+  body(
+    factoryApi.automations[":name"].$delete({
+      param: { slug, name },
+      json: { revision },
+    }),
+    "Unable to delete the automation",
+  );
+
 /** The next fire time of a cron being edited, or valid: false. */
 export const cronPreviewQuery = (slug: string, cron: string) =>
   queryOptions({
@@ -526,6 +556,19 @@ export const renameFactory = (slug: string, json: FactoryRename) =>
   body(
     factoryApi.settings.$put({ param: { slug }, json }),
     "Unable to save the settings",
+  );
+
+export type FactoryFileEdit = InferRequestType<
+  typeof factoryApi.settings.definition.$put
+>["json"];
+/**
+ * Writes the description into factory.yaml and reloads; a stale revision
+ * throws code "conflict", an invalid definition its problems.
+ */
+export const saveFactoryFile = (slug: string, json: FactoryFileEdit) =>
+  body(
+    factoryApi.settings.definition.$put({ param: { slug }, json }),
+    "Unable to save the description",
   );
 
 export type LimitsEdit = InferRequestType<

@@ -153,6 +153,14 @@
   .breadcrumb a {
     @apply text-muted;
   }
+  .header-title {
+    @apply grid flex-1 gap-xs;
+    min-width: 0;
+  }
+  /* One line under the factory name; the full text is its title. */
+  .header-description {
+    @apply truncate text-muted text-tiny;
+  }
   .new-work {
     @apply ml-auto rounded-control bg-text px-md py-xs font-semibold text-bg text-small;
   }

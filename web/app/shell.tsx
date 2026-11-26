@@ -310,24 +310,32 @@ export function Shell({ children }: { children: ReactNode }) {
                 </Dialog.Content>
               </Dialog.Portal>
             </Dialog.Root>
-            <nav className="breadcrumb" aria-label="Breadcrumb">
-              <Link to="/f/$slug/activity" params={{ slug: factory.slug }}>
-                {factory.name}
-              </Link>
-              {trail.map((crumb, index, all) => (
-                <span
-                  className="contents"
-                  key={`${crumb.href ?? ""}:${crumb.label}`}
-                >
-                  <span aria-hidden="true">/</span>
-                  {crumb.href && index < all.length - 1 ? (
-                    <Link to={crumb.href}>{crumb.label}</Link>
-                  ) : (
-                    <span aria-current="page">{crumb.label}</span>
-                  )}
-                </span>
-              ))}
-            </nav>
+            <div className="header-title">
+              <nav className="breadcrumb" aria-label="Breadcrumb">
+                <Link to="/f/$slug/activity" params={{ slug: factory.slug }}>
+                  {factory.name}
+                </Link>
+                {trail.map((crumb, index, all) => (
+                  <span
+                    className="contents"
+                    key={`${crumb.href ?? ""}:${crumb.label}`}
+                  >
+                    <span aria-hidden="true">/</span>
+                    {crumb.href && index < all.length - 1 ? (
+                      <Link to={crumb.href}>{crumb.label}</Link>
+                    ) : (
+                      <span aria-current="page">{crumb.label}</span>
+                    )}
+                  </span>
+                ))}
+              </nav>
+              {/* factory.yaml's description, under the factory name. */}
+              {factory.description && (
+                <p className="header-description" title={factory.description}>
+                  {factory.description}
+                </p>
+              )}
+            </div>
             {factory.paused && <PausedChip />}
             <button
               type="button"

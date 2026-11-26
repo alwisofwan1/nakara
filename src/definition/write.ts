@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parseDocument, stringify } from "yaml";
+import { isMap, isScalar, parseDocument, stringify } from "yaml";
 
 import type { AgentType } from "../domain/policy.ts";
 import { parseCron } from "../intake/schedule.ts";
@@ -257,6 +257,72 @@ export function serializeAutomation(
   });
 }
 
+export const FACTORY_FILE = "factory.yaml";
+/** The longest factory description Settings accepts. */
+export const FACTORY_DESCRIPTION_MAX = 500;
+
+/** The editable settings of factory.yaml; an omitted key keeps its value. */
+export interface FactoryEdit {
+  /** Null or blank removes `description`. */
+  description?: string | null | undefined;
+}
+
+/**
+ * Apply `edit` to the text of factory.yaml. Values, key order, unknown keys and
+ * comments are kept, though a changed file is re-serialized, so its formatting
+ * (flow style spacing) may be normalized; an edit that changes nothing returns
+ * the text as it was.
+ */
+export function serializeFactory(text: string, edit: FactoryEdit): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  // BigInt keeps long integers (e.g. Slack IDs) exact on re-serialization.
+  const doc = parseDocument(text.replaceAll("\r\n", "\n"), {
+    intAsBigInt: true,
+  });
+  if (doc.errors[0]) throw new Error(doc.errors[0].message);
+  let changed = false;
+  if (edit.description !== undefined) {
+    const next = edit.description?.trim() || null;
+    if (next === null) {
+      if (doc.hasIn(["description"])) {
+        doc.deleteIn(["description"]);
+        changed = true;
+      }
+    } else if (doc.getIn(["description"]) !== next) {
+      const items = isMap(doc.contents) ? doc.contents.items : [];
+      const name = items.findIndex(
+        (pair) => isScalar(pair.key) && pair.key.value === "name",
+      );
+      // A new description goes under the name, where Settings shows it.
+      if (!doc.hasIn(["description"]) && name >= 0)
+        items.splice(name + 1, 0, doc.createPair("description", next));
+      else doc.setIn(["description"], next);
+      changed = true;
+    }
+  }
+  if (!changed) return text;
+  // lineWidth 0: never fold long lines the team wrote on one line.
+  const out = doc.toString({ lineWidth: 0 });
+  return eol === "\n" ? out : out.replaceAll("\n", eol);
+}
+
+/**
+ * The description and revision of factory.yaml as it is on disk, for the
+ * Settings editor; null when the file cannot be read.
+ */
+export async function readFactoryFile(
+  root: string,
+): Promise<{ description: string | null; revision: string } | null> {
+  const bytes = await readFile(join(root, FACTORY_FILE)).catch(() => null);
+  if (!bytes) return null;
+  const doc = parseDocument(bytes.toString("utf8"));
+  const description = doc.errors.length ? null : doc.get("description");
+  return {
+    description: typeof description === "string" ? description : null,
+    revision: fileRevision(bytes),
+  };
+}
+
 const tracked = (p: string) =>
   stat(join(p, ".git")).then(
     () => true,
@@ -290,7 +356,7 @@ export function writeAgent(
   /** Runs after validation, right before the swap; tests use it to race the file. */
   beforeSwap?: () => Promise<void>,
 ): Promise<WriteResult> {
-  return writeMarkdown(
+  return writeTextFile(
     root,
     join("agents", name, "agent.md"),
     (text) => serializeAgent(text, edit),
@@ -312,7 +378,7 @@ export function writeAutomation(
   defaults: ResolvedHarness,
   beforeSwap?: () => Promise<void>,
 ): Promise<WriteResult> {
-  return writeMarkdown(
+  return writeTextFile(
     root,
     join("automations", name, "automation.md"),
     (text) => serializeAutomation(text, edit),
@@ -322,7 +388,34 @@ export function writeAutomation(
   );
 }
 
-async function writeMarkdown(
+/**
+ * Write `edit` into factory.yaml through the yaml Document API, so comments,
+ * key order and unknown keys survive; revision check, validation and swap as
+ * in writeAgent.
+ */
+export function writeFactoryFile(
+  root: string,
+  edit: FactoryEdit,
+  revision: string,
+  defaults: ResolvedHarness,
+  beforeSwap?: () => Promise<void>,
+): Promise<WriteResult> {
+  return writeTextFile(
+    root,
+    FACTORY_FILE,
+    (text) => serializeFactory(text, edit),
+    revision,
+    defaults,
+    beforeSwap,
+  );
+}
+
+/**
+ * Replace the definition file at `relPath` with `serialize` of its text. A file
+ * changed since `revision` is a conflict; the new text is validated in a copy
+ * of the tree, then swapped in by a rename. Shared by every single-file edit.
+ */
+async function writeTextFile(
   root: string,
   relPath: string,
   serialize: (text: string) => string,
@@ -458,7 +551,7 @@ export async function appendLearning(
   await writeFile(path, LEARNINGS_HEADER, { flag: "wx" }).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   });
-  return writeMarkdown(
+  return writeTextFile(
     root,
     LEARNINGS_PATH,
     (text) => serializeLearnings(text, lines),
@@ -482,26 +575,154 @@ export function serializeNewAgent(agent: Omit<NewAgent, "name">): string {
  * Create agents/<name>/agent.md. An existing folder is a conflict and is never
  * touched; the new agent is validated with the whole tree before it is written.
  */
-export async function createAgent(
+export function createAgent(
   root: string,
   agent: NewAgent,
   defaults: ResolvedHarness,
 ): Promise<WriteResult> {
-  const dir = join("agents", agent.name);
-  const relPath = join(dir, "agent.md");
   if (!AGENT_NAME.test(agent.name))
-    return {
-      ok: false,
-      code: "invalid",
-      errors: [
-        {
-          path: dir,
-          message:
-            "an agent name uses lowercase letters, digits, - and _, starts with a letter or digit, and is not new",
-        },
-      ],
-      warnings: [],
-    };
+    return Promise.resolve(
+      refused(
+        join("agents", agent.name),
+        "an agent name uses lowercase letters, digits, - and _, starts with a letter or digit, and is not new",
+      ),
+    );
+  return createFile(
+    root,
+    join("agents", agent.name),
+    "agent.md",
+    serializeNewAgent(agent),
+    defaults,
+  );
+}
+
+/**
+ * Delete the folder agents/<name> with its agent.md and skills. `revision` is the
+ * fileRevision of the agent.md the page showed; a file changed since then is a
+ * conflict. The deletion is refused with the loader's errors when the tree would
+ * no longer load, for example without a foreman or with an automation that
+ * names the agent.
+ */
+export function deleteAgent(
+  root: string,
+  name: string,
+  revision: string,
+  defaults: ResolvedHarness,
+  /** Runs after validation, right before the deletion; tests use it to race the file. */
+  beforeDelete?: () => Promise<void>,
+): Promise<WriteResult> {
+  return deleteFolder(
+    root,
+    "agents",
+    name,
+    "agent.md",
+    revision,
+    defaults,
+    beforeDelete,
+  );
+}
+
+/** A new automation: its folder name and the drawer's fields. */
+export interface NewAutomation {
+  name: string;
+  /** Empty or null writes no `displayName`, so the folder name shows. */
+  displayName: string | null;
+  trigger: TriggerEdit;
+  /** The agent the work item starts with; the loader checks that it exists. */
+  agent: string;
+  /** The markdown body. */
+  instructions: string;
+  enabled: boolean;
+}
+
+/**
+ * A new automation's folder name: lowercase letters, digits, `-` and `_`,
+ * starting with a letter or digit.
+ */
+export const AUTOMATION_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+
+/** The automation.md of a new automation; its trigger is written as the drawer's edit writes it. */
+export function serializeNewAutomation(
+  automation: Omit<NewAutomation, "name">,
+): string {
+  return serializeMarkdown("", automation.instructions, (put, current) => {
+    put(["displayName"], automation.displayName?.trim() || null);
+    put(["enabled"], automation.enabled);
+    put(["agent"], automation.agent);
+    putTrigger(put, current, automation.trigger);
+  });
+}
+
+/**
+ * Create automations/<name>/automation.md, as createAgent creates an agent: a
+ * taken name is a conflict and the tree is validated with the new file first.
+ */
+export function createAutomation(
+  root: string,
+  automation: NewAutomation,
+  defaults: ResolvedHarness,
+): Promise<WriteResult> {
+  const dir = join("automations", automation.name);
+  if (!AUTOMATION_NAME.test(automation.name))
+    return Promise.resolve(
+      refused(
+        dir,
+        "an automation name uses lowercase letters, digits, - and _, and starts with a letter or digit",
+      ),
+    );
+  let text: string;
+  try {
+    text = serializeNewAutomation(automation);
+  } catch (error) {
+    // Serializing is pure: whatever it throws is a problem with the new file.
+    return Promise.resolve(
+      refused(join(dir, "automation.md"), (error as Error).message),
+    );
+  }
+  return createFile(root, dir, "automation.md", text, defaults);
+}
+
+/**
+ * Delete the folder automations/<name>, with deleteAgent's revision check and
+ * validation. The work items it created stay; its triggers stop with the reload.
+ */
+export function deleteAutomation(
+  root: string,
+  name: string,
+  revision: string,
+  defaults: ResolvedHarness,
+  beforeDelete?: () => Promise<void>,
+): Promise<WriteResult> {
+  return deleteFolder(
+    root,
+    "automations",
+    name,
+    "automation.md",
+    revision,
+    defaults,
+    beforeDelete,
+  );
+}
+
+const refused = (path: string, message: string): WriteResult => ({
+  ok: false,
+  code: "invalid",
+  errors: [{ path, message }],
+  warnings: [],
+});
+
+/**
+ * Create the folder `dir` holding `file`. An existing folder is a conflict and
+ * is never touched; the tree is validated with the new file before it is written.
+ */
+async function createFile(
+  root: string,
+  dir: string,
+  file: string,
+  text: string,
+  defaults: ResolvedHarness,
+): Promise<WriteResult> {
+  const relPath = join(dir, file);
   const conflict = {
     ok: false as const,
     code: "conflict" as const,
@@ -512,14 +733,13 @@ export async function createAgent(
     () => false,
   );
   if (taken) return conflict;
-  const text = serializeNewAgent(agent);
   const checked = await validateChange(root, defaults, async (copy) => {
     await mkdir(join(copy, dir), { recursive: true });
     await writeFile(join(copy, relPath), text);
   });
   if (!checked.ok) return checked;
 
-  await mkdir(join(root, "agents"), { recursive: true });
+  await mkdir(join(root, dirname(dir)), { recursive: true });
   // Not recursive: a folder created since the check above is a conflict.
   const created = await mkdir(join(root, dir)).then(
     () => true,
@@ -536,22 +756,20 @@ export async function createAgent(
 }
 
 /**
- * Delete the folder agents/<name> with its agent.md and skills. `revision` is the
- * fileRevision of the agent.md the page showed; a file changed since then is a
- * conflict. The deletion is refused with the loader's errors when the tree would
- * no longer load, for example without a foreman or with an automation that
- * names the agent.
+ * Delete the folder <kind>/<name> when its `file` still has `revision` and the
+ * tree loads without it; otherwise a conflict or the loader's errors.
  */
-export async function deleteAgent(
+async function deleteFolder(
   root: string,
+  kind: string,
   name: string,
+  file: string,
   revision: string,
   defaults: ResolvedHarness,
-  /** Runs after validation, right before the deletion; tests use it to race the file. */
   beforeDelete?: () => Promise<void>,
 ): Promise<WriteResult> {
-  const dir = join("agents", name);
-  const relPath = join(dir, "agent.md");
+  const dir = join(kind, name);
+  const relPath = join(dir, file);
   const conflict = {
     ok: false as const,
     code: "conflict" as const,
@@ -562,7 +780,7 @@ export async function deleteAgent(
       (bytes) => fileRevision(bytes) === revision,
       () => false,
     );
-  // Only a folder directly in agents/.
+  // Only a folder directly in <kind>/.
   if (basename(name) !== name || name === "." || name === "..") return conflict;
   if (!(await current())) return conflict;
   const checked = await validateChange(root, defaults, (copy) =>
