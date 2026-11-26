@@ -354,6 +354,12 @@ export const cancelItem = (id: number) =>
     "Unable to cancel the work item",
   );
 
+export const mergeItemPr = (id: number) =>
+  body(
+    client.items[":id"].merge.$post({ param: { id: String(id) } }),
+    "Unable to merge the pull request",
+  );
+
 export const retryItem = (id: number) =>
   body(
     client.items[":id"].retry.$post({ param: { id: String(id) } }),

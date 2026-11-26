@@ -10,6 +10,7 @@ import type {
 import {
   answerApproval,
   cancelItem,
+  mergeItemPr,
   pullRequestQuery,
   raiseBudget,
   raiseRunLimit,
@@ -459,6 +460,7 @@ const CHECKS_LABEL = {
 
 function PrCard({ item, card }: { item: Item; card: Card<"pr"> }) {
   const { data: pr, error } = useQuery(pullRequestQuery(item.id));
+  const green = pr?.checks === "passing" || pr?.checks === "none";
   return (
     <CardShell
       label="Action"
@@ -488,17 +490,85 @@ function PrCard({ item, card }: { item: Item; card: Card<"pr"> }) {
         )}
       </div>
       <p className="text-small">
-        Nothing in the factory merges. Merge on GitHub; the merge wakes the
+        Agents never merge. Merge here or on GitHub; the merge wakes the
         foreman, which completes the item.
       </p>
       <Actions>
-        <a href={card.prUrl} className="primary flex items-center gap-xs">
+        {/* Hidden until the checks are green, as the server refuses otherwise. */}
+        {green && <MergeButton itemId={item.id} prLabel={card.prLabel} />}
+        <a
+          href={card.prUrl}
+          className={`${green ? "ghost" : "primary"} flex items-center gap-xs`}
+        >
           <Icon name="github" className="h-md w-md" />
           Open PR on GitHub
         </a>
         <RequestChanges itemId={item.id} prLabel={card.prLabel} />
       </Actions>
     </CardShell>
+  );
+}
+
+function MergeButton({ itemId, prLabel }: { itemId: number; prLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const mutation = useItemMutation(() => mergeItemPr(itemId));
+  // Until the poller reports the merge, the card stays; do not offer it twice.
+  if (mutation.isSuccess)
+    return (
+      <button
+        type="button"
+        className="primary flex items-center gap-xs"
+        disabled
+      >
+        <Icon name="git-merge" className="h-md w-md" />
+        Merged
+      </button>
+    );
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next && mutation.isError) mutation.reset();
+      }}
+    >
+      <Dialog.Trigger className="primary flex items-center gap-xs">
+        <Icon name="git-merge" className="h-md w-md" />
+        Merge {prLabel}
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Content className="modal">
+          <div className="modal-head">
+            <Dialog.Title className="font-semibold">
+              Merge {prLabel}?
+            </Dialog.Title>
+          </div>
+          <div className="modal-body">
+            <Dialog.Description>
+              Nakara merges with the first method the repository allows (squash,
+              merge commit, rebase). Branch protection still applies and the
+              branch is kept. The merge wakes the foreman, which completes the
+              item.
+            </Dialog.Description>
+            <FormError error={mutation.error} />
+          </div>
+          <div className="modal-foot">
+            <Dialog.Close className="ghost">Not yet</Dialog.Close>
+            <button
+              type="button"
+              className="primary"
+              disabled={mutation.isPending}
+              onClick={() =>
+                mutation.mutate(undefined, { onSuccess: () => setOpen(false) })
+              }
+            >
+              {mutation.isPending ? "Merging…" : `Merge ${prLabel}`}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
