@@ -17,6 +17,7 @@ import {
 } from "../runner/docker.ts";
 import { hostEnv } from "../runner/env.ts";
 import { openCodexHome } from "./codex-home.ts";
+import { EgressWatch } from "./egress-watch.ts";
 import { StreamCost } from "./pricing.ts";
 import { openInternal, writeInternal } from "../runner/workspace.ts";
 
@@ -247,14 +248,21 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
   };
   touch();
   req.signal?.addEventListener("abort", kill, { once: true });
+  // A model host the egress proxy refuses ends the run instead of retrying until the idle timeout.
+  const egress = new EgressWatch(req.harness, req.docker?.egress?.allow, kill);
 
   let final: Record<string, unknown> | undefined;
   let lastAssistantText: string | null = null;
   let initSession: string | null = null;
   let stderrTail = "";
+  /** The unfinished last line of stderr, so a refusal split across chunks is still seen. */
+  let stderrLine = "";
   child.stderr.on("data", (chunk: Buffer) => {
     touch();
     stderrTail = (stderrTail + chunk.toString()).slice(-4000);
+    const lines = (stderrLine + chunk.toString()).split("\n");
+    stderrLine = lines.pop() ?? "";
+    for (const line of lines) egress.line(line);
     log.write(chunk);
   });
   // What the stream's usage cost, for a claude run that ends without its total.
@@ -278,6 +286,8 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
           lastAssistantText = item.text ?? lastAssistantText;
         if (event.type === "turn.completed" || event.type === "turn.failed")
           final = event;
+        if (event.type === "error") egress.line(String(event.message ?? ""));
+        else if (String(event.type).startsWith("item.")) egress.progress();
       } else {
         if (event.type === "result") final = event;
         if (event.type === "system" && typeof event.session_id === "string")
@@ -285,7 +295,9 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
         if (event.type === "assistant") {
           lastAssistantText = assistantText(event) ?? lastAssistantText;
           streamed.add(event);
+          egress.progress();
         }
+        if (event.type === "system") egress.line(line);
       }
     } catch {
       // Non-JSON output (e.g. wrapper scripts) is kept in the log only.
@@ -306,17 +318,20 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
   });
   clearTimeout(idle);
   clearTimeout(forceKill);
+  egress.stop();
   // A container created while the CLI was being stopped is removed once it exits.
   if (killed && container) await removeContainer(container);
   await new Promise<void>((resolve) => log.end(resolve));
   const durationMs = Date.now() - started;
 
-  if (!final) {
+  if (!final || egress.blocked) {
     const why = req.signal?.aborted
       ? "Cancelled."
-      : idleFired
-        ? `No output for ${Math.round(req.idleTimeoutMs / 60000)} minutes; the run was stopped.`
-        : `The harness exited (code ${exitCode}) without a result. ${stderrTail.trim().slice(-800)}`;
+      : egress.blocked
+        ? egress.blocked
+        : idleFired
+          ? `No output for ${Math.round(req.idleTimeoutMs / 60000)} minutes; the run was stopped.`
+          : `The harness exited (code ${exitCode}) without a result. ${stderrTail.trim().slice(-800)}`;
     // Usage streamed before the end was spent; qwen and codex bill nothing per token.
     const estimate = req.harness === "claude" && streamed.seen;
     const costUsd = estimate ? streamed.usd : 0;

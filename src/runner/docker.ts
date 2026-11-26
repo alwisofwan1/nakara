@@ -37,6 +37,8 @@ export interface Egress {
   network: string;
   /** Proxy URL as seen from inside the network. */
   proxy: string;
+  /** The hosts the proxy forwards to, named when a harness cannot reach its model. */
+  allow?: string[] | undefined;
 }
 
 export interface Command {
@@ -126,6 +128,18 @@ export const DEFAULT_EGRESS_ALLOW = [
   "*.githubusercontent.com",
   "registry.npmjs.org",
 ];
+
+/**
+ * The hosts each harness must reach for its model, so its runner's egress
+ * must allow them. codex logs in with ChatGPT: chatgpt.com serves the model
+ * and auth.openai.com refreshes the login. qwen reaches the gateway its
+ * wrapper names, which Nakara does not know.
+ */
+export const HARNESS_HOSTS: Record<"claude" | "codex" | "qwen", string[]> = {
+  claude: ["api.anthropic.com"],
+  codex: ["chatgpt.com", "auth.openai.com"],
+  qwen: [],
+};
 
 const PROXY_SCRIPT = join(import.meta.dirname, "egress-proxy.ts");
 const PROXY_ALIAS = "egress-proxy";
@@ -264,7 +278,7 @@ export function ensureEgress(allow: string[], image: string): Promise<Egress> {
         );
       }
     }
-    return { network, proxy: `http://${PROXY_ALIAS}:${EGRESS_PORT}` };
+    return { network, proxy: `http://${PROXY_ALIAS}:${EGRESS_PORT}`, allow };
   })().finally(() => pending.delete(network));
   pending.set(network, ready);
   return ready;

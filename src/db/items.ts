@@ -322,6 +322,16 @@ export class ItemRepository extends Repository {
     });
   }
 
+  /** A review that ended without a verdict no longer counts toward max_reviews (see RunRepository). */
+  giveBackReview(id: number): void {
+    this.run(
+      "UPDATE work_items SET review_count = MAX(review_count - 1, 0), updated_at = ? WHERE id = ?",
+      now(),
+      id,
+    );
+    this.changed(id);
+  }
+
   /** Count one more run of the item, whatever its role or however it ends. */
   countRun(id: number): void {
     this.run(

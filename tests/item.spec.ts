@@ -136,7 +136,7 @@ test("work item page renders each state's action card", async ({
         "acme/widgets · nakara/item-23 → main · +184 −22 · checks passing on 9f3c2a1",
         "Open PR on GitHub",
       ],
-      enabled: ["Request changes"],
+      enabled: ["Merge PR #14", "Request changes"],
     },
     {
       title: "Budget exhausted item",

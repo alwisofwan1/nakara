@@ -13,6 +13,7 @@ import {
 } from "../definition/load.ts";
 import type { FactoryCreation } from "./creation.ts";
 import type { Factory } from "./factory.ts";
+import { MERGE_SUBMITTED } from "./operator-merge.ts";
 import { ITEM_KEY_PREFIXES } from "./pull-request-gate.ts";
 import type { FactoryRegistry } from "./registry.ts";
 
@@ -135,7 +136,10 @@ export class FactorySettings {
         `Could not snapshot the database before deleting ${record.name}; nothing was deleted: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    this.factories.deleteFactory(record.id, ITEM_KEY_PREFIXES);
+    this.factories.deleteFactory(record.id, [
+      ...ITEM_KEY_PREFIXES,
+      MERGE_SUBMITTED,
+    ]);
     this.registry.unregister(factory);
     if (record.definition_mode === "managed")
       await rm(record.definition_dir, { recursive: true, force: true });

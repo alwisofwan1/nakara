@@ -231,8 +231,16 @@ export class HumanInput {
     const verdict = checkRetry(policyState(item));
     if (!verdict.ok) return refuse(verdict.reason);
     const session = this.store.latestAgentSession(itemId, agent.name);
+    // A review that failed without a verdict gave its review back; its retry
+    // takes it again. One with a verdict still holds its review.
+    const countsReview = last.counts_review && last.review_verdict === null;
     const queued = this.store.transaction(() => {
-      this.store.applyPolicyState(itemId, verdict.next);
+      this.store.applyPolicyState(
+        itemId,
+        countsReview
+          ? { ...verdict.next, reviewCount: verdict.next.reviewCount + 1 }
+          : verdict.next,
+      );
       this.store.addMessage(
         itemId,
         "human",
@@ -250,6 +258,7 @@ export class HumanInput {
         input: session
           ? `Your previous run failed${last.error ? `: ${last.error}` : ""}. Continue the task where you left off.\n\nThe task was:\n\n${last.input}`
           : last.input,
+        counts_review: countsReview ? 1 : 0,
       });
     });
     this.pump();

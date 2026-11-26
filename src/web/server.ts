@@ -11,6 +11,7 @@ import { secureHeaders } from "hono/secure-headers";
 
 import { backupHealth } from "../backup.ts";
 import type { Config } from "../config.ts";
+import { harnessReachWarnings } from "../definition/reach.ts";
 import type { GithubPoller } from "../intake/github.ts";
 import { agentTokenOf } from "../runner/agent-token.ts";
 import {
@@ -239,6 +240,9 @@ export function createApp(
           registry.factories.flatMap((f) =>
             securityWarnings(store, f.definition, f.record?.slug),
           ),
+        ),
+        ...registry.factories.flatMap((f) =>
+          f.definition ? harnessReachWarnings(f.definition) : [],
         ),
         ...(mismatch ? [definitionDirWarning(mismatch)] : []),
       ],
