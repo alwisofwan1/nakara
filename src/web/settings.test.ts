@@ -704,3 +704,143 @@ test("move refuses a tree that does not load and a failed clone, and moves nothi
     "managed",
   );
 });
+
+test("move then adopt round-trips the files and continues the history from the archive", async (t) => {
+  const { dataDir, harborDir, harbor, call } = await setup(t);
+  const target = join(dataDir, "checkouts", "acme", "harbor", "ops", "factory");
+  await call("POST", "f/harbor/agents", {
+    name: "helper",
+    type: "CUSTOM",
+    description: null,
+    prompt: "Help.",
+  });
+  const moved = await call("POST", "f/harbor/definition/move", {
+    repo: "acme/harbor",
+    folder: "ops/factory",
+  });
+  assert.equal(moved.status, 200);
+  const archive = moved.body.archive;
+  // Edited in the repository while it ran from there, next to other files.
+  await call("POST", "f/harbor/agents", {
+    name: "second",
+    type: "CUSTOM",
+    description: null,
+    prompt: "Second.",
+  });
+  await writeFile(join(target, "README.md"), "Not the definition.\n");
+  assert.equal((await call("GET", "f/harbor/definition")).body.mode, "repo");
+
+  const adopted = await call("POST", "f/harbor/definition/adopt");
+  assert.deepEqual(adopted, {
+    status: 200,
+    body: { dir: harborDir, history: archive },
+  });
+  // The files the loader reads round-trip; the rest of the folder stays out.
+  const files = async (dir: string) =>
+    (await readdir(dir, { recursive: true, withFileTypes: true }))
+      .filter((e) => e.isFile() && !e.parentPath.includes(".git"))
+      .map((e) => join(e.parentPath, e.name).slice(dir.length))
+      .sort();
+  assert.deepEqual(
+    await files(harborDir),
+    (await files(target)).filter(
+      (f) => !["/README.md", "/LICENSE.warp-examples"].includes(f),
+    ),
+  );
+  assert.equal(
+    await readFile(join(harborDir, "agents", "second", "agent.md"), "utf8"),
+    await readFile(join(target, "agents", "second", "agent.md"), "utf8"),
+  );
+  // The history continues from the archive.
+  assert.deepEqual(
+    (await definitionHistory(harborDir)).map((c) => c.message),
+    [
+      "Adopt definition from acme/harbor:ops/factory",
+      "Create agent helper",
+      "Initial definition",
+    ],
+  );
+  const { stdout } = await exec("git", ["status", "--porcelain"], {
+    cwd: harborDir,
+  });
+  assert.equal(stdout, "");
+  // The repository folder is left as it is.
+  assert.ok(await exists(join(target, "README.md")));
+  assert.ok(await exists(join(target, "factory.yaml")));
+  assert.equal(harbor.config.definitionDir, harborDir);
+  assert.ok(harbor.definition?.agents.has("second"));
+  const settings = await call("GET", "f/harbor/settings");
+  assert.equal(settings.body.definition.mode, "managed");
+  assert.equal(settings.body.definition.dir, harborDir);
+  assert.equal((await call("GET", "f/harbor/definition")).body.mode, "managed");
+  // Web edits commit again, and a managed definition is not adopted twice.
+  await call("POST", "f/harbor/agents", {
+    name: "third",
+    type: "CUSTOM",
+    description: null,
+    prompt: "Third.",
+  });
+  assert.equal(
+    (await definitionHistory(harborDir))[0]?.message,
+    "Create agent third",
+  );
+  assert.equal(await exists(join(target, "agents", "third")), false);
+  const again = await call("POST", "f/harbor/definition/adopt");
+  assert.equal(again.status, 409);
+  assert.match(again.body.error.message, /already Nakara-managed/);
+});
+
+test("adopt without an archive starts a history", async (t) => {
+  const { dataDir, registry, call } = await setup(t);
+  const managed = join(dataDir, "factories", "default");
+  const adopted = await call("POST", "f/default/definition/adopt");
+  assert.deepEqual(adopted, {
+    status: 200,
+    body: { dir: managed, history: null },
+  });
+  assert.deepEqual(
+    (await definitionHistory(managed)).map((c) => c.message),
+    ["Initial definition"],
+  );
+  assert.equal(registry.default.config.definitionDir, managed);
+  assert.ok(await exists(join(dataDir, "default", "factory.yaml")));
+});
+
+test("adopt is refused while a run is in progress and for a definition that does not load", async (t) => {
+  const { dataDir, store, registry, call } = await setup(t);
+  const defaultDir = join(dataDir, "default");
+  const managed = join(dataDir, "factories", "default");
+  const unchanged = async () => {
+    assert.equal(
+      (await call("GET", "f/default/settings")).body.definition.mode,
+      "repo",
+    );
+    assert.equal(registry.default.config.definitionDir, defaultDir);
+    assert.deepEqual(await readdir(join(dataDir, "factories")), ["harbor"]);
+    assert.ok(await exists(join(defaultDir, "factory.yaml")));
+  };
+
+  const { run } = closedItemWithRun(
+    store,
+    registry.default.record?.id,
+    "queued",
+  );
+  const busy = await call("POST", "f/default/definition/adopt");
+  assert.equal(busy.status, 409);
+  assert.equal(busy.body.error.code, "policy");
+  assert.match(busy.body.error.message, /1 run in progress/);
+  await unchanged();
+  store.db
+    .prepare("UPDATE runs SET status = 'succeeded' WHERE id = ?")
+    .run(run.id);
+
+  // The running definition is valid; the files in the folder no longer load.
+  await writeFile(join(defaultDir, "factory.yaml"), "kind: [unclosed\n");
+  const broken = await call("POST", "f/default/definition/adopt");
+  assert.equal(broken.status, 409);
+  assert.equal(broken.body.error.code, "policy");
+  assert.match(broken.body.error.message, /does not load/);
+  assert.equal(broken.body.error.problems[0].path, "factory.yaml");
+  await unchanged();
+  assert.equal(await exists(managed), false);
+});

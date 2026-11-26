@@ -16,6 +16,7 @@ import {
 } from "../lib/format";
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
+import { AdoptDefinition } from "../features/definition/adopt-definition";
 
 export const Route = createFileRoute("/f/$slug/definition")({
   // Started, not awaited: the page shows its frame and its own loading state.
@@ -125,6 +126,9 @@ function DefinitionPage() {
           )}
         </div>
         <div className="ml-auto flex flex-wrap gap-sm">
+          {data?.mode === "repo" && (
+            <AdoptDefinition slug={slug} dir={data.dir} />
+          )}
           <button
             type="button"
             className="ghost flex items-center gap-sm"
