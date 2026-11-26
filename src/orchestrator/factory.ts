@@ -141,7 +141,7 @@ export class Factory {
         config,
         this.control,
         {
-          ready: () => Boolean(this.definition),
+          ready: () => this.canStart,
           pump: () => this.pump(),
           foremanTurn: (itemId) => this.foremanTurn(itemId),
           agentRun: (run) => this.agentRun(run),
@@ -348,6 +348,34 @@ export class Factory {
   /** The number of foreman turns and agent runs in flight. */
   get inFlightCount(): number {
     return this.scheduler.inFlightCount;
+  }
+
+  /** When the Operator paused this factory; null while it runs, and always when standalone. */
+  get pausedAt(): string | null {
+    return this.record
+      ? this.store.repos.factorySettings.pausedAt(this.record.id)
+      : null;
+  }
+
+  /** Its work may start: a valid definition is loaded and the factory is not paused. */
+  get canStart(): boolean {
+    return Boolean(this.definition) && this.pausedAt === null;
+  }
+
+  /**
+   * Pause or resume the factory (ADR-0006): while paused its Work Items start
+   * no Foreman Turn or Agent Run, runs already running finish, and intake still
+   * creates items. Resuming pumps, so the waiting work starts now. Returns when
+   * it was paused, null when it runs; undefined when standalone.
+   */
+  setPaused(paused: boolean): string | null | undefined {
+    if (!this.record) return undefined;
+    const pausedAt = this.store.repos.factorySettings.setPaused(
+      this.record.id,
+      paused,
+    );
+    if (!paused) void this.pump();
+    return pausedAt;
   }
 
   /** Start whatever can start; see Scheduler.pump. Replaced in tests and the smoke server. */

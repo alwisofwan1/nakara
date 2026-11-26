@@ -56,7 +56,7 @@ export class FactoryRegistry {
       config,
       this.control,
       {
-        ready: (itemId) => Boolean(this.forItem(itemId)?.definition),
+        ready: (itemId) => this.forItem(itemId)?.canStart ?? false,
         pump: () => this.pump(),
         foremanTurn: (itemId) => this.dispatch(itemId).foremanTurn(itemId),
         agentRun: (run) => this.dispatch(run.item_id).agentRun(run),

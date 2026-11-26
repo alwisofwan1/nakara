@@ -73,4 +73,31 @@ export class FactorySettingsRepository extends Repository {
     );
     this.notifier.notify({ type: "factories", id: "global" });
   }
+
+  /** When the Operator paused the factory; null while it runs. */
+  pausedAt(factoryId: number): string | null {
+    return (
+      this.get<{ paused_at: string | null }>(
+        "SELECT paused_at FROM factory_settings WHERE factory_id = ?",
+        factoryId,
+      )?.paused_at ?? null
+    );
+  }
+
+  /**
+   * Pause or resume the factory and return when it was paused (null when it
+   * runs). Pausing a paused factory keeps its first pause time.
+   */
+  setPaused(factoryId: number, paused: boolean): string | null {
+    const at = now();
+    this.run(
+      `INSERT INTO factory_settings (factory_id, paused_at, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(factory_id) DO UPDATE SET paused_at = ${paused ? "COALESCE(paused_at, excluded.paused_at)" : "NULL"}, updated_at = excluded.updated_at`,
+      factoryId,
+      paused ? at : null,
+      at,
+    );
+    this.notifier.notify({ type: "factories", id: "global" });
+    return this.pausedAt(factoryId);
+  }
 }

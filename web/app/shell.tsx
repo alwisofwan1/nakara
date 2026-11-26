@@ -16,7 +16,7 @@ import {
 } from "react";
 import { statusQuery } from "../lib/api";
 import { backupStale, plural, relativeTime } from "../lib/format";
-import { FactoryAvatar, useFactories } from "./factory";
+import { FactoryAvatar, PausedChip, useFactories } from "./factory";
 import { Icon } from "../ui/icons";
 import { useChangeEvents } from "./live-events";
 import { NewWorkDialog } from "../features/new-work/newWork";
@@ -115,7 +115,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
             <Icon name="plus" className="h-icon w-icon" />
           </Link>
         </div>
-        {factories.map(({ slug, name, avatarColor }) => {
+        {factories.map(({ slug, name, avatarColor, paused }) => {
           const problems = data?.factories.find((f) => f.slug === slug);
           return (
             // biome-ignore lint/a11y/useSemanticElements: A fieldset groups form controls; this groups one factory's page links.
@@ -123,6 +123,7 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
               <div className="factory-name">
                 <FactoryAvatar name={name} color={avatarColor} />
                 <span className="flex-1">{name}</span>
+                {paused && <PausedChip />}
                 {problems && !problems.loaded && (
                   <span
                     className="flex text-bad"
@@ -327,6 +328,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 </span>
               ))}
             </nav>
+            {factory.paused && <PausedChip />}
             <button
               type="button"
               className="new-work"

@@ -16,10 +16,18 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { AGENT_NAME as WEB_AGENT_NAME } from "../../web/features/agents/agent-name.ts";
+import { loadConfig } from "../config.ts";
+import { Store } from "../db.ts";
+import { GithubPoller } from "../intake/github.ts";
+import { Scheduler } from "../intake/schedule.ts";
+import { SlackBridge } from "../intake/slack.ts";
+import { routeRequest, type TelegramFactories } from "../intake/telegram.ts";
+import { Factory } from "../orchestrator/factory.ts";
 import { fileRevision, HARNESS_FALLBACK, loadDefinition } from "./load.ts";
 import {
   AGENT_NAME,
   type AgentEdit,
+  type AutomationEdit,
   appendLearning,
   LEARNINGS_CAP,
   LEARNINGS_PATH,
@@ -749,4 +757,211 @@ test("the learnings skill refuses lessons past its cap and keeps the file", asyn
   const full = await appendLearning(root, ["One more."], HARNESS_FALLBACK);
   assert.equal(full.ok || full.code, "invalid");
   assert.equal(await readFile(join(root, LEARNINGS_PATH), "utf8"), before);
+});
+
+/** An automation.md with one telegram trigger, its path and its revision. */
+async function automationTree(
+  frontmatter = "triggers:\n  - provider: telegram\n    event: message\n",
+) {
+  const root = await tree();
+  const path = join(root, "automations/intake/automation.md");
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, `---\n${frontmatter}---\n\nDo the work.\n`);
+  const current = async () => fileRevision(await readFile(path));
+  const save = async (edit: Partial<AutomationEdit>) =>
+    writeAutomation(
+      root,
+      "intake",
+      { enabled: true, instructions: "Do the work.", ...edit },
+      await current(),
+      HARNESS_FALLBACK,
+    );
+  /** A factory running the definition as loaded from disk now. */
+  const factory = async () => {
+    const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+    assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.errors));
+    const store = new Store(":memory:", { defaultBudgetUsd: 15 });
+    const factory = new Factory(
+      store,
+      loadConfig({ NAKARA_GITHUB_MIRROR: "false" }),
+    );
+    factory.pump = async () => {};
+    factory.definition = loaded.definition;
+    return {
+      factory,
+      store,
+      trigger: loaded.definition.automations[0]?.frontmatter.triggers,
+    };
+  };
+  return { root, path, save, factory };
+}
+
+const factoriesOf = (factory: Factory) =>
+  ({
+    factories: [factory],
+    default: factory,
+    byHandle: () => undefined,
+    forItem: () => factory,
+  }) as unknown as TelegramFactories;
+
+test("a GitHub label trigger serializes to an issue_labeled trigger the poller polls", async () => {
+  const { save, path, factory } = await automationTree();
+  assert.equal(
+    (await save({ trigger: { kind: "github_label", label: " bug " } })).ok,
+    true,
+  );
+  assert.match(
+    await readFile(path, "utf8"),
+    /provider: github\n\s+event: issue_labeled\n\s+filter:\n\s+labels:\n\s+- bug\n/,
+  );
+  const { factory: f, store } = await factory();
+  try {
+    const poller = new GithubPoller(f);
+    const polled: string[] = [];
+    // biome-ignore lint/complexity/useLiteralKeys: Observe intake without GitHub.
+    poller["intakeLabeled"] = async (_f, repo, label, automation) => {
+      polled.push(`${repo} ${label} ${automation}`);
+    };
+    // biome-ignore lint/complexity/useLiteralKeys: Drive issue intake only.
+    await poller["intake"](f, (error) => assert.fail(error));
+    assert.deepEqual(polled, ["o/r bug intake"]);
+  } finally {
+    store.db.close();
+  }
+});
+
+test("a schedule trigger serializes to a cron_fired trigger the scheduler fires", async () => {
+  const { save, path, factory } = await automationTree();
+  assert.equal(
+    (await save({ trigger: { kind: "schedule", cron: "0 3 * * *" } })).ok,
+    true,
+  );
+  assert.match(
+    await readFile(path, "utf8"),
+    /provider: schedule\n\s+event: cron_fired\n\s+schedule:\n\s+cron: 0 3 \* \* \*\n/,
+  );
+  const { factory: f, store } = await factory();
+  try {
+    new Scheduler(f).tick(new Date("2026-11-27T03:00:10Z"));
+    assert.equal(store.automationHistory("intake").count, 1);
+  } finally {
+    store.db.close();
+  }
+});
+
+test("a Slack trigger serializes to a slack/message trigger that trusts its members", async () => {
+  const { save, path, factory } = await automationTree();
+  assert.equal(
+    (
+      await save({
+        trigger: {
+          kind: "slack",
+          members: ["U0123ABC", "W0456DEF", "U0123ABC"],
+        },
+      })
+    ).ok,
+    true,
+  );
+  assert.match(
+    await readFile(path, "utf8"),
+    /provider: slack\n\s+event: message\n\s+filter:\n\s+members:\n\s+- U0123ABC\n\s+- W0456DEF\n/,
+  );
+  const { factory: f, store } = await factory();
+  try {
+    const bridge = new SlackBridge(factoriesOf(f), async () => ({ ok: true }));
+    // biome-ignore lint/complexity/useLiteralKeys: The member check of incoming messages.
+    const allowed = (user: string) => bridge["allowed"](f, user);
+    assert.equal(allowed("W0456DEF"), true);
+    assert.equal(allowed("U0999XYZ"), false);
+  } finally {
+    store.db.close();
+  }
+});
+
+test("a Telegram trigger serializes to a telegram/message trigger that takes chat requests", async () => {
+  const { save, path, factory } = await automationTree(
+    'triggers:\n  - provider: schedule\n    event: cron_fired\n    schedule: { cron: "@daily" }\n',
+  );
+  assert.equal((await save({ trigger: { kind: "telegram" } })).ok, true);
+  assert.match(
+    await readFile(path, "utf8"),
+    /triggers:\n\s+- provider: telegram\n\s+event: message\n---/,
+  );
+  const { factory: f, store } = await factory();
+  try {
+    const routed = routeRequest(factoriesOf(f), "Fix the build", "telegram");
+    assert.equal("automation" in routed && routed.automation, "intake");
+  } finally {
+    store.db.close();
+  }
+});
+
+test("the display name, starting agent and a same-kind trigger change only their keys", async () => {
+  const { save, path, factory } = await automationTree(`displayName: Old # shown
+triggers:
+  - provider: github
+    event: issue_labeled
+    filter: { repos: [o/r], labels: [old], bots: [renovate] }
+`);
+  const result = await save({
+    displayName: "Triage bugs",
+    agent: "helper",
+    trigger: { kind: "github_label", label: "bug" },
+  });
+  assert.equal(result.ok, true);
+  const { factory: f, store, trigger } = await factory();
+  try {
+    const automation = f.definition?.automations[0];
+    assert.equal(automation?.frontmatter.displayName, "Triage bugs");
+    assert.equal(automation?.agent, "helper");
+    assert.deepEqual(trigger?.[0]?.filter, {
+      repos: ["o/r"],
+      labels: ["bug"],
+      bots: ["renovate"],
+    });
+  } finally {
+    store.db.close();
+  }
+  // An empty name removes the key, so the folder name shows.
+  assert.equal((await save({ displayName: "  " })).ok, true);
+  assert.doesNotMatch(await readFile(path, "utf8"), /displayName/);
+});
+
+test("an invalid cron, a missing agent or several triggers are refused and write nothing", async () => {
+  const { save, path } = await automationTree();
+  const before = await readFile(path, "utf8");
+  const refused = async (edit: Partial<AutomationEdit>, message: RegExp) => {
+    const result = await save(edit);
+    assert.ok(!result.ok && result.code === "invalid", JSON.stringify(result));
+    assert.match(result.errors.map((e) => e.message).join("\n"), message);
+    assert.equal(await readFile(path, "utf8"), before);
+  };
+  await refused(
+    { trigger: { kind: "schedule", cron: "61 * * * *" } },
+    /out of range/,
+  );
+  await refused({ agent: "ghost" }, /agent "ghost" is not defined/);
+  await refused(
+    { trigger: { kind: "slack", members: ["someone"] } },
+    /filter\.members/,
+  );
+
+  const several = await automationTree(`triggers:
+  - provider: telegram
+    event: message
+  - provider: slack
+    event: message
+    filter: { members: [U0123ABC] }
+`);
+  const original = await readFile(several.path, "utf8");
+  const result = await several.save({
+    displayName: "Chat",
+    trigger: { kind: "telegram" },
+  });
+  assert.ok(!result.ok && result.code === "invalid");
+  assert.match(result.errors[0]?.message ?? "", /several triggers/);
+  assert.equal(await readFile(several.path, "utf8"), original);
+  // Without a trigger, the other fields still save.
+  assert.equal((await several.save({ displayName: "Chat" })).ok, true);
+  assert.match(await readFile(several.path, "utf8"), /provider: slack/);
 });

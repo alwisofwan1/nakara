@@ -13,7 +13,9 @@ import {
   loadPage,
   type LimitsEdit,
   moveDefinition,
+  pauseFactory,
   renameFactory,
+  resumeFactory,
   saveLimits,
 } from "../lib/api";
 import {
@@ -58,7 +60,7 @@ function SettingsPage() {
       <General settings={data} />
       <Limits settings={data} />
       <Definition settings={data} />
-      <DeleteFactory settings={data} />
+      <DangerZone settings={data} />
     </section>
   );
 }
@@ -567,8 +569,66 @@ function MoveDefinition({ settings }: { settings: Settings }) {
   );
 }
 
-/** Delete, after confirmation; the server refuses it while items are active. */
-function DeleteFactory({ settings }: { settings: Settings }) {
+/** Pause or resume the factory: while paused its new Work Items wait in Intake. */
+function PauseFactory({ settings }: { settings: Settings }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const toggle = useMutation({
+    mutationFn: () =>
+      settings.paused
+        ? resumeFactory(settings.slug)
+        : pauseFactory(settings.slug),
+    onSuccess: (state) => {
+      void client.invalidateQueries({ queryKey: ["factories"] });
+      toast({
+        title: state.paused ? "Factory paused" : "Factory resumed",
+        description: state.paused
+          ? `Running work finishes. New Work Items of ${settings.name} wait in Intake until you resume.`
+          : `${settings.name} starts its waiting work.`,
+        tone: "ok",
+      });
+    },
+  });
+  return (
+    <div className="grid gap-xs">
+      <div className="flex flex-wrap items-center gap-md">
+        <div className="grid flex-1 gap-xs">
+          <h3 className="flex items-center gap-sm font-semibold">
+            Pause the factory
+            {settings.pausedAt && (
+              <span className="text-small font-normal text-muted">
+                Paused{" "}
+                <time dateTime={settings.pausedAt} title={settings.pausedAt}>
+                  {relativeTime(settings.pausedAt)}
+                </time>
+              </span>
+            )}
+          </h3>
+          <p className="text-small text-muted">
+            Running work finishes. New Work Items wait in Intake until you
+            resume.
+          </p>
+        </div>
+        <button
+          type="button"
+          className={settings.paused ? "primary" : "danger"}
+          disabled={toggle.isPending}
+          onClick={() => toggle.mutate()}
+        >
+          {settings.paused ? "Resume" : "Pause"} #{settings.slug}
+        </button>
+      </div>
+      {toggle.error && (
+        <p className="form-error" role="alert">
+          {toggle.error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Pause, and delete after confirmation; the server refuses a delete while items are active. */
+function DangerZone({ settings }: { settings: Settings }) {
   const client = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
@@ -593,7 +653,8 @@ function DeleteFactory({ settings }: { settings: Settings }) {
       <h2 id="danger-zone" className="font-semibold text-bad">
         Danger zone
       </h2>
-      <div className="flex flex-wrap items-center gap-md">
+      <PauseFactory settings={settings} />
+      <div className="flex flex-wrap items-center gap-md border-t border-line pt-md">
         <p className="flex-1 text-small text-muted">
           {settings.isDefault
             ? "This is the default factory: Telegram and work without a factory go to it, so it cannot be deleted."

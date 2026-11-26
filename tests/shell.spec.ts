@@ -317,7 +317,13 @@ test("automations table, details, work item links and mobile layout", async ({
       exact: true,
     }),
   ).toBeVisible();
-  await expect(pane).toContainText("factory:Nakara");
+  // The trigger polls the factory's own label when the file names none.
+  await expect(
+    pane.getByRole("button", { name: "GitHub label", pressed: true }),
+  ).toBeVisible();
+  await expect(pane.getByRole("textbox", { name: /^Label/ })).toHaveValue(
+    "factory:Nakara",
+  );
   await expect(pane).toContainText("Settings");
   await page.screenshot({
     path: testInfo.outputPath("automations-desktop-pane.png"),

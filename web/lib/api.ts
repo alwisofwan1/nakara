@@ -243,6 +243,21 @@ export const saveAutomation = (
     "Unable to save the automation",
   );
 
+/** The next fire time of a cron being edited, or valid: false. */
+export const cronPreviewQuery = (slug: string, cron: string) =>
+  queryOptions({
+    queryKey: ["cron-preview", slug, cron],
+    queryFn: () =>
+      body(
+        factoryApi.automations["cron-preview"].$get({
+          param: { slug },
+          query: { cron },
+        }),
+        "Unable to check the schedule",
+      ),
+    staleTime: 60_000,
+  });
+
 /** Run now: creates a work item for the automation, as its trigger would. */
 export const runAutomation = (slug: string, name: string) =>
   body(
@@ -521,6 +536,19 @@ export const saveLimits = (slug: string, json: LimitsEdit) =>
   body(
     factoryApi.settings.limits.$put({ param: { slug }, json }),
     "Unable to save the limits",
+  );
+
+/** Pauses the factory: new Work Items wait in Intake; running work finishes. */
+export const pauseFactory = (slug: string) =>
+  body(
+    factoryApi.pause.$post({ param: { slug } }),
+    "Unable to pause the factory",
+  );
+/** Resumes the factory: the waiting work starts. */
+export const resumeFactory = (slug: string) =>
+  body(
+    factoryApi.resume.$post({ param: { slug } }),
+    "Unable to resume the factory",
   );
 
 /** Deletes the factory; refused (code "policy") while it has active items. */

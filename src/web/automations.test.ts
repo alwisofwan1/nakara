@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -366,6 +366,122 @@ test("the enabled switch and instructions save to automation.md, reload, and Run
       "policy",
     );
     assert.equal(store.automationHistory("weekly-health-check").count, 2);
+  } finally {
+    store.db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the name, trigger and starting agent save through the API; refused edits return 422 and write nothing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-automations-"));
+  const root = join(dir, "factory");
+  await cp("factory", root, { recursive: true });
+  const path = join(root, "automations/telegram-request/automation.md");
+  // Two triggers: the drawer shows them read-only.
+  await mkdir(join(root, "automations/chat"));
+  await writeFile(
+    join(root, "automations/chat/automation.md"),
+    "---\ntriggers:\n  - provider: telegram\n    event: message\n  - provider: slack\n    event: message\n    filter: { members: [U0123ABC] }\n---\nChat.\n",
+  );
+  const store = new Store(":memory:", {
+    defaultBudgetUsd: 15,
+    factory: () => ({ ...stubFactorySeed(), definition_dir: root }),
+  });
+  const registry = new FactoryRegistry(
+    store,
+    loadConfig({ NAKARA_DATA_DIR: dir }),
+  );
+  const factory = registry.default;
+  try {
+    assert.ok((await factory.reloadDefinition())?.ok);
+    const api = createApi(registry, factory.config);
+    const put = (name: string, body: unknown) =>
+      api.request(`/f/default/automations/${name}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const read = async (name: string) =>
+      (
+        (await (
+          await api.request("/f/default/automations")
+        ).json()) as AutomationDto[]
+      ).find((a) => a.name === name);
+    const refused = async (name: string, file: string, body: object) => {
+      const before = await readFile(file, "utf8");
+      const response = await put(name, {
+        revision: fileRevision(Buffer.from(before)),
+        ...body,
+      });
+      assert.equal(response.status, 422);
+      const { error } = (await response.json()) as {
+        error: { code: string; problems: { message: string }[] };
+      };
+      assert.equal(error.code, "invalid_definition");
+      assert.equal(await readFile(file, "utf8"), before);
+      return error.problems.map((p) => p.message).join("\n");
+    };
+
+    assert.match(
+      await refused("telegram-request", path, {
+        trigger: { kind: "schedule", cron: "every day" },
+      }),
+      /must have 5 fields/,
+    );
+    assert.match(
+      await refused("telegram-request", path, { agent: "ghost" }),
+      /agent "ghost" is not defined/,
+    );
+    const chat = join(root, "automations/chat/automation.md");
+    assert.match(
+      await refused("chat", chat, {
+        displayName: "Chat",
+        trigger: { kind: "telegram" },
+      }),
+      /several triggers/,
+    );
+    // An unknown trigger kind is a bad request.
+    assert.equal(
+      (
+        await put("telegram-request", {
+          revision: (await read("telegram-request"))?.revision,
+          trigger: { kind: "comment", prefix: "/nakara" },
+        })
+      ).status,
+      400,
+    );
+
+    const saved = await put("telegram-request", {
+      revision: (await read("telegram-request"))?.revision,
+      displayName: "Nightly report",
+      agent: "triage",
+      trigger: { kind: "schedule", cron: "0 3 * * *" },
+    });
+    assert.equal(saved.status, 200);
+    const after = await read("telegram-request");
+    assert.equal(after?.displayName, "Nightly report");
+    assert.equal(after?.agent, "triage");
+    assert.deepEqual(
+      after?.triggers.map((t) => [t.provider, t.event, t.cron]),
+      [["schedule", "cron_fired", "0 3 * * *"]],
+    );
+    assert.ok(after?.triggers[0]?.nextFire);
+
+    const preview = async (cron: string) =>
+      (
+        await api.request(
+          `/f/default/automations/cron-preview?cron=${encodeURIComponent(cron)}`,
+        )
+      ).json();
+    assert.deepEqual(await preview("* * 31 2 *"), {
+      valid: true,
+      nextFire: null,
+    });
+    assert.equal(
+      ((await preview("@daily")) as { nextFire: string }).nextFire.slice(11),
+      "00:00:00.000Z",
+    );
+    assert.equal(((await preview("nope")) as { valid: boolean }).valid, false);
   } finally {
     store.db.close();
     await rm(dir, { recursive: true, force: true });

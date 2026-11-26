@@ -18,7 +18,12 @@ import {
   readAgent,
   readAgents,
 } from "./agents.ts";
-import { automationEditInput, readAutomations } from "./automations.ts";
+import {
+  automationEditInput,
+  cronPreview,
+  cronPreviewInput,
+  readAutomations,
+} from "./automations.ts";
 import {
   type CheckResultDto,
   checkResultDto,
@@ -54,6 +59,7 @@ import {
 import {
   limitsInput,
   moveInput,
+  pauseState,
   readFactories,
   readFactorySettings,
   renameInput,
@@ -362,6 +368,10 @@ function createFactoryApi(
           ),
         );
       })
+      // The next fire time of the cron the drawer is editing.
+      .get("/automations/cron-preview", queryOf(cronPreviewInput), (c) =>
+        c.json(cronPreview(c.req.valid("query").cron, new Date())),
+      )
       // Writes automation.md only when the edited tree loads and the page is not
       // stale, then reloads; an omitted field keeps its value.
       .put(
@@ -385,6 +395,9 @@ function createFactoryApi(
             {
               enabled: edit.enabled ?? automation.frontmatter.enabled,
               instructions: edit.instructions ?? automation.instructions,
+              displayName: edit.displayName,
+              agent: edit.agent,
+              trigger: edit.trigger,
             },
             revision,
           );
@@ -610,6 +623,20 @@ function createFactoryApi(
         store.repos.factorySettings.saveLimits(id, c.req.valid("json"));
         return c.json(store.repos.factorySettings.settings(id), 200);
       })
+      // Pause: new Work Items wait in Intake and nothing new starts; running
+      // work finishes. Resume starts the waiting work at once. Both idempotent.
+      .post("/pause", (c) => {
+        const pausedAt = c.var.factory.setPaused(true);
+        if (pausedAt === undefined)
+          return c.json(apiError("not_found", "Factory not found"), 404);
+        return c.json(pauseState(pausedAt), 200);
+      })
+      .post("/resume", (c) => {
+        const pausedAt = c.var.factory.setPaused(false);
+        if (pausedAt === undefined)
+          return c.json(apiError("not_found", "Factory not found"), 404);
+        return c.json(pauseState(pausedAt), 200);
+      })
       // Refused for the default factory and while it has active items or runs;
       // the database is snapshotted first.
       .delete("/", async (c) => {
@@ -776,7 +803,7 @@ export function createApi(
           ),
         ),
     )
-    .get("/factories", (c) => c.json(readFactories(store.repos.factories)))
+    .get("/factories", (c) => c.json(readFactories(store.repos)))
     // The models the harness CLI offers, asked again at most once an hour.
     .get("/models/:harness", async (c) => {
       const harness = c.req.param("harness");

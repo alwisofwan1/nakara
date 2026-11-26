@@ -91,6 +91,8 @@ test("factory settings: the record, its definition and its active items", () => 
           maxRuns: 50,
         },
       },
+      paused: false,
+      pausedAt: null,
       definition: {
         mode: "managed",
         dir: "/data/factories/harbor",
@@ -325,6 +327,42 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
     defaults,
   });
   assert.deepEqual(limitsOf(create(harborId)), [15, 3, 4, 120]);
+});
+
+test("pause and resume are idempotent, return the new state, and show in the settings and the factory list", async (t) => {
+  const { call } = await setup(t);
+  const listed = async () =>
+    (await call("GET", "factories")).body.map(
+      (f: { slug: string; paused: boolean }) => [f.slug, f.paused],
+    );
+  const state = async () => {
+    const { paused, pausedAt } = (await call("GET", "f/harbor/settings")).body;
+    return { paused, pausedAt };
+  };
+  assert.deepEqual(await state(), { paused: false, pausedAt: null });
+
+  const paused = await call("POST", "f/harbor/pause");
+  assert.equal(paused.status, 200);
+  assert.equal(paused.body.paused, true);
+  assert.match(paused.body.pausedAt, /^\d{4}-\d\d-\d\dT/);
+  // Pausing again keeps the first pause time.
+  assert.deepEqual(await call("POST", "f/harbor/pause"), paused);
+  assert.deepEqual(await state(), paused.body);
+  // Only the paused factory shows the chip.
+  assert.deepEqual(await listed(), [
+    ["default", false],
+    ["harbor", true],
+  ]);
+
+  const resumed = { status: 200, body: { paused: false, pausedAt: null } };
+  assert.deepEqual(await call("POST", "f/harbor/resume"), resumed);
+  assert.deepEqual(await call("POST", "f/harbor/resume"), resumed);
+  assert.deepEqual(await state(), resumed.body);
+  assert.deepEqual(await listed(), [
+    ["default", false],
+    ["harbor", false],
+  ]);
+  assert.equal((await call("POST", "f/missing/pause")).status, 404);
 });
 
 test("limits: out-of-range values are refused with 400 and change nothing", async (t) => {
