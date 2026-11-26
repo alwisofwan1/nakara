@@ -19,6 +19,7 @@ import { isDeepStrictEqual } from "node:util";
 import { parseDocument, stringify } from "yaml";
 
 import type { AgentType } from "../domain/policy.ts";
+import { parseCron } from "../intake/schedule.ts";
 
 import {
   FRONTMATTER,
@@ -68,11 +69,91 @@ export type WriteResult =
   | { ok: false; code: "invalid"; errors: Problem[]; warnings: Problem[] }
   | { ok: false; code: "conflict"; message: string };
 
-/** The editable parts of an automation.md. */
+/** The one trigger of an automation, as the drawer edits it. */
+export type TriggerEdit =
+  | { kind: "github_label"; label: string }
+  | { kind: "schedule"; cron: string }
+  | { kind: "slack"; members: string[] }
+  | { kind: "telegram" };
+
+/** The editable parts of an automation.md; an omitted optional field keeps its value. */
 export interface AutomationEdit {
   enabled: boolean;
   /** The markdown body. */
   instructions: string;
+  /** Empty or null removes `displayName`, so the folder name shows. */
+  displayName?: string | null | undefined;
+  /** The agent the work item starts with; the loader checks that it exists. */
+  agent?: string | undefined;
+  /** Replaces `triggers` with exactly this one; refused when the file has several. */
+  trigger?: TriggerEdit | undefined;
+}
+
+/** The provider and event of each trigger kind, as the intakes match them. */
+const TRIGGER_EVENTS = {
+  github_label: { provider: "github", event: "issue_labeled" },
+  schedule: { provider: "schedule", event: "cron_fired" },
+  slack: { provider: "slack", event: "message" },
+  telegram: { provider: "telegram", event: "message" },
+} as const;
+
+/** Where each trigger kind keeps its value, and the value as written. */
+function triggerValue(edit: TriggerEdit): [string, string, unknown] | null {
+  switch (edit.kind) {
+    case "github_label": {
+      const label = edit.label.trim();
+      if (!label)
+        throw new Error("triggers: a GitHub label trigger needs a label");
+      return ["filter", "labels", [label]];
+    }
+    case "schedule":
+      // Throws the loader's own message for an invalid schedule.
+      parseCron(edit.cron);
+      return ["schedule", "cron", edit.cron.trim()];
+    case "slack":
+      return [
+        "filter",
+        "members",
+        [...new Set(edit.members.map((m) => m.trim()).filter(Boolean))],
+      ];
+    case "telegram":
+      return null;
+  }
+}
+
+/**
+ * Write `edit` as the only trigger. A trigger of the same kind keeps its other
+ * keys (repos, bots, a schedule name) and only gets the new value.
+ */
+function putTrigger(
+  put: Put,
+  current: () => Record<string, unknown>,
+  edit: TriggerEdit,
+): void {
+  const triggers = current().triggers;
+  if (Array.isArray(triggers) && triggers.length > 1)
+    throw new Error(
+      "triggers: this automation has several triggers; edit automation.md to change them",
+    );
+  const { provider, event } = TRIGGER_EVENTS[edit.kind];
+  const value = triggerValue(edit);
+  const existing = Array.isArray(triggers)
+    ? (triggers[0] as Record<string, unknown> | undefined)
+    : undefined;
+  if (existing?.provider === provider && existing.event === event) {
+    if (value) put(["triggers", "0", value[0], value[1]], value[2]);
+    return;
+  }
+  put(
+    ["triggers"],
+    [
+      {
+        provider,
+        event,
+        ...(value && { [value[0]]: { [value[1]]: value[2] } }),
+      },
+    ],
+  );
 }
 
 export type Put = (path: string[], value: unknown) => void;
@@ -169,6 +250,10 @@ export function serializeAutomation(
   return serializeMarkdown(text, edit.instructions, (put, current) => {
     if ((current().enabled ?? true) !== edit.enabled)
       put(["enabled"], edit.enabled);
+    if (edit.displayName !== undefined)
+      put(["displayName"], edit.displayName?.trim() || null);
+    if (edit.agent !== undefined) put(["agent"], edit.agent);
+    if (edit.trigger) putTrigger(put, current, edit.trigger);
   });
 }
 

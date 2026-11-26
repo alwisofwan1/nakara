@@ -161,7 +161,7 @@ export class DefinitionService {
   }
 
   /**
-   * Write an automation's enabled switch and instructions, then reload so the
+   * Write an automation's switch, instructions, name, agent or trigger, then reload so the
    * triggers and the next work item use them. Saved like an agent edit.
    */
   saveAutomation(
