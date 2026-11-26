@@ -35,6 +35,16 @@ const env = z.object({
         : join(homedir(), ".local/share/nakara"),
     ),
   NAKARA_DEFINITION_DIR: z.string().default("factory"),
+  /**
+   * Cloudflare Access in front of the web UI: a request with a valid Access JWT
+   * for this application and one of these emails needs no token. All three or none.
+   */
+  NAKARA_ACCESS_TEAM_DOMAIN: z
+    .string()
+    .default("")
+    .transform((u) => u.replace(/\/+$/, "")),
+  NAKARA_ACCESS_AUD: z.string().default(""),
+  NAKARA_ACCESS_EMAILS: z.string().default(""),
   /** Comma-separated peer IPs (besides loopback) allowed to reach the web UI. */
   NAKARA_ALLOW: z.string().default(""),
   NAKARA_CLAUDE_BIN: z.string().default("claude"),
@@ -95,6 +105,18 @@ export type Config = ReturnType<typeof loadConfig>;
 export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   const e = env.parse(source);
   const dataDir = resolve(e.NAKARA_DATA_DIR);
+  const accessEmails = e.NAKARA_ACCESS_EMAILS.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const accessSet = [
+    e.NAKARA_ACCESS_TEAM_DOMAIN,
+    e.NAKARA_ACCESS_AUD,
+    accessEmails.length ? "x" : "",
+  ].filter(Boolean).length;
+  if (accessSet !== 0 && accessSet !== 3)
+    throw new Error(
+      "Set NAKARA_ACCESS_TEAM_DOMAIN, NAKARA_ACCESS_AUD and NAKARA_ACCESS_EMAILS together, or none of them",
+    );
   return {
     host: e.NAKARA_HOST,
     port: e.NAKARA_PORT,
@@ -114,6 +136,13 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     allowedHosts: e.NAKARA_ALLOWED_HOSTS.split(",")
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
+    access: accessSet
+      ? {
+          teamDomain: e.NAKARA_ACCESS_TEAM_DOMAIN,
+          aud: e.NAKARA_ACCESS_AUD,
+          emails: accessEmails,
+        }
+      : undefined,
     allow: e.NAKARA_ALLOW.split(",")
       .map((s) => s.trim())
       .filter(Boolean),

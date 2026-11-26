@@ -17,6 +17,7 @@ import {
   type FactoryRegistry,
 } from "../orchestrator/registry.ts";
 import { createApi } from "./api.ts";
+import { accessVerifier } from "./cf-access.ts";
 import { securityWarnings } from "./definition.ts";
 import { readFactories } from "./factories.ts";
 import type { FetchPullRequest } from "./pull-request.ts";
@@ -108,6 +109,7 @@ export function createApp(
   // loopback peer without it. A Host header that is not ours is refused first,
   // so a page cannot reach the API through DNS rebinding.
   const allowedHosts = allowedHostSet(config);
+  const accessOperator = config.access && accessVerifier(config.access);
   app.use("*", async (c, next) => {
     const apiRequest = c.req.path === "/api" || c.req.path.startsWith("/api/");
     const refuse = (code: string, message: string, status: 401 | 403) =>
@@ -147,13 +149,23 @@ export function createApp(
       const bearer = /^Bearer\s+(\S+)$/i.exec(
         c.req.header("authorization") ?? "",
       )?.[1];
-      if (!same(cookie, token) && !(bearer && same(bearer, token)))
+      const byCookie = same(cookie, token);
+      const accessJwt = c.req.header("cf-access-jwt-assertion");
+      const signedIn =
+        byCookie ||
+        (bearer !== undefined && same(bearer, token)) ||
+        // Checked last: it may fetch Cloudflare's signing keys.
+        (accessOperator !== undefined &&
+          accessJwt !== undefined &&
+          (await accessOperator(accessJwt)) !== undefined);
+      if (!signedIn)
         return refuse(
           "unauthorized",
           "Unauthorized: open the URL with ?token=<token>",
           401,
         );
-      if (same(cookie, token) && !apiRequest && c.req.method === "GET")
+      // A page visit by cookie or through Cloudflare Access (re)sets the cookie.
+      if (!apiRequest && c.req.method === "GET" && (byCookie || !bearer))
         remember();
     }
     if (apiRequest || !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {

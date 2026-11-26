@@ -239,6 +239,7 @@ existing shell; the default Tailwind palette and dimension scales are reset.
 | `NAKARA_BASE_PATH` | `""` | Link prefix behind a path proxy, e.g. `/proxy/7788` |
 | `NAKARA_PUBLIC_URL` | `""` | External URL of the web UI, base path included, e.g. `https://code.example.com/proxy/7788`. Telegram notifications link to the Work Item page under it |
 | `NAKARA_ALLOW` | `""` | Non-loopback peer IPs allowed (each must present the token) |
+| `NAKARA_ACCESS_TEAM_DOMAIN`, `NAKARA_ACCESS_AUD`, `NAKARA_ACCESS_EMAILS` | `""` | Behind Cloudflare Access: the team domain (`https://<team>.cloudflareaccess.com`), the Access application's audience tag and comma-separated Operator emails. A request with a valid `Cf-Access-Jwt-Assertion` for them needs no token; a page visit also sets the cookie. Set all three or none |
 | `NAKARA_ALLOWED_HOSTS` | `""` | Extra `Host` header values (`host:port`, comma-separated) the web server answers to, besides `NAKARA_HOST`, loopback names on `NAKARA_PORT` and the `NAKARA_PUBLIC_URL` host; for a dev proxy or a hostname you serve under yourself |
 | `NAKARA_DATA_DIR` | `~/.local/share/nakara` | DB, token, clones, logs |
 | `NAKARA_DEFINITION_DIR` | `factory` | Definition root (`factory.yaml`) of the first factory when migration 005 registers it; afterwards each factory loads its definition from its registered directory. When it is set and names another directory than the first factory's registered one, startup logs `startup.definition_dir_ignored` and `/healthz` lists the warning; the registered directory is used |
@@ -484,6 +485,9 @@ The web UI binds to loopback. Choose one of the following:
   loopback peer, but loopback no longer skips the token: the first visit sets the
   cookie, which lasts a year and renews on every page visit, so links from Telegram
   or GitHub open signed in. The public URL's host must match the `Host` the proxy forwards.
+  To skip the token on every device, set the `NAKARA_ACCESS_*` variables: whoever
+  passes Cloudflare Access with an Operator email is signed in. The audience tag is
+  the `kid` in the Access login redirect (`curl -sI https://<host>/`).
 - **Tailscale**: set `NAKARA_HOST=<tailnet IP>` and `NAKARA_ALLOW=<your device IP>`, then
   open `http://<tailnet IP>:7788/?token=…`. The token is in `$NAKARA_DATA_DIR/token`.
 - **A dedicated hostname** needs a reverse proxy or tunnel (for example a Cloudflare Tunnel ingress rule) in front of the loopback port.

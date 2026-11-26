@@ -6,6 +6,12 @@ import { Store } from "../db.ts";
 import { FactoryRegistry } from "../orchestrator/registry.ts";
 import { GithubPoller } from "../intake/github.ts";
 import { createApp } from "./server.ts";
+import {
+  ACCESS_AUD,
+  ACCESS_NOW,
+  ACCESS_TEAM,
+  accessKeys,
+} from "./test-support.ts";
 
 const bindings = {
   incoming: { socket: { remoteAddress: "127.0.0.1" } },
@@ -345,6 +351,42 @@ test("the token cookie is Lax for a year and a page visit with it renews it", as
     "",
   );
   store.close();
+});
+
+test("a valid Cloudflare Access JWT for an Operator email signs in without the token", async (t) => {
+  const { jwk, jwt } = accessKeys();
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ keys: [jwk] }),
+  );
+  t.mock.method(Date, "now", () => ACCESS_NOW);
+  const { store, app, from } = fixture({
+    NAKARA_ACCESS_TEAM_DOMAIN: `${ACCESS_TEAM}/`,
+    NAKARA_ACCESS_AUD: ACCESS_AUD,
+    NAKARA_ACCESS_EMAILS: "op@example.com",
+  });
+  const get = (path: string, assertion: string) =>
+    app.request(
+      path,
+      { headers: { host: HOST, "cf-access-jwt-assertion": assertion } },
+      from("127.0.0.1"),
+    );
+  const page = await get("/inbox", jwt({}));
+  assert.notEqual(page.status, 401);
+  assert.match(page.headers.get("set-cookie") ?? "", /nakara_token=s3cret/);
+  assert.equal((await get("/api/status", jwt({}))).status, 200);
+  assert.equal(
+    (await get("/inbox", jwt({ email: "x@example.com" }))).status,
+    401,
+  );
+  assert.equal((await get("/inbox", jwt({ aud: ["other"] }))).status, 401);
+  store.close();
+});
+
+test("NAKARA_ACCESS_* must be set together", () => {
+  assert.throws(
+    () => loadConfig({ NAKARA_ACCESS_AUD: "a" }),
+    /together, or none of them/,
+  );
 });
 
 test("/healthz and /metrics answer a loopback peer without the token, others still need it", async () => {
