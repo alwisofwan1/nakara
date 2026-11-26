@@ -1,7 +1,8 @@
 // What a definition lets its agents reach, as readable lines. A reload whose
 // lines are not all approved waits for the operator (ADR 0005).
-import { DEFAULT_EGRESS_ALLOW } from "../runner/docker.ts";
-import type { Definition } from "./load.ts";
+import { DEFAULT_EGRESS_ALLOW, HARNESS_HOSTS } from "../runner/docker.ts";
+import { allowedHost } from "../runner/egress-proxy.ts";
+import type { Definition, HarnessKind } from "./load.ts";
 import type { RunnerFile } from "./schema.ts";
 
 /** An agent's container and the hosts it may reach; undefined when it runs on the host. */
@@ -14,6 +15,39 @@ export function sandboxOf(
   return image
     ? { image, allow: r.egress?.allow ?? DEFAULT_EGRESS_ALLOW }
     : undefined;
+}
+
+/**
+ * Why an agent's harness cannot reach its model through its runner's egress
+ * (#21), or null when it can or the agent runs on the host. A definition
+ * warning: the run would fail at its first model call.
+ */
+export function harnessUnreachable(
+  agent: string,
+  harness: HarnessKind,
+  runner: string | undefined,
+  allow: string[] | undefined,
+): string | null {
+  if (!allow) return null;
+  const missing = HARNESS_HOSTS[harness].filter(
+    (host) => !allowedHost(host, allow),
+  );
+  return missing.length
+    ? `agent "${agent}" uses ${harness} but runner "${runner}" egress does not allow ${missing.join(", ")}, so its runs cannot reach the model; add ${missing.length === 1 ? "it" : "them"} under egress.allow, or give the agent a harness the runner reaches`
+    : null;
+}
+
+/** harnessUnreachable for each agent of a loaded definition, for /healthz. */
+export function harnessReachWarnings(def: Definition): string[] {
+  return [...def.agents.values()].flatMap((agent) => {
+    const why = harnessUnreachable(
+      agent.name,
+      agent.harness.kind,
+      agent.runner,
+      sandboxOf(def.runners, agent.runner)?.allow,
+    );
+    return why ? [`${def.alias}: ${why}`] : [];
+  });
 }
 
 /** Runner lines, which reach recorded before they counted lacks. */
