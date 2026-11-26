@@ -1,16 +1,19 @@
 import { z } from "zod";
 
 import type { Repositories } from "../db.ts";
-import type { FactoryRepository } from "../db/factories.ts";
 import type { Commit } from "../definition/history.ts";
 import { FOLDER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
-export function readFactories(factories: FactoryRepository) {
-  return factories.factories().map((f) => ({
+export function readFactories(
+  repos: Pick<Repositories, "factories" | "factorySettings">,
+) {
+  return repos.factories.factories().map((f) => ({
     slug: f.slug,
     name: f.name,
     avatarColor: f.avatar_color,
+    // The sidebar shows a Paused chip.
+    paused: repos.factorySettings.pausedAt(f.id) !== null,
   }));
 }
 export type FactoryDto = ReturnType<typeof readFactories>[number];
@@ -47,6 +50,7 @@ export function readFactorySettings(
     backupDir: running.backupDir,
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
+    ...pauseState(factorySettings.pausedAt(record.id)),
     definition: {
       mode: record.definition_mode,
       dir: record.definition_dir,
@@ -56,6 +60,12 @@ export function readFactorySettings(
     },
   };
 }
+/** Whether a factory is paused, and since when; what pause and resume return. */
+export const pauseState = (pausedAt: string | null) => ({
+  paused: pausedAt !== null,
+  pausedAt,
+});
+
 export type FactorySettingsDto = NonNullable<
   ReturnType<typeof readFactorySettings>
 >;

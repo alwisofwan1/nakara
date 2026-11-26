@@ -523,6 +523,19 @@ export const saveLimits = (slug: string, json: LimitsEdit) =>
     "Unable to save the limits",
   );
 
+/** Pauses the factory: new Work Items wait in Intake; running work finishes. */
+export const pauseFactory = (slug: string) =>
+  body(
+    factoryApi.pause.$post({ param: { slug } }),
+    "Unable to pause the factory",
+  );
+/** Resumes the factory: the waiting work starts. */
+export const resumeFactory = (slug: string) =>
+  body(
+    factoryApi.resume.$post({ param: { slug } }),
+    "Unable to resume the factory",
+  );
+
 /** Deletes the factory; refused (code "policy") while it has active items. */
 export const deleteFactory = (slug: string) =>
   body(factoryApi.$delete({ param: { slug } }), "Unable to delete the factory");
