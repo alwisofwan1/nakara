@@ -600,6 +600,111 @@ test("retry resumes the failed run's session and raise budget wakes a budget-sto
   store.db.close();
 });
 
+test("retrying a failed review takes back the review it gave back", async () => {
+  const store = new Store(":memory:", { defaultBudgetUsd: 10 });
+  const factory = new Factory(
+    store,
+    loadConfig({ NAKARA_GITHUB_MIRROR: "false" }),
+  );
+  assert.ok((await factory.reloadDefinition()).ok);
+  factory.pump = async () => {};
+  const item = store.createItem({
+    title: "Retry review",
+    request: "Test",
+    source: "manual",
+  });
+  store.updateItem(item.id, { stage: "reviewing", review_count: 1 });
+  const failed = store.createRun({
+    item_id: item.id,
+    role: "agent",
+    agent: "review",
+    agent_type: "REVIEW",
+    harness: "codex",
+    model: null,
+    input: "Review the PR",
+    session_id: null,
+    status: "running",
+    counts_review: 1,
+  });
+  store.finishRun(failed.id, {
+    status: "failed",
+    result: null,
+    error: "egress refused chatgpt.com",
+    cost_usd: 0,
+    num_turns: null,
+    duration_ms: 1,
+    session_id: "s-review",
+    log_path: null,
+  });
+  assert.equal(store.item(item.id)?.review_count, 0);
+  const retry = factory.retry(item.id);
+  assert.ok(retry.ok);
+  assert.equal(retry.run.counts_review, 1);
+  assert.equal(store.item(item.id)?.review_count, 1);
+  store.db.close();
+});
+
+for (const end of ["failed", "cancelled"] as const)
+  for (const recorded of ["while running", "on success"] as const)
+    test(`a review ${end === "failed" ? "that fails" : "stopped"} after recording a verdict (${recorded}) keeps its review, and a retry takes no second one`, async () => {
+      const store = new Store(":memory:", { defaultBudgetUsd: 10 });
+      const factory = new Factory(
+        store,
+        loadConfig({ NAKARA_GITHUB_MIRROR: "false" }),
+      );
+      assert.ok((await factory.reloadDefinition()).ok);
+      factory.pump = async () => {};
+      const item = store.createItem({
+        title: "Reviewed",
+        request: "Test",
+        source: "manual",
+      });
+      store.updateItem(item.id, { stage: "reviewing", review_count: 1 });
+      const review = store.createRun({
+        item_id: item.id,
+        role: "agent",
+        agent: "review",
+        agent_type: "REVIEW",
+        harness: "codex",
+        model: null,
+        input: "Review the PR",
+        session_id: null,
+        status: "running",
+        counts_review: 1,
+      });
+      const finish = (
+        status: "succeeded" | typeof end,
+        review_verdict?: "accepted",
+      ) =>
+        store.finishRun(review.id, {
+          status,
+          result: review_verdict ? "Verdict: accepted" : null,
+          error: status === "succeeded" ? null : "Stopped by the operator.",
+          cost_usd: 0,
+          num_turns: null,
+          duration_ms: 1,
+          session_id: "s-review",
+          log_path: null,
+          ...(review_verdict && { review_verdict }),
+        });
+      if (recorded === "on success") finish("succeeded", "accepted");
+      else
+        store.db
+          .prepare("UPDATE runs SET review_verdict = 'accepted' WHERE id = ?")
+          .run(review.id);
+      finish(end);
+      const run = store.runById(review.id);
+      assert.equal(run?.status, end);
+      assert.equal(run?.review_verdict, "accepted", "the verdict is kept");
+      assert.equal(store.item(item.id)?.review_count, 1);
+      const retry = factory.retry(item.id);
+      // Only a failed run can be retried; either way no second review is taken.
+      assert.equal(retry.ok, end === "failed");
+      if (retry.ok) assert.equal(retry.run.counts_review, 0);
+      assert.equal(store.item(item.id)?.review_count, 1);
+      store.db.close();
+    });
+
 test("dispatching an agent deleted during the foreman's turn fails its run with a clear error", async () => {
   const store = new Store(":memory:", { defaultBudgetUsd: 15 });
   const factory = new Factory(

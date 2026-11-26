@@ -533,3 +533,28 @@ test("writeTree refuses a directory that is not empty", async () => {
     "factory.yaml",
   ]);
 });
+
+test("a scaffolded agent whose harness its runner's egress cannot reach gets a warning naming the hosts", async () => {
+  // The Warp default example runs on a docker runner with the default egress:
+  // Anthropic, GitHub and npm, so a codex reviewer cannot reach its model (#21).
+  const { result } = await created(
+    choices({ kind: "warp" }, { agents: { review: { harness: "codex" } } }),
+  );
+  assert.deepEqual(
+    result.warnings
+      .filter((w) => /cannot reach the model/.test(w.message))
+      .map((w) => [w.path, w.message]),
+    [
+      [
+        "agents/review/agent.md",
+        'agent "review" uses codex but runner "linux-standard" egress does not allow chatgpt.com, auth.openai.com, so its runs cannot reach the model; add them under egress.allow, or give the agent a harness the runner reaches',
+      ],
+    ],
+  );
+  // With claude everywhere, the same template has nothing to warn about.
+  const claude = await created(choices({ kind: "warp" }));
+  assert.deepEqual(
+    claude.result.warnings.filter((w) => /cannot reach/.test(w.message)),
+    [],
+  );
+});

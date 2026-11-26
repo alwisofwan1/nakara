@@ -42,6 +42,8 @@ export interface Run {
   review_verdict: ReviewVerdict | null;
   /** JSON {tool: calls} of the external MCP tools the run called; null when none. */
   tools: string | null;
+  /** 1 for a dispatched review run, which used up one of its item's reviews; it gives it back when it ends without a verdict. */
+  counts_review: number;
 }
 
 /** The columns the scheduler reads; not the large input and result. */
@@ -105,11 +107,12 @@ export class RunRepository extends Repository {
       | "input"
       | "session_id"
       | "status"
-    >,
+    > &
+      Partial<Pick<Run, "counts_review">>,
   ): Run {
     const id = this.run(
-      `INSERT INTO runs (item_id, role, agent, agent_type, harness, model, session_id, status, input, started_at, instance_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (item_id, role, agent, agent_type, harness, model, session_id, status, input, started_at, instance_id, counts_review)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.item_id,
       input.role,
       input.agent,
@@ -121,6 +124,7 @@ export class RunRepository extends Repository {
       input.input,
       now(),
       input.status === "running" ? this.instanceId : null,
+      input.counts_review ?? 0,
     );
     // Every run counts toward the item's run limit, however it ends, except
     // a reflect run: Nakara starts it, so it must not use up the item's work.
@@ -192,7 +196,10 @@ export class RunRepository extends Repository {
 
   cancelQueuedRuns(itemId: number): void {
     for (const r of this.runs(itemId))
-      if (r.status === "queued") this.runChanged(r.id);
+      if (r.status === "queued") {
+        this.runChanged(r.id);
+        this.giveBackReview(r, "cancelled");
+      }
     this.run(
       "UPDATE runs SET status = 'cancelled', ended_at = ? WHERE item_id = ? AND status = 'queued'",
       now(),
@@ -216,9 +223,11 @@ export class RunRepository extends Repository {
     > &
       Partial<Pick<Run, "review_verdict">>,
   ): void {
+    const before = this.runById(id);
+    if (before) this.giveBackReview(before, patch.status);
     this.run(
       `UPDATE runs SET status = ?, result = ?, error = ?, cost_usd = ?, num_turns = ?, duration_ms = ?,
-              session_id = COALESCE(?, session_id), log_path = ?, review_verdict = ?, ended_at = ? WHERE id = ?`,
+              session_id = COALESCE(?, session_id), log_path = ?, review_verdict = COALESCE(?, review_verdict), ended_at = ? WHERE id = ?`,
       patch.status,
       patch.result,
       patch.error,
@@ -233,6 +242,24 @@ export class RunRepository extends Repository {
     );
     this.changed();
     this.runChanged(id);
+  }
+
+  /**
+   * Only a review that ran counts toward its item's max_reviews: a counted
+   * review run that ends stopped, cancelled or failed without a recorded
+   * verdict gives its review back. One with a verdict ran, whatever it ends
+   * as (finishRun keeps the verdict). An interrupted one does not: the run
+   * that resumes it carries the count on. Call before the run's status changes.
+   */
+  private giveBackReview(run: Run, status: RunStatus): void {
+    if (
+      !run.counts_review ||
+      run.review_verdict !== null ||
+      (run.status !== "queued" && run.status !== "running") ||
+      (status !== "failed" && status !== "cancelled")
+    )
+      return;
+    this.workItems.giveBackReview(run.item_id);
   }
 
   runById(id: number): Run | undefined {
@@ -359,6 +386,7 @@ export class RunRepository extends Repository {
             session_id: session,
             status: "queued",
             input: RESUME_INPUT,
+            counts_review: run.counts_review,
           })
         : undefined;
     const recorded = resume

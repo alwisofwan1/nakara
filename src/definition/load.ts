@@ -15,7 +15,7 @@ import type { z } from "zod";
 import type { AgentType } from "../domain/policy.ts";
 import { parseCron } from "../intake/schedule.ts";
 import { allowedHost } from "../runner/egress-proxy.ts";
-import { sandboxOf } from "./reach.ts";
+import { harnessUnreachable, sandboxOf } from "./reach.ts";
 import {
   agentFrontmatterSchema,
   automationFrontmatterSchema,
@@ -582,6 +582,13 @@ export async function loadDefinition(
             ),
           );
     }
+    const unreachable = harnessUnreachable(
+      name,
+      resolved.harness.kind,
+      runner,
+      sandbox,
+    );
+    if (unreachable) warnings.push(problem(path, unreachable, harnessLine));
     if (resolved.harness.kind === "codex" && fm.agentType === "FOREMAN")
       errors.push(
         problem(

@@ -28,7 +28,7 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   The MCP tool refuses a violation immediately, and the orchestrator checks the
   action again before applying it:
   - implementation waits for an approved spec (approval only via the inbox),
-  - review runs at most once, and only after a PR is recorded,
+  - review runs at most once (the factory's review limit), and only after a PR is recorded; only a review that ran counts: a review run that is stopped, cancelled or fails without a verdict gives its review back, and the foreman is told it can dispatch the review again,
   - review fixes go to the same implementation agent through `follow_up`, with a revision cap,
   - a budget cap per work item (set in New work; default from the factory's Settings, else `NAKARA_BUDGET_USD`) that includes failed runs; a claude run stopped before its final result is charged an estimate from the token usage it streamed,
   - a run limit per work item (default from the factory's Settings, else `NAKARA_MAX_RUNS`) that counts foreman turns and agent runs, failed and interrupted ones included, so items on harnesses without a per-token bill (codex, qwen) also stop; the item pauses until the operator presses Raise run limit,
@@ -681,7 +681,27 @@ the agent's runner:
   Entries are host names or `*.domain.tld` for subdomains; `*`, `*.com`,
   schemes, ports and paths are rejected. Without `egress`, the allowlist is the
   Anthropic API, GitHub and the npm registry. Add your model gateway for codex
-  or qwen, and any other package registry your setup commands use. A changed
+  or qwen, and any other package registry your setup commands use.
+  Each harness needs its model's hosts in the egress of every runner it runs on:
+
+  | Harness | Hosts in `egress.allow` |
+  | --- | --- |
+  | `claude` | `api.anthropic.com` (and `statsig.anthropic.com` for its telemetry, in the default list) |
+  | `codex` | `chatgpt.com` (the model, with the ChatGPT login Nakara uses) and `auth.openai.com` (refreshes that login) |
+  | `qwen` | the host of the gateway your `NAKARA_QWEN_BIN` wrapper sets in `ANTHROPIC_BASE_URL` |
+
+  An agent whose runner's egress lacks its harness's hosts is a definition
+  warning, on the Definition page, in the New factory wizard's preview and in
+  `/healthz` ("agent "review" uses codex but runner "linux-standard" egress does
+  not allow chatgpt.com, auth.openai.com ..."). The scaffolder copies a
+  template's runners and harnesses as they are, so a template whose agents use
+  codex on a runner with the default egress shows this warning until you add
+  the hosts or pick claude for those agents (qwen's gateway is not known to
+  Nakara, so it is not checked). A run whose harness still gets its model host
+  refused by the egress proxy fails fast: after three refusals of that host, or
+  a minute after one that the model never answers past, the run fails with an
+  error naming the host and the runner's egress list, instead of retrying until
+  the idle timeout. A changed
   allowlist or image gets a new network and proxy; the old ones stay. Remove
   them while no agent runs with
   `docker rm -f $(docker ps -aq --filter label=nakara.egress)` and

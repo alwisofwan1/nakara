@@ -4,7 +4,13 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadDefinition, resolveHarness, splitFrontmatter } from "./load.ts";
+import {
+  HARNESS_FALLBACK,
+  loadDefinition,
+  resolveHarness,
+  splitFrontmatter,
+} from "./load.ts";
+import { harnessReachWarnings } from "./reach.ts";
 
 const defaults = { kind: "claude" as const, model: undefined };
 
@@ -292,7 +298,7 @@ test("each foreman MCP server lists its tools; write-looking ones and agent list
   const root = await tree({
     "factory.yaml": FACTORY,
     "runners/std.yaml":
-      "platform: { os: linux, linux: { dockerImage: ubuntu:24.04 } }\negress: { allow: [mcp.linear.test, sentry.test] }\n",
+      "platform: { os: linux, linux: { dockerImage: ubuntu:24.04 } }\negress: { allow: [api.anthropic.com, mcp.linear.test, sentry.test] }\n",
     "agents/boss/agent.md": `---
 agentType: FOREMAN
 mcpServers:
@@ -430,4 +436,30 @@ Do it.`;
       ["automations/none/automation.md", true],
     ],
   );
+});
+
+test("an agent whose harness cannot reach its model through its runner's egress is a warning, also in /healthz", async () => {
+  const root = await tree({
+    "factory.yaml": FACTORY,
+    "runners/std.yaml":
+      "platform: { os: linux, linux: { dockerImage: ubuntu:24.04 } }\negress: { allow: [api.anthropic.com, github.com] }\n",
+    "runners/local.yaml": "platform: { os: linux }\n",
+    "agents/boss/agent.md": "---\nagentType: FOREMAN\n---\n# Boss\n",
+    "agents/review/agent.md":
+      "---\nagentType: REVIEW\nharness: { type: codex }\n---\n# Review\n",
+    // On the host nothing limits what it reaches.
+    "agents/local/agent.md":
+      "---\nagentType: CUSTOM\nrunner: local\nharness: { type: codex }\n---\n# Local\n",
+  });
+  const result = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(result.ok);
+  const message =
+    'agent "review" uses codex but runner "std" egress does not allow chatgpt.com, auth.openai.com, so its runs cannot reach the model; add them under egress.allow, or give the agent a harness the runner reaches';
+  assert.deepEqual(
+    result.warnings
+      .filter((w) => /cannot reach the model/.test(w.message))
+      .map((w) => [w.path, w.message, w.line]),
+    [["agents/review/agent.md", message, 3]],
+  );
+  assert.deepEqual(harnessReachWarnings(result.definition), [`T: ${message}`]);
 });

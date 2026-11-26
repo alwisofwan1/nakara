@@ -20,6 +20,7 @@ import { requestEdited } from "./migrations/012-request-edited.ts";
 import { learnings } from "./migrations/013-learnings.ts";
 import { lessonRecurrences } from "./migrations/014-lesson-recurrences.ts";
 import { factorySettings } from "./migrations/015-factory-settings.ts";
+import { countedReviews } from "./migrations/016-counted-reviews.ts";
 
 export interface MigrationContext {
   /** The budget of items that predate per-item budgets. */
@@ -63,6 +64,7 @@ export const MIGRATIONS: readonly Migration[] = [
   learnings,
   lessonRecurrences,
   factorySettings,
+  countedReviews,
 ];
 
 export const schemaVersion = (db: DatabaseSync): number =>

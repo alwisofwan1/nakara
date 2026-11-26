@@ -181,7 +181,7 @@ A line in the conversation of a **Work Item**, written by the factory or a human
 - A **Work Item** belongs to exactly one **Factory** and has many **Events**, **Runs**, **Messages** and **Approvals**
 - An **Event** is handled by exactly one **Foreman Turn**; a **Foreman Turn** may dispatch **Agent Runs**
 - An **Agent Run**'s report is an **Event** that wakes the next **Foreman Turn**
-- A **Work Item** gets at most one **Review** and a capped number of **Revisions**
+- A **Work Item** gets a capped number of **Reviews** (one by default) and **Revisions**; a review run that is stopped or fails before stating a **Review Verdict** is not a **Review** and does not count
 - A **Work Item** with a **Pull Request** reaches complete only after a human merges it; one without a **Pull Request** completes with a summary
 
 ## Example dialogue
