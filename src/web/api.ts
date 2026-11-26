@@ -9,7 +9,7 @@ import type { ChangeEvent } from "../db.ts";
 import type { LoadResult, Problem } from "../definition/load.ts";
 import type { Factory } from "../orchestrator/factory.ts";
 import type { FactoryRegistry } from "../orchestrator/registry.ts";
-import { isGitTracked } from "../definition/write.ts";
+import { isGitTracked, readFactoryFile } from "../definition/write.ts";
 import { ModelCatalog } from "../harness/models.ts";
 import {
   agentDeleteInput,
@@ -59,6 +59,7 @@ import {
   pullRequestDto,
 } from "./pull-request.ts";
 import {
+  factoryFileInput,
   limitsInput,
   moveInput,
   pauseState,
@@ -238,6 +239,7 @@ const newAutomationBody = jsonBody(newAutomationInput, "Invalid automation");
 const automationDeleteBody = jsonBody(automationDeleteInput, "Invalid request");
 const creationBody = jsonBody(creationInput, "Invalid factory");
 const renameBody = jsonBody(renameInput, "Invalid factory settings");
+const factoryFileBody = jsonBody(factoryFileInput, "Invalid factory settings");
 const moveBody = jsonBody(moveInput, "Invalid folder");
 const limitsBody = jsonBody(limitsInput, "Invalid limits");
 const creationParam = validator("param", (value, c) => {
@@ -656,6 +658,7 @@ function createFactoryApi(
                 ? settings.archiveDir(factory.record.slug)
                 : null,
             backupDir: registry.config.backup.dir,
+            factoryFile: await readFactoryFile(factory.config.definitionDir),
           },
         );
         if (!dto)
@@ -667,6 +670,36 @@ function createFactoryApi(
         const result = settings.rename(c.var.factory, c.req.valid("json"));
         if (!result.ok) return c.json(apiError("policy", result.message), 409);
         return c.json({ slug: c.req.param("slug") ?? "" }, 200);
+      })
+      // Writes factory.yaml only when the edited tree loads and the form is not
+      // stale, then reloads; an empty description removes the key.
+      .put("/settings/definition", factoryFileBody, async (c) => {
+        const { revision, description } = c.req.valid("json");
+        const result = await c.var.factory.saveFactory(
+          { description },
+          revision,
+        );
+        if (!result.ok && result.code === "conflict")
+          return c.json(apiError("conflict", result.message), 409);
+        if (!result.ok)
+          return c.json(
+            refusedWrite(
+              "invalid_definition",
+              "The edit would make the definition invalid; nothing was saved",
+              result.errors,
+            ),
+            422,
+          );
+        // Nothing changed: the running definition stands as it is.
+        const check: CheckResultDto = result.reload
+          ? checkResultDto(result.reload)
+          : {
+              ok: true,
+              errors: [],
+              warnings:
+                c.var.factory.definitionProblems.warnings.map(problemDto),
+            };
+        return c.json({ ...check, revision: result.revision ?? revision }, 200);
       })
       // Budget, review, revision and run limits for the factory's new Work
       // Items; items already created keep the limits they copied (ADR-0006).
@@ -781,6 +814,9 @@ export function createApi(
   }),
 ) {
   const store = registry.store;
+  /** The description in a factory's applied factory.yaml. */
+  const descriptionOf = (slug: string) =>
+    registry.get(slug)?.definition?.factory.description ?? null;
   /** The orchestrator of the item's factory. */
   const orchestrator = (itemId: number) =>
     registry.forItem(itemId) ?? registry.default;
@@ -860,7 +896,7 @@ export function createApi(
           ),
         ),
     )
-    .get("/factories", (c) => c.json(readFactories(store.repos)))
+    .get("/factories", (c) => c.json(readFactories(store.repos, descriptionOf)))
     // The models the harness CLI offers, asked again at most once an hour.
     .get("/models/:harness", async (c) => {
       const harness = c.req.param("harness");
