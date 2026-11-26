@@ -128,6 +128,7 @@ function Wizard() {
       {step === 2 && owner && (
         <Repositories
           owner={owner}
+          slug={nameOk ? nameCheck.data?.slug : undefined}
           repos={repos}
           onRepos={(next) => update({ repos: next.length ? next : undefined })}
         >
@@ -375,7 +376,9 @@ function AgentToken({ token }: { token: AgentTokenDto }) {
       <p className="text-small">
         {token.state === "set"
           ? "Agents push and open PRs with this token, not your gh login. It must include every repository you pick in the next step (Contents, Pull requests, Issues: read/write)."
-          : "Not set: agents running outside Docker push and open PRs with your gh login, so the repositories you pick in the next step are checked with it. To limit them, set a fine-grained token for those repositories (Contents, Pull requests, Issues: read/write) in Nakara's environment and restart Nakara."}
+          : "Not set: agents running outside Docker push and open PRs with your gh login, so the repositories you pick in the next step are checked with it. To limit them, set a fine-grained token for those repositories (Contents, Pull requests, Issues: read/write) in Nakara's environment and restart Nakara."}{" "}
+        A factory whose repositories live under another owner can have its own
+        token, <code>NAKARA_AGENT_GH_TOKEN__&lt;SLUG&gt;</code>, used instead.
         {token.state === "set" &&
           !token.fineGrained &&
           " A classic token reaches every repository you can; prefer a fine-grained one."}
@@ -386,20 +389,22 @@ function AgentToken({ token }: { token: AgentTokenDto }) {
 
 function Repositories({
   owner,
+  slug,
   repos,
   onRepos,
   children,
 }: {
   owner: string;
+  /** The new factory's slug, once its name is free: its own token is checked. */
+  slug: string | undefined;
   repos: string[];
   onRepos: (repos: string[]) => void;
   children: ReactNode;
 }) {
   const [filter, setFilter] = useState("");
-  const tokenSet = useQuery(wizardGithubQuery).data?.agentToken.state === "set";
   const list = useQuery(wizardReposQuery(owner));
   const access = useQuery({
-    ...wizardAccessQuery(repos),
+    ...wizardAccessQuery(repos, slug),
     enabled: repos.length > 0,
     placeholderData: keepPreviousData,
   });
@@ -469,8 +474,8 @@ function Repositories({
               ))}
             </ul>
             <p>
-              {tokenSet
-                ? "Give the agent token access (Contents, Pull requests, Issues: read/write) before the first run, or their runs fail."
+              {access.data?.token.variable
+                ? `Give ${access.data.token.variable} access (Contents, Pull requests, Issues: read/write) before the first run, or their runs fail. A fine-grained token has one resource owner: for repositories under another owner, give this factory its own token.`
                 : "Agents running outside Docker push with your gh login; it needs push access to these repositories before the first run."}
             </p>
           </div>

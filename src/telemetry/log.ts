@@ -16,10 +16,11 @@ export const LEVELS = Object.keys(RANK) as [Level, ...Level[]];
 const REDACTED = "[redacted]";
 /**
  * Fields holding a credential: their value is never written. Anchored, so
- * counts such as input_tokens stay visible.
+ * counts such as input_tokens stay visible; a factory's own agent token
+ * (NAKARA_AGENT_GH_TOKEN__<SLUG>) has the slug after the word.
  */
 const SECRET_KEY =
-  /(^|_)(token|secret|password|passwd|api_?key)$|authorization|cookie/i;
+  /(^|_)(token|secret|password|passwd|api_?key)$|_token__|authorization|cookie/i;
 /** Fields holding a prompt or another agent input: logged by size only. */
 const PROMPT_KEY = /^(prompt|input|brief|system_?prompt|instructions)$/i;
 /** Credentials recognised by their shape, wherever they appear in a string. */

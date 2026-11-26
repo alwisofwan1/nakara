@@ -69,6 +69,7 @@ import {
 import { slugify } from "../definition/seed.ts";
 import { FactoryCreation } from "../orchestrator/creation.ts";
 import { mergePullRequest } from "../orchestrator/operator-merge.ts";
+import { agentTokenOf } from "../runner/agent-token.ts";
 import {
   ensureBareClone,
   internalFile,
@@ -519,6 +520,7 @@ function createFactoryApi(
             problems: c.var.factory.definitionProblems,
             pendingReach: c.var.factory.pendingReach(),
             files: await definitionFiles(c.var.factory.config.definitionDir),
+            slug: c.var.factory.record?.slug,
           }),
         ),
       )
@@ -750,9 +752,14 @@ export function createApi(
         c.json(
           await verifyGithubToken(
             c.req.valid("json").token,
+            // The shared agent token serves only the factories without their own.
             repositoriesOf(
               registry.factories.flatMap((f) =>
-                f.definition ? [f.definition] : [],
+                f.definition &&
+                (c.req.valid("json").token === "foreman" ||
+                  agentTokenOf(f.record?.slug).source === "shared")
+                  ? [f.definition]
+                  : [],
               ),
             ),
           ),
@@ -838,9 +845,10 @@ export function createApi(
         );
       return c.json({ owner, repos }, 200);
     })
-    .get("/wizard/access", queryOf(accessQuery), async (c) =>
-      c.json({ repos: await repoAccess(wizard, c.req.valid("query").repos) }),
-    )
+    .get("/wizard/access", queryOf(accessQuery), async (c) => {
+      const { repos, slug } = c.req.valid("query");
+      return c.json(await repoAccess(wizard, repos, slug));
+    })
     .get("/wizard/name", queryOf(nameQuery), (c) =>
       c.json(readFactoryName(store.repos.factories, c.req.valid("query").name)),
     )

@@ -117,3 +117,19 @@ test("token counts are not mistaken for credentials", () => {
   assert.equal(line.api_key, "[redacted]");
   assert.equal(line.NAKARA_AGENT_GH_TOKEN, "[redacted]");
 });
+
+test("a factory's own agent token never reaches the log, by name or by value", () => {
+  const env = {
+    NAKARA_AGENT_GH_TOKEN__CLIENT_APP: "plain-client-secret-0123",
+  };
+  assert.deepEqual(envSecrets(env), [env.NAKARA_AGENT_GH_TOKEN__CLIENT_APP]);
+  const { log, lines, parsed } = capture(envSecrets(env));
+  log.info("config", { NAKARA_AGENT_GH_TOKEN__CLIENT_APP: "short" });
+  // A value without a token's shape is caught because the logger knows it.
+  log.error("gh.failed", {
+    error: "push rejected for plain-client-secret-0123",
+  });
+  const [named] = parsed();
+  assert.equal(named.NAKARA_AGENT_GH_TOKEN__CLIENT_APP, "[redacted]");
+  assert.ok(!lines.join("\n").includes("client-secret"));
+});

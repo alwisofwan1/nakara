@@ -13,6 +13,7 @@ const SOURCE = {
   LC_ALL: "C.UTF-8",
   NAKARA_TELEGRAM_BOT_TOKEN: "telegram",
   NAKARA_AGENT_GH_TOKEN: "gh",
+  NAKARA_AGENT_GH_TOKEN__CLIENT_APP: "gh-client",
   GH_TOKEN: "gh",
   AWS_SECRET_ACCESS_KEY: "aws",
   CLAUDE_CODE_OAUTH_TOKEN: "claude",

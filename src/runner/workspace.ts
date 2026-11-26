@@ -54,14 +54,17 @@ export interface Workspace {
   }[];
 }
 
+/** `env` is added to Nakara's environment, e.g. a GH_TOKEN; it never reaches argv. */
 export async function run(
   cmd: string,
   args: string[],
   cwd?: string,
   timeoutMs = 600_000,
+  env?: Record<string, string>,
 ): Promise<string> {
   const { stdout } = await exec(cmd, args, {
     cwd,
+    ...(env && { env: { ...process.env, ...env } }),
     timeout: timeoutMs,
     maxBuffer: 16 * 1024 * 1024,
   });

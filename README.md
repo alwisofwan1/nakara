@@ -53,7 +53,9 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   definition does not load shows its errors on its Definition page and in a
   banner; its own work waits, and the other factories keep running.
   `/healthz` reports `definition: true` only when every factory has a valid
-  definition, and each factory's state under `factories`. GitHub intake polls
+  definition, and each factory's state under `factories`: `definition` and
+  `agentToken`, the source of its agent token (`own`, `shared`, `personal` or
+  `none`, see [Security](#security)). GitHub intake polls
   each factory's repositories for its own `factory:<alias>` label (unless an
   automation's trigger filters on other labels) and creates the work in that
   factory. Only a labeler with write, maintain or admin access to the
@@ -254,10 +256,11 @@ existing shell; the default Tailwind palette and dimension scales are reset.
 | `NAKARA_SLACK_ENABLED` | `true` | Kill switch for the [Slack](#slack) bridge; its tokens live in the secret store |
 | `NAKARA_BACKUP_DIR` | `$NAKARA_DATA_DIR/backups` | Database snapshots, see [Backup and restore](#backup-and-restore) |
 | `NAKARA_BACKUP_INTERVAL_HOURS` / `NAKARA_BACKUP_KEEP` | `24` / `14` | Snapshot interval and number of scheduled snapshots kept |
-| `NAKARA_AGENT_GH_TOKEN` | — | GitHub token for agent containers; required by the docker runner, see [Security](#security) |
-| `NAKARA_FOREMAN_GH_TOKEN` | — | Read-only GitHub token for the foreman's container; unset, it uses `NAKARA_AGENT_GH_TOKEN` (warned in the UI and `/healthz`), see [Security](#security) |
+| `NAKARA_AGENT_GH_TOKEN` | — | GitHub token for agent containers of every factory without its own; required by the docker runner unless each factory has one, see [Security](#security) |
+| `NAKARA_AGENT_GH_TOKEN__<SLUG>` | — | One factory's own agent token, used instead of `NAKARA_AGENT_GH_TOKEN`. `<SLUG>` is the factory slug upper-cased with `-` as `_` (`client-app` → `NAKARA_AGENT_GH_TOKEN__CLIENT_APP`), see [Security](#security) |
+| `NAKARA_FOREMAN_GH_TOKEN` | — | Read-only GitHub token for the foreman's container; unset, it uses its factory's agent token (warned in the UI and `/healthz`), see [Security](#security) |
 | `NAKARA_ALLOW_HOST_FOREMAN` | unset | `1` lets a foreman whose runner has no sandbox run on the host, unsandboxed (warned in the UI and `/healthz`); otherwise its turn pauses the item |
-| `NAKARA_ALLOW_PERSONAL_GH_TOKEN` | unset | `1` gives agent containers your own `gh auth token` when `NAKARA_AGENT_GH_TOKEN` is unset (warned in the UI) |
+| `NAKARA_ALLOW_PERSONAL_GH_TOKEN` | unset | `1` gives agent containers your own `gh auth token` when neither the factory's own token nor `NAKARA_AGENT_GH_TOKEN` is set (warned in the UI) |
 | `NAKARA_SECRETS_FILE` | `$NAKARA_DATA_DIR/secrets.env` | Agent secrets as `NAME=value` lines, mode 600, see [Security](#security) |
 | `NAKARA_LOG_LEVEL` | `info` | Least severe level of the JSON log, see [Monitoring](#monitoring) |
 
@@ -658,13 +661,36 @@ the agent's runner:
   Nakara never deletes (it logs a warning at each start). Delete it yourself
   once nothing there is needed. Build the image once:
   `docker build -t nakara-agent -f deploy/agent.Dockerfile deploy`.
-  The container gets `GH_TOKEN` from `NAKARA_AGENT_GH_TOKEN`; without it
-  docker agent runs fail. Make it a fine-grained token with access to the
-  factory repositories only and these repository permissions: Contents,
-  Pull requests and Issues read/write (Metadata read is implied). Do not grant
-  Administration or Workflows. To hand agents your own `gh auth token` instead,
-  which reaches every repo you can, set `NAKARA_ALLOW_PERSONAL_GH_TOKEN=1`;
-  the definition page and `/healthz` then warn. The container also gets your git
+  The container gets `GH_TOKEN` from its factory's own token,
+  `NAKARA_AGENT_GH_TOKEN__<SLUG>`, when set, else from the shared
+  `NAKARA_AGENT_GH_TOKEN`; without either, docker agent runs fail. Make it a
+  fine-grained token with access to the factory repositories only and these
+  repository permissions: Contents, Pull requests and Issues read/write
+  (Metadata read is implied). Do not grant Administration or Workflows.
+  A fine-grained token has exactly one resource owner (your account or one
+  organization), so one token cannot cover factories whose repositories live
+  under different owners: give each such factory its own token, named after its
+  slug upper-cased with every character other than a letter or digit as `_`
+  (factory `client-app` → `NAKARA_AGENT_GH_TOKEN__CLIENT_APP`). Slugs are
+  lower-case letters, digits and `-`, so two factories never share a
+  variable. An organization appears as a resource owner only once it allows
+  fine-grained personal access tokens (organization settings, Personal access
+  tokens). Keep these tokens in `~/.config/nakara/env` (mode 600) like the
+  shared one; they never go in the definition or the database, and the UI,
+  the API, `/healthz` and the log show only which source a factory uses
+  (own, shared, personal), never a value. The Setup page, the definition
+  page and `/healthz` name each factory's source and, after each repository
+  check (every 10 minutes), warn when that token cannot push to one of the
+  factory's repositories. The New factory wizard checks the repositories with
+  the token the factory will get. Nakara marks a factory's pull requests ready
+  and mirrors its updates on issues with the same token (with neither an own
+  nor a shared token, with your gh login); it reads checks and PR state with
+  your gh login, since the agent token has no Checks or Commit statuses
+  permission. To hand agents your own `gh auth token`
+  instead, which reaches every repo you can, set
+  `NAKARA_ALLOW_PERSONAL_GH_TOKEN=1`; it applies to factories with neither
+  their own nor the shared token, and the definition page and `/healthz` then
+  warn. The container also gets your git
   identity, and for the claude harness `CLAUDE_CODE_OAUTH_TOKEN` from Nakara's
   environment (create it with `claude setup-token`; put it in
   `~/.config/nakara/env`, mode 600). The foreman's container gets
@@ -672,8 +698,8 @@ the agent's runner:
   make it a fine-grained token on the factory repositories with read-only
   Contents, Pull requests, Issues, Checks and Commit statuses (what its `gh issue
   view/list` and `gh pr view/diff/checks/list` need), so an injected foreman
-  cannot change anything on GitHub. Unset, the foreman uses the agent token
-  and the definition page and `/healthz` warn.
+  cannot change anything on GitHub. Unset, the foreman uses its factory's
+  agent token and the definition page and `/healthz` warn.
   Network: containers run on an internal Docker network with no route out.
   Their only exit is a proxy container (`nakara-egress-*-proxy`, started from
   the runner image with `node`) that forwards to the hosts in the runner's

@@ -6,6 +6,12 @@ import type { Config } from "../config.ts";
 import type { Store } from "../db.ts";
 import type { Definition } from "../definition/load.ts";
 import { sandboxOf } from "../definition/reach.ts";
+import {
+  agentTokenLabel,
+  agentTokenOf,
+  agentTokenWarnings,
+  factoryTokenVariable,
+} from "../runner/agent-token.ts";
 import { dockerSupportsEgress } from "../runner/docker.ts";
 import { run } from "../runner/workspace.ts";
 
@@ -183,8 +189,24 @@ export async function readSetup(
   }
 
   // Presence only: the value never leaves the process.
+  const dockerFactories = input.factories.filter((f) =>
+    [...(f.definition?.runners.values() ?? [])].some(
+      (r) => r.platform?.linux?.dockerImage,
+    ),
+  );
+  const allOwn =
+    dockerFactories.length > 0 &&
+    dockerFactories.every((f) => agentTokenOf(f.slug, env).source === "own");
   if (usesDocker) {
-    if (env.NAKARA_AGENT_GH_TOKEN)
+    if (allOwn && !env.NAKARA_AGENT_GH_TOKEN)
+      add(
+        "Credentials",
+        "agent-token",
+        "Agent GitHub token",
+        "ok",
+        "Every factory that runs agents in containers has its own agent token.",
+      );
+    else if (env.NAKARA_AGENT_GH_TOKEN)
       add(
         "Credentials",
         "agent-token",
@@ -209,8 +231,8 @@ export async function readSetup(
         "agent-token",
         "Agent GitHub token",
         "fail",
-        "NAKARA_AGENT_GH_TOKEN is not set, so docker agent runs fail.",
-        `Create a fine-grained token with Contents, Pull requests and Issues read/write on the factory repositories. ${ENV_FILE}`,
+        "NAKARA_AGENT_GH_TOKEN is not set, so docker agent runs of factories without their own token fail.",
+        `Create a fine-grained token with Contents, Pull requests and Issues read/write on the factory repositories, as NAKARA_AGENT_GH_TOKEN or a factory's own NAKARA_AGENT_GH_TOKEN__<SLUG>. ${ENV_FILE}`,
       );
     add(
       "Credentials",
@@ -285,6 +307,31 @@ export async function readSetup(
         : "Its runner has no dockerImage: its turns pause the item unless NAKARA_ALLOW_HOST_FOREMAN=1.",
       box ? null : "Give the foreman's runner a dockerImage.",
     );
+    if (dockerFactories.includes(f)) {
+      const token = agentTokenOf(f.slug, env);
+      const problems = agentTokenWarnings(input.store, f.slug, env);
+      const own = factoryTokenVariable(f.slug);
+      add(
+        "Factories",
+        `agent-token:${f.slug}`,
+        `Agent token of ${f.slug}`,
+        token.source === "none"
+          ? "fail"
+          : token.source === "personal" || problems.length
+            ? "warn"
+            : "ok",
+        token.source === "none"
+          ? "No agent token: its docker agent runs fail."
+          : [`Agents use the ${agentTokenLabel(token)}.`, ...problems].join(
+              " ",
+            ),
+        token.source === "none" || token.source === "personal"
+          ? `Set ${own} (this factory only) or NAKARA_AGENT_GH_TOKEN. ${ENV_FILE}`
+          : problems.length
+            ? `Give ${token.variable} Contents, Pull requests and Issues read/write on these repositories. A fine-grained token has one resource owner${token.source === "own" ? ", so they must all be under that owner." : `: for repositories under another owner, give this factory its own token, ${own}.`}`
+            : null,
+      );
+    }
   }
 
   const { poll } = input;

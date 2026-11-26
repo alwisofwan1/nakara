@@ -10,6 +10,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { agentTokenOf, factoryTokenVariable } from "./agent-token.ts";
 import { EGRESS_PORT } from "./egress-proxy.ts";
 import type { Logger } from "../telemetry/log.ts";
 import { run } from "./workspace.ts";
@@ -353,26 +354,28 @@ export async function removeContainer(name: string): Promise<void> {
 }
 
 /**
- * Credentials a container needs: GitHub for clone/push/PRs, git identity, and
- * Claude auth. The foreman reads GitHub with its own read-only token when one
- * is set, and then holds no other.
+ * Credentials a container of the factory `slug` needs: GitHub for
+ * clone/push/PRs, git identity, and Claude auth. The foreman reads GitHub with
+ * its own read-only token when one is set, and then holds no other.
  */
 export async function agentCredentials(
   harness: string,
   role: "agent" | "foreman" = "agent",
+  slug?: string,
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
-  // A fine-grained token scoped to the factory repos. The operator's own gh
-  // token reaches every repo they can, so using it is an explicit opt-in.
+  // A fine-grained token scoped to the factory repos: the factory's own, else
+  // the shared one. The operator's own gh token reaches every repo they can,
+  // so using it is an explicit opt-in.
+  const token = agentTokenOf(slug);
   if (role === "foreman" && process.env.NAKARA_FOREMAN_GH_TOKEN)
     env.GH_TOKEN = process.env.NAKARA_FOREMAN_GH_TOKEN;
-  else if (process.env.NAKARA_AGENT_GH_TOKEN)
-    env.GH_TOKEN = process.env.NAKARA_AGENT_GH_TOKEN;
-  else if (personalTokenAllowed())
+  else if (token.variable) env.GH_TOKEN = process.env[token.variable] as string;
+  else if (token.source === "personal")
     env.GH_TOKEN = await run("gh", ["auth", "token"]);
   else
     throw new Error(
-      "The Docker runner needs NAKARA_AGENT_GH_TOKEN in Nakara's environment: a fine-grained token limited to the factory repositories with Contents, Pull requests and Issues read/write. To give agents your own `gh auth token` instead, set NAKARA_ALLOW_PERSONAL_GH_TOKEN=1.",
+      `The Docker runner needs ${slug ? `${factoryTokenVariable(slug)} or ` : ""}NAKARA_AGENT_GH_TOKEN in Nakara's environment: a fine-grained token limited to the factory repositories with Contents, Pull requests and Issues read/write. To give agents your own \`gh auth token\` instead, set NAKARA_ALLOW_PERSONAL_GH_TOKEN=1.`,
     );
   const name = await run("git", ["config", "--global", "user.name"]).catch(
     () => "",
@@ -400,14 +403,10 @@ export async function agentCredentials(
   return env;
 }
 
-const personalTokenAllowed = () =>
-  !process.env.NAKARA_AGENT_GH_TOKEN &&
-  process.env.NAKARA_ALLOW_PERSONAL_GH_TOKEN === "1";
-
-/** Shown in the UI and /healthz while agents run with the operator's own token. */
-export function credentialWarning(): string | null {
-  return personalTokenAllowed()
-    ? "Agent containers get your personal gh token (NAKARA_ALLOW_PERSONAL_GH_TOKEN=1), which reaches every repository you can. Set NAKARA_AGENT_GH_TOKEN to a fine-grained token limited to the factory repositories."
+/** Shown in the UI and /healthz while the factory's agents run with the operator's own token. */
+export function credentialWarning(slug?: string): string | null {
+  return agentTokenOf(slug).source === "personal"
+    ? `Agent containers get your personal gh token (NAKARA_ALLOW_PERSONAL_GH_TOKEN=1), which reaches every repository you can. Set ${slug ? `${factoryTokenVariable(slug)} or ` : ""}NAKARA_AGENT_GH_TOKEN to a fine-grained token limited to the factory repositories.`
     : null;
 }
 

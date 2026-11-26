@@ -148,6 +148,73 @@ test("the foreman uses its read-only token and no other; unset, it falls back to
   );
 });
 
+test("two factories with their own tokens: each container gets its factory's token", async () => {
+  await withEnv(
+    {
+      NAKARA_AGENT_GH_TOKEN: "shared-token",
+      NAKARA_AGENT_GH_TOKEN__ACME: "acme-token",
+      NAKARA_AGENT_GH_TOKEN__CLIENT_APP: "client-token",
+      NAKARA_FOREMAN_GH_TOKEN: undefined,
+      NAKARA_ALLOW_PERSONAL_GH_TOKEN: undefined,
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth",
+    },
+    async () => {
+      const acme = await agentCredentials("claude", "agent", "acme");
+      const client = await agentCredentials("claude", "agent", "client-app");
+      assert.equal(acme.GH_TOKEN, "acme-token");
+      assert.equal(client.GH_TOKEN, "client-token");
+      assert.ok(!Object.values(acme).includes("client-token"));
+      assert.ok(!Object.values(client).includes("acme-token"));
+      // A factory without its own falls back to the shared token.
+      assert.equal(
+        (await agentCredentials("claude", "agent", "other")).GH_TOKEN,
+        "shared-token",
+      );
+      // Without a read-only token, the foreman reads with its factory's token.
+      assert.equal(
+        (await agentCredentials("claude", "foreman", "client-app")).GH_TOKEN,
+        "client-token",
+      );
+      assert.equal(credentialWarning("other"), null);
+    },
+  );
+});
+
+test("a factory without any token fails closed naming its own variable; the personal opt-in is flagged per factory", async () => {
+  await withEnv(
+    {
+      NAKARA_AGENT_GH_TOKEN: undefined,
+      NAKARA_AGENT_GH_TOKEN__ACME: "acme-token",
+      NAKARA_ALLOW_PERSONAL_GH_TOKEN: undefined,
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth",
+    },
+    async () => {
+      await assert.rejects(
+        agentCredentials("claude", "agent", "client-app"),
+        /needs NAKARA_AGENT_GH_TOKEN__CLIENT_APP or NAKARA_AGENT_GH_TOKEN/,
+      );
+      assert.equal(
+        (await agentCredentials("claude", "agent", "acme")).GH_TOKEN,
+        "acme-token",
+      );
+    },
+  );
+  await withEnv(
+    {
+      NAKARA_AGENT_GH_TOKEN: undefined,
+      NAKARA_AGENT_GH_TOKEN__ACME: "acme-token",
+      NAKARA_ALLOW_PERSONAL_GH_TOKEN: "1",
+    },
+    () => {
+      assert.equal(credentialWarning("acme"), null);
+      assert.match(
+        credentialWarning("client-app") ?? "",
+        /personal gh token.*NAKARA_AGENT_GH_TOKEN__CLIENT_APP/,
+      );
+    },
+  );
+});
+
 /** A scripted `docker` CLI: state lives in files under `dir`, calls go to `dir/log`. */
 async function fakeDocker(dir: string) {
   const bin = join(dir, "docker");
