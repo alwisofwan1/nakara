@@ -83,6 +83,42 @@ test("factory settings: rename, managed history, delete refused, move and delete
     /Create agent surveyor/,
     /Initial definition/,
   ]);
+
+  // Two description saves in a row: the second one uses the revision the
+  // first wrote, even while the settings are still refetching.
+  await page.route("**/api/f/quarry/settings", async (route) => {
+    if (route.request().method() === "GET")
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.fallback();
+  });
+  const description = page.getByRole("textbox", { name: "Description" });
+  const saveDescription = async (text: string) => {
+    const response = page.waitForResponse(
+      (r) =>
+        r.request().method() === "PUT" &&
+        r.url().endsWith("/api/f/quarry/settings/definition"),
+    );
+    await description.fill(text);
+    await description.press("Enter");
+    return (await response).status();
+  };
+  expect(await saveDescription("Quarry digs gravel.")).toBe(200);
+  expect(await saveDescription("Quarry digs gravel and sand.")).toBe(200);
+  await expect(
+    page.getByRole("form", { name: "General" }).getByRole("alert"),
+  ).toHaveCount(0);
+  await page.unroute("**/api/f/quarry/settings");
+  await expect(page.locator(".header-description")).toHaveText(
+    "Quarry digs gravel and sand.",
+  );
+  const stored = await (await request.get("./api/f/quarry/settings")).json();
+  expect(stored.factoryFile.description).toBe("Quarry digs gravel and sand.");
+  await expect(history.getByRole("listitem")).toHaveText([
+    /Edit factory settings/,
+    /Edit factory settings/,
+    /Create agent surveyor/,
+    /Initial definition/,
+  ]);
   await page.screenshot({
     path: testInfo.outputPath("settings-history-desktop.png"),
     fullPage: true,
