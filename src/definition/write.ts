@@ -275,7 +275,10 @@ export interface FactoryEdit {
  */
 export function serializeFactory(text: string, edit: FactoryEdit): string {
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const doc = parseDocument(text.replaceAll("\r\n", "\n"));
+  // BigInt keeps long integers (e.g. Slack IDs) exact on re-serialization.
+  const doc = parseDocument(text.replaceAll("\r\n", "\n"), {
+    intAsBigInt: true,
+  });
   if (doc.errors[0]) throw new Error(doc.errors[0].message);
   let changed = false;
   if (edit.description !== undefined) {
@@ -298,7 +301,8 @@ export function serializeFactory(text: string, edit: FactoryEdit): string {
     }
   }
   if (!changed) return text;
-  const out = doc.toString();
+  // lineWidth 0: never fold long lines the team wrote on one line.
+  const out = doc.toString({ lineWidth: 0 });
   return eol === "\n" ? out : out.replaceAll("\n", eol);
 }
 

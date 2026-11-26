@@ -35,6 +35,7 @@ import {
   deleteAgent,
   isGitTracked,
   serializeAgent,
+  serializeFactory,
   writeAgent,
   writeAutomation,
   writeFactoryFile,
@@ -1032,6 +1033,14 @@ test("factory.yaml: a description is added under the name, changed and removed, 
     assert.ok(removed.ok);
     assert.equal(await readFile(path, "utf8"), FACTORY);
   }
+});
+
+test("factory.yaml: a description edit leaves other values and long lines exactly as written", () => {
+  const long = Array.from({ length: 30 }, () => "word").join(" ");
+  const text = `${FACTORY}slackUserId: 12345678901234567890\nnote: ${long}\n`;
+  const out = serializeFactory(text, { description: "Ships." });
+  assert.match(out, /^slackUserId: 12345678901234567890$/m);
+  assert.match(out, new RegExp(`^note: ${long}$`, "m"));
 });
 
 test("factory.yaml: a stale revision is a conflict and writes nothing", async () => {
