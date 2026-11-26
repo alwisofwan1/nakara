@@ -26,6 +26,7 @@ import {
 } from "../lib/format";
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
+import { AdoptDefinition } from "../features/definition/adopt-definition";
 import {
   AVATAR_COLORS,
   DEFAULT_FOLDER,
@@ -358,7 +359,7 @@ function LimitRow({
   );
 }
 
-/** Where the definition lives, its history, and Move to a repository folder. */
+/** Where the definition lives, its history, and Move to a repository folder or Let Nakara manage it. */
 function Definition({ settings }: { settings: Settings }) {
   const { definition } = settings;
   const managed = definition.mode === "managed";
@@ -411,6 +412,18 @@ function Definition({ settings }: { settings: Settings }) {
           </div>
           <MoveDefinition settings={settings} />
         </>
+      )}
+      {!managed && (
+        <div className="box-row flex flex-wrap items-center gap-md">
+          <div className="grid flex-1 gap-xs">
+            <h3 className="font-semibold">Let Nakara manage it</h3>
+            <p className="text-muted">
+              Nakara copies the definition into a folder of its own and keeps
+              its history; the repository folder is no longer read.
+            </p>
+          </div>
+          <AdoptDefinition slug={settings.slug} dir={definition.dir} />
+        </div>
       )}
     </section>
   );

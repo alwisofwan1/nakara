@@ -534,6 +534,7 @@ function createFactoryApi(
             pendingReach: c.var.factory.pendingReach(),
             files: await definitionFiles(c.var.factory.config.definitionDir),
             slug: c.var.factory.record?.slug,
+            mode: c.var.factory.record?.definition_mode,
           }),
         ),
       )
@@ -657,6 +658,19 @@ function createFactoryApi(
             409,
           );
         return c.json({ dir: result.dir, archive: result.archive }, 200);
+      })
+      // Copy a repository definition into a Nakara-managed folder; it runs from there.
+      .post("/definition/adopt", async (c) => {
+        const result = await settings.adopt(c.var.factory);
+        if (!result.ok)
+          return c.json(
+            refusedWrite("policy", result.message, result.problems ?? []),
+            409,
+          );
+        return c.json(
+          { dir: result.dir, history: result.history, note: result.note },
+          200,
+        );
       })
       .get("/new-work", (c) =>
         c.json(

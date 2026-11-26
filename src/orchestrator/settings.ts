@@ -1,16 +1,20 @@
 // A factory's Settings: rename it, delete it, and move a Nakara-managed
-// definition into a folder of one of its repositories.
+// definition into a folder of one of its repositories, or have Nakara manage
+// a repository one.
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, rename, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { snapshot } from "../backup.ts";
+import { commitDefinition, ensureHistory } from "../definition/history.ts";
 
 import {
+  DEFINITION_ENTRIES,
   HARNESS_FALLBACK,
   loadDefinition,
   type Problem,
 } from "../definition/load.ts";
+import type { FactoryRecord } from "../db/factories.ts";
 import type { FactoryCreation } from "./creation.ts";
 import type { Factory } from "./factory.ts";
 import { MERGE_SUBMITTED } from "./operator-merge.ts";
@@ -241,7 +245,11 @@ export class FactorySettings {
           return late;
         }
         this.factories.moveDefinition(record.id, dir, "repo");
-        Object.assign(record, { definition_dir: dir, definition_mode: "repo" });
+        Object.assign(record, {
+          definition_dir: dir,
+          definition_mode: "repo",
+          archive_dir: null,
+        });
         return { ok: true, dir };
       },
       (prepared) => (prepared.ok ? prepared.dir : null),
@@ -259,8 +267,161 @@ export class FactorySettings {
         archive,
         error,
       });
+      // The history stayed in this factory's own managed folder.
+      this.recordArchive(record, from);
       return { ...moved, archive: null };
     }
+    this.recordArchive(record, archive);
     return { ...moved, archive };
+  }
+
+  /** Record on the factory where its move left the managed history. */
+  private recordArchive(record: FactoryRecord, dir: string): void {
+    this.factories.recordArchive(record.id, dir);
+    record.archive_dir = dir;
+  }
+
+  /**
+   * The reverse of move: copy a Repository Definition's files (only those
+   * the loader reads) into the Nakara-managed folder for the slug, then run
+   * it from there. The history continues only from the archive recorded on
+   * this factory by its move (archive_dir), with the repository's files
+   * committed on top. Without one (no move, or a move made before archives
+   * were recorded) a new history starts: archives are never matched by slug,
+   * so a deleted factory's history is never attached to a new one. The copy
+   * must load, and the repository folder is left as it is.
+   */
+  async adopt(factory: Factory): Promise<
+    | {
+        ok: true;
+        dir: string;
+        /** Where the history was restored from; null when a new one started. */
+        history: string | null;
+        /** What happened to the history, for the Operator. */
+        note: string;
+      }
+    | SettingsRefusal
+  > {
+    const record = factory.record;
+    if (!record) return refuse("The factory is not registered.");
+    if (record.definition_mode !== "repo")
+      return refuse(
+        `The definition is already Nakara-managed in ${record.definition_dir}.`,
+      );
+    const busy = () => {
+      const runs = this.runsInFlight(record.id);
+      return runs
+        ? refuse(
+            `${record.name} has ${runs} run${runs === 1 ? "" : "s"} in progress, which read the definition. Wait for ${runs === 1 ? "it" : "them"} to finish.`,
+          )
+        : null;
+    };
+    const refused = busy();
+    if (refused) return refused;
+    const { dataDir } = this.registry.config;
+    const dir = join(dataDir, "factories", record.slug);
+    const staging = join(dataDir, "factories", `.${record.slug}.adopting`);
+    return factory.definitions.relocate(
+      async (): Promise<
+        | { ok: true; dir: string; history: string | null; note: string }
+        | SettingsRefusal
+      > => {
+        const from = resolve(record.definition_dir);
+        // Only this factory's own recorded history, and only if it is still there.
+        const recorded = record.archive_dir;
+        const history =
+          recorded && existsSync(join(recorded, ".git")) ? recorded : null;
+        // The managed folder is replaced only when it is that history (a move
+        // whose archive failed left it in place); other files are kept.
+        const ownLeftover =
+          history !== null && resolve(history) === resolve(dir);
+        if (!ownLeftover && (await hasFiles(dir)))
+          return refuse(
+            `${dir} already has files; move or delete them before Nakara manages the definition.`,
+          );
+        const note = history
+          ? `The history continues from ${history}.`
+          : recorded
+            ? `The recorded archive ${recorded} has no history any more, so a new history starts.`
+            : "No archive is recorded for this factory, so a new history starts. An archive left by a move made before Nakara recorded archives is not attached.";
+        const failed = async (message: string, problems?: Problem[]) => {
+          await rm(staging, { recursive: true, force: true });
+          return {
+            ...refuse(message),
+            ...(problems ? { problems } : {}),
+          };
+        };
+        await rm(staging, { recursive: true, force: true });
+        try {
+          await mkdir(staging, { recursive: true });
+          for (const entry of DEFINITION_ENTRIES)
+            if (existsSync(join(from, entry)))
+              await cp(join(from, entry), join(staging, entry), {
+                recursive: true,
+              });
+        } catch (error) {
+          return failed(
+            `Could not copy the definition from ${from}; nothing changed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        const loaded = await loadDefinition(staging, HARNESS_FALLBACK);
+        if (!loaded.ok)
+          return failed(
+            "The repository definition does not load; nothing changed.",
+            loaded.errors,
+          );
+        // A run may have been queued while the copy ran.
+        const late = busy();
+        if (late) {
+          await rm(staging, { recursive: true, force: true });
+          return late;
+        }
+        try {
+          if (history) {
+            await cp(join(history, ".git"), join(staging, ".git"), {
+              recursive: true,
+            });
+            await commitDefinition(
+              staging,
+              `Adopt definition from ${this.origin(from)}`,
+            );
+          } else await ensureHistory(staging);
+        } catch (error) {
+          return failed(
+            `Could not commit the definition's history; nothing changed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        // The leftover folder is set aside, not deleted, until the copy is in place.
+        const aside = `${staging}.old`;
+        try {
+          await rm(aside, { recursive: true, force: true });
+          if (existsSync(dir)) await rename(dir, aside);
+          await rename(staging, dir);
+        } catch (error) {
+          if (!existsSync(dir) && existsSync(aside))
+            await rename(aside, dir).catch(() => {});
+          return failed(
+            `Could not put the definition in ${dir}; nothing changed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        await rm(aside, { recursive: true, force: true }).catch(() => {});
+        this.factories.moveDefinition(record.id, dir, "managed");
+        Object.assign(record, {
+          definition_dir: dir,
+          definition_mode: "managed",
+          archive_dir: null,
+        });
+        return { ok: true, dir, history, note };
+      },
+      (prepared) => (prepared.ok ? prepared.dir : null),
+    );
+  }
+
+  /** `owner/name:folder` for a folder of a repository checkout, else the path. */
+  private origin(dir: string): string {
+    const path = relative(join(this.registry.config.dataDir, "checkouts"), dir);
+    const [owner, name, ...folder] = path.split(sep);
+    if (!owner || !name || owner === ".." || isAbsolute(path)) return dir;
+    return `${owner}/${name}:${folder.join("/") || "."}`;
   }
 }

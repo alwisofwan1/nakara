@@ -46,6 +46,16 @@ export const HARNESS_FALLBACK: ResolvedHarness = {
   model: undefined,
 };
 
+/** The entries of a definition folder that loadDefinition reads; the rest of the folder is not the definition. */
+export const DEFINITION_ENTRIES = [
+  "factory.yaml",
+  "agents",
+  "automations",
+  "runners",
+  "scorers",
+  "skills",
+] as const;
+
 /** `{{NAME}}` in an MCP server's arguments, env, URL or headers names a secret. */
 export const SECRET_REF = /\{\{(\w+)\}\}/g;
 

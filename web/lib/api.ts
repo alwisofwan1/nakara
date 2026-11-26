@@ -564,3 +564,10 @@ export const moveDefinition = (slug: string, json: DefinitionMove) =>
     factoryApi.definition.move.$post({ param: { slug }, json }),
     "Unable to move the definition",
   );
+
+/** Copies a repository definition into a Nakara-managed folder; it runs from there. */
+export const adoptDefinition = (slug: string) =>
+  body(
+    factoryApi.definition.adopt.$post({ param: { slug } }),
+    "Unable to have Nakara manage the definition",
+  );

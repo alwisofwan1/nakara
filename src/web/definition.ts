@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import type { Store } from "../db.ts";
+import type { DefinitionMode } from "../db/factories.ts";
 import type { Definition, LoadResult, Problem } from "../definition/load.ts";
 import type { McpServer } from "../definition/schema.ts";
 import { hostForemanAllowed } from "../orchestrator/foreman-runner.ts";
@@ -52,6 +53,8 @@ export interface FileDto {
 
 export interface DefinitionDto {
   dir: string;
+  /** Nakara-managed, or a Repository Definition; null when the factory is not registered. */
+  mode: DefinitionMode | null;
   /** The definition the factory runs; null when none ever loaded. */
   running: {
     name: string;
@@ -222,6 +225,8 @@ export function readDefinition(
   state: {
     dir: string;
     definition: Definition | undefined;
+    /** Where the definition lives; missing for a factory that is not registered. */
+    mode?: DefinitionMode | undefined;
     problems: { errors: Problem[]; warnings: Problem[] };
     pendingReach?: string[] | null;
     files: string[];
@@ -233,6 +238,7 @@ export function readDefinition(
   const errors = state.problems.errors.map(problemDto);
   return {
     dir: state.dir,
+    mode: state.mode ?? null,
     running: def
       ? {
           name: def.factory.name,

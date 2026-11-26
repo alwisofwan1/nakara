@@ -520,7 +520,13 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
     const [factory] = factories;
     assert.deepEqual(
       { ...factory, id: undefined, created_at: undefined },
-      { ...NAKARA_SEED, id: undefined, created_at: undefined },
+      {
+        ...NAKARA_SEED,
+        id: undefined,
+        created_at: undefined,
+        // Migration 018: no move recorded an archive.
+        archive_dir: null,
+      },
     );
     assert.deepEqual(
       store.db
@@ -841,5 +847,34 @@ test("migration 017 adds the factories' pause, running by default, and down rest
   assert.deepEqual(
     { ...db.prepare("SELECT budget_usd FROM factory_settings").get() },
     { budget_usd: 5 },
+  );
+});
+
+test("migration 018 adds the factories' recorded archive, none for existing factories, and down restores version 17", (t) => {
+  const dir = tempDir(t);
+  const db = new DatabaseSync(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 17),
+  });
+  const version17 = schema(db);
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  // A move made before the upgrade recorded no archive.
+  assert.deepEqual(
+    { ...db.prepare("SELECT slug, archive_dir FROM factories").get() },
+    { slug: stubFactorySeed().slug, archive_dir: null },
+  );
+  db.exec("UPDATE factories SET archive_dir = '/data/archive/factories/x'");
+
+  assert.equal(migrateDown(db, 17), 17);
+  assert.deepEqual(schema(db), version17);
+  assert.equal(
+    (db.prepare("SELECT COUNT(*) AS n FROM factories").get() as { n: number })
+      .n,
+    1,
   );
 });

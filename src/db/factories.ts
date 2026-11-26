@@ -12,11 +12,21 @@ export interface FactoryRecord {
   foreman_handle: string;
   definition_dir: string;
   definition_mode: DefinitionMode;
+  /**
+   * Where this factory's last move left its managed git history: the
+   * archive, or the managed folder itself when archiving failed. Set only
+   * while the definition is in a repository; NULL otherwise, and for moves
+   * made before migration 018.
+   */
+  archive_dir: string | null;
   created_at: string;
 }
 
 /** The first factory of a database that has none; migration 005 assigns existing items to it. */
-export type FactorySeed = Omit<FactoryRecord, "id" | "created_at">;
+export type FactorySeed = Omit<
+  FactoryRecord,
+  "id" | "created_at" | "archive_dir"
+>;
 
 /** Reads and writes the factories table. Migration 005 guarantees at least one factory. */
 export class FactoryRepository extends Repository {
@@ -67,15 +77,20 @@ export class FactoryRepository extends Repository {
     this.notifier.notify({ type: "factories", id: "global" });
   }
 
-  /** Point the factory at its definition's new folder. */
+  /** Point the factory at its definition's new folder; a recorded archive is forgotten. */
   moveDefinition(id: number, dir: string, mode: DefinitionMode): void {
     this.run(
-      "UPDATE factories SET definition_dir = ?, definition_mode = ? WHERE id = ?",
+      "UPDATE factories SET definition_dir = ?, definition_mode = ?, archive_dir = NULL WHERE id = ?",
       dir,
       mode,
       id,
     );
     this.notifier.notify({ type: "factories", id: "global" });
+  }
+
+  /** Record where the factory's managed history was left by its move. */
+  recordArchive(id: number, dir: string): void {
+    this.run("UPDATE factories SET archive_dir = ? WHERE id = ?", dir, id);
   }
 
   /** The number of the factory's items that are neither complete nor cancelled. */
