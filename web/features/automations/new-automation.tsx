@@ -113,9 +113,7 @@ export function NewAutomationForm({
       <label className="field">
         <span className="field-label">
           Name
-          <span className="field-hint">
-            The folder in automations/; it cannot change after creation.
-          </span>
+          <span className="field-hint">Folder in automations/</span>
         </span>
         <input
           className="input font-mono"
@@ -138,8 +136,8 @@ export function NewAutomationForm({
           {name && !validName
             ? "Use lowercase letters, digits, - and _, starting with a letter or digit."
             : name
-              ? `Writes automations/${name}/automation.md`
-              : "Defaults from the display name."}
+              ? `Writes automations/${name}/automation.md; it cannot change after creation.`
+              : "Defaults from the display name; it cannot change after creation."}
         </span>
       </label>
 
