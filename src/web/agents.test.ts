@@ -65,7 +65,6 @@ test("agents project definition order, effective settings and isolated relations
     );
     assert.deepEqual(
       readAgent(store, def, "triage")?.settings.find((s) => s.name === "Model"),
-      // The bundled triage agent sets its own model (factory/agents/triage/agent.md).
       { name: "Model", value: "haiku", inherited: false },
     );
     assert.equal(
