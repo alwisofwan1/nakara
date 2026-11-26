@@ -341,6 +341,7 @@ const contents = (db: DatabaseSync) =>
             max_reviews,
             max_revisions,
             request_edited,
+            counts_review,
             ...row
           }) => {
             assert.equal(instance_id ?? null, null);
@@ -349,6 +350,8 @@ const contents = (db: DatabaseSync) =>
             assert.equal(review_verdict ?? null, null);
             // Migration 012 flags nothing that existed before it.
             assert.equal(request_edited ?? 0, 0);
+            // Migration 016 marks no run that existed before it as a counted review.
+            assert.equal(counts_review ?? 0, 0);
             if (t === "work_items" && factory_id !== undefined)
               assert.equal(typeof factory_id, "number");
             // Migration 015 gives existing items the default review and revision limits.
