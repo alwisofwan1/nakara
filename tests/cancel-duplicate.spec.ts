@@ -83,6 +83,7 @@ test("Cancel asks for confirmation and Duplicate creates a prefilled new item", 
     automation: "issue-labeled",
     budgetUsd: 15,
     requester: "operator",
+    spec: false,
   });
   const { id: copy } = (await response.json()) as { id: number };
   expect(copy).not.toBe(id);

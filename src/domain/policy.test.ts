@@ -12,6 +12,7 @@ import {
   type Action,
   type AgentType,
   type PolicyState,
+  type SpecRule,
 } from "./policy.ts";
 
 const repos = ["o/r"];
@@ -27,6 +28,8 @@ const fresh: PolicyState = {
   maxRuns: 30,
   maxReviews: 1,
   maxRevisions: 2,
+  specRule: "when_asked",
+  specRequested: false,
   prUrl: null,
   prMerged: false,
 };
@@ -77,6 +80,64 @@ test("rejected spec returns to drafting", () => {
     summary: "s",
   });
   assert.equal(decideSpec(awaiting, false).specState, "drafting");
+});
+
+const SPEC_FIRST = "This factory writes a Spec first. Dispatch the spec agent.";
+const NO_SPECS =
+  "This factory does not write Specs. Dispatch implement directly.";
+
+test("the item's Spec rule decides whether implement waits for a Spec and whether a Spec may be written", () => {
+  const cases: [SpecRule, boolean, string | null, string | null][] = [
+    // rule, requested, IMPLEMENT refusal, SPEC refusal
+    ["always", false, SPEC_FIRST, null],
+    ["always", true, SPEC_FIRST, null],
+    ["when_asked", true, SPEC_FIRST, null],
+    // Today's behaviour: the Foreman decides.
+    ["when_asked", false, null, null],
+    ["never", false, null, NO_SPECS],
+    ["never", true, null, NO_SPECS],
+  ];
+  for (const [specRule, specRequested, implement, spec] of cases) {
+    const state = { ...fresh, specRule, specRequested };
+    const label = `${specRule}, requested: ${specRequested}`;
+    for (const [agentType, reason] of [
+      ["IMPLEMENT", implement],
+      ["SPEC", spec],
+    ] as const) {
+      const verdict = check(state, dispatch(agentType), repos);
+      assert.deepEqual(
+        verdict.ok ? null : verdict.reason,
+        reason,
+        `${label}: ${agentType}`,
+      );
+    }
+  }
+});
+
+test("a Spec the rule asks for, once approved, lets implement start", () => {
+  for (const [specRule, specRequested] of [
+    ["always", false],
+    ["when_asked", true],
+  ] as const) {
+    const awaiting = apply(
+      { ...fresh, specRule, specRequested },
+      dispatch("SPEC"),
+      {
+        type: "request_spec_approval",
+        specPrUrl: "https://github.com/o/r/pull/1",
+        summary: "s",
+      },
+    );
+    assert.equal(
+      apply(decideSpec(awaiting, true), dispatch("IMPLEMENT")).stage,
+      "building",
+    );
+  }
+  // A custom agent builds code too, so it cannot skip the Spec either.
+  assert.deepEqual(
+    check({ ...fresh, specRule: "always" }, dispatch("CUSTOM"), repos),
+    { ok: false, reason: SPEC_FIRST },
+  );
 });
 
 test("review runs once and needs a PR", () => {

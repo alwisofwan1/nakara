@@ -614,8 +614,9 @@ function createFactoryApi(
         if (!result.ok) return c.json(apiError("policy", result.message), 409);
         return c.json({ slug: c.req.param("slug") ?? "" }, 200);
       })
-      // Budget, review, revision and run limits for the factory's new Work
-      // Items; items already created keep the limits they copied (ADR-0006).
+      // Budget, review, revision and run limits and the Spec rule for the
+      // factory's new Work Items; items already created keep what they
+      // copied (ADR-0006).
       .put("/settings/limits", limitsBody, (c) => {
         const id = c.var.factory.record?.id;
         if (id === undefined)

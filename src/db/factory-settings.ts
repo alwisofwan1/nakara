@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import type { SpecRule } from "../domain/policy.ts";
 import type { Notifier } from "./notifier.ts";
 import { now, Repository } from "./repository.ts";
 
@@ -13,11 +14,15 @@ export interface FactoryLimits {
 
 /** A factory's effective limits, and the environment defaults they fall back to. */
 export interface FactoryLimitSettings extends FactoryLimits {
+  /** Whether the factory writes a Spec before code; `when_asked` when unsaved. */
+  specRule: SpecRule;
   defaults: FactoryLimits;
 }
 
 /** A limits edit: an omitted key stays, `null` resets it to the default. */
-export type LimitsEdit = { [K in keyof FactoryLimits]?: number | null };
+export type LimitsEdit = { [K in keyof FactoryLimits]?: number | null } & {
+  specRule?: SpecRule | null;
+};
 
 const COLUMNS = {
   budgetUsd: "budget_usd",
@@ -26,7 +31,12 @@ const COLUMNS = {
   maxRuns: "max_runs",
 } as const satisfies Record<keyof FactoryLimits, string>;
 
-type Row = { [K in (typeof COLUMNS)[keyof FactoryLimits]]: number | null };
+type Row = { [K in (typeof COLUMNS)[keyof FactoryLimits]]: number | null } & {
+  spec_rule: SpecRule | null;
+};
+
+/** What a factory without a saved rule does: the Foreman decides, unless the item asks. */
+const DEFAULT_SPEC_RULE: SpecRule = "when_asked";
 
 /**
  * Reads and writes the factory_settings table: how Nakara limits a factory.
@@ -43,7 +53,7 @@ export class FactorySettingsRepository extends Repository {
   /** The factory's effective limits and the defaults; the defaults alone when it saved none. */
   settings(factoryId: number): FactoryLimitSettings {
     const row = this.get<Row>(
-      "SELECT budget_usd, max_reviews, max_revisions, max_runs FROM factory_settings WHERE factory_id = ?",
+      "SELECT budget_usd, max_reviews, max_revisions, max_runs, spec_rule FROM factory_settings WHERE factory_id = ?",
       factoryId,
     );
     const limit = (key: keyof FactoryLimits) =>
@@ -53,16 +63,18 @@ export class FactorySettingsRepository extends Repository {
       maxReviews: limit("maxReviews"),
       maxRevisions: limit("maxRevisions"),
       maxRuns: limit("maxRuns"),
+      specRule: row?.spec_rule ?? DEFAULT_SPEC_RULE,
       defaults: { ...this.defaults },
     };
   }
 
-  /** Save the given limits; the others keep their saved value. */
+  /** Save the given limits and Spec rule; the others keep their saved value. */
   saveLimits(factoryId: number, edit: LimitsEdit): void {
-    const keys = (Object.keys(COLUMNS) as (keyof FactoryLimits)[]).filter(
+    const all = { ...COLUMNS, specRule: "spec_rule" } as const;
+    const keys = (Object.keys(all) as (keyof typeof all)[]).filter(
       (key) => edit[key] !== undefined,
     );
-    const columns = keys.map((key) => COLUMNS[key]);
+    const columns = keys.map((key) => all[key]);
     this.run(
       `INSERT INTO factory_settings (factory_id, ${[...columns, "updated_at"].join(", ")})
        VALUES (?, ${[...columns, "updated_at"].map(() => "?").join(", ")})

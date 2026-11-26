@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Store, WorkItem } from "../db.ts";
 import type { Definition } from "../definition/load.ts";
+import { type SpecRule, specRequestRefused } from "../domain/policy.ts";
 import { run } from "../runner/workspace.ts";
 
 export const DEFAULT_REQUESTER = "operator";
@@ -18,6 +19,8 @@ export interface NewWorkOptionsDto {
     requester: string;
   };
   requesters: string[];
+  /** The factory's Spec rule: the form offers "Write a Spec first" only under `when_asked`. */
+  specRule: SpecRule;
 }
 
 const manualAutomation = (definition: Definition | undefined) =>
@@ -37,6 +40,10 @@ export function readNewWorkOptions(
   factoryId?: number,
 ): NewWorkOptionsDto {
   const requesters = new Set([DEFAULT_REQUESTER, ...store.requesters()]);
+  const settings =
+    factoryId === undefined
+      ? undefined
+      : store.repos.factorySettings.settings(factoryId);
   return {
     ready: Boolean(definition),
     issueLabel: definition?.label ?? null,
@@ -50,13 +57,11 @@ export function readNewWorkOptions(
       })),
     defaults: {
       automation: manualAutomation(definition)?.name ?? null,
-      budgetUsd:
-        factoryId === undefined
-          ? store.defaultBudgetUsd
-          : store.repos.factorySettings.settings(factoryId).budgetUsd,
+      budgetUsd: settings?.budgetUsd ?? store.defaultBudgetUsd,
       requester: DEFAULT_REQUESTER,
     },
     requesters: [...requesters],
+    specRule: settings?.specRule ?? "when_asked",
   };
 }
 
@@ -83,6 +88,8 @@ export const newWorkInput = z
       .positive("The budget must be more than $0.")
       .max(10_000),
     requester: z.string().trim().min(1, "The requester is required.").max(100),
+    /** Ask for a Spec before code; only a `when_asked` factory accepts it. */
+    spec: z.boolean().default(false),
   })
   .refine((v) => v.issueUrl || (v.title && v.request), {
     message: "Enter a title and a request, or a GitHub issue URL to import.",
@@ -106,17 +113,19 @@ export const fetchGithubIssue: FetchIssue = async (url) =>
     ),
   );
 
+type RefusalCode = "invalid" | "policy" | "conflict" | "github";
+
 export type NewWorkResult =
   | { ok: true; item: WorkItem }
   | {
       ok: false;
-      status: 409 | 502;
-      error: { code: "policy" | "conflict" | "github"; message: string };
+      status: 400 | 409 | 502;
+      error: { code: RefusalCode; message: string };
     };
 
 const refuse = (
-  status: 409 | 502,
-  code: "policy" | "conflict" | "github",
+  status: 400 | 409 | 502,
+  code: RefusalCode,
   message: string,
 ): NewWorkResult => ({ ok: false, status, error: { code, message } });
 
@@ -125,14 +134,22 @@ export async function createNewWork(
   factory: {
     store: Store;
     definition: Definition | undefined;
+    /** The factory's record; the first factory's settings apply without one. */
+    record?: { id: number } | undefined;
     createWorkItem: (input: Parameters<Store["createItem"]>[0]) => WorkItem;
   },
   input: NewWorkInput,
   fetchIssue: FetchIssue,
 ): Promise<NewWorkResult> {
-  const options = readNewWorkOptions(factory.store, factory.definition);
+  const options = readNewWorkOptions(
+    factory.store,
+    factory.definition,
+    factory.record?.id ?? factory.store.repos.factories.defaultFactory().id,
+  );
   if (!options.ready)
     return refuse(409, "policy", "No valid factory definition is loaded.");
+  if (input.spec && options.specRule !== "when_asked")
+    return refuse(400, "invalid", specRequestRefused(options.specRule));
   if (input.repo && !options.repositories.includes(input.repo))
     return refuse(
       409,
@@ -152,6 +169,7 @@ export async function createNewWork(
     requester: input.requester,
     automation: input.automation,
     budgetUsd: input.budgetUsd,
+    specRequested: input.spec,
   };
   const match = ISSUE_URL.exec(input.issueUrl);
   if (!match)

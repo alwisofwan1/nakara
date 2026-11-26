@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { Repositories } from "../db.ts";
 import type { Commit } from "../definition/history.ts";
+import { SPEC_RULES } from "../domain/policy.ts";
 import { FOLDER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
@@ -86,12 +87,16 @@ const limit = (min: number, max: number, step: number) =>
     .nullable()
     .optional();
 
-/** A limits edit: each key optional, null resets it to the environment default. */
+/**
+ * A limits edit: each key optional, null resets it to the environment default
+ * (`when_asked` for the Spec rule).
+ */
 export const limitsInput = z.strictObject({
   budgetUsd: limit(1, 100, 0.5),
   maxReviews: limit(1, 5, 1),
   maxRevisions: limit(0, 5, 1),
   maxRuns: limit(5, 200, 1),
+  specRule: z.enum(SPEC_RULES).nullable().optional(),
 });
 
 export const moveInput = z.object({

@@ -172,6 +172,8 @@ const writes: Record<
         maxRuns: 50,
         maxReviews: 1,
         maxRevisions: 2,
+        specRule: "when_asked",
+        specRequested: false,
         prUrl: null,
         prMerged: false,
       }),

@@ -52,6 +52,7 @@ test("New work modal creates an item, imports issues and closes on Esc", async (
     automation: "nakara-manual",
     budgetUsd: 7.5,
     requester: "alwi",
+    spec: false,
   });
   await page.waitForURL(/\/items\/\d+$/);
   const id = page.url().split("/").pop();

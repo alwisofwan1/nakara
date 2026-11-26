@@ -24,6 +24,18 @@ describe("event invalidation", () => {
     );
     client.clear();
   });
+  it("refreshes the New work form when a factory's settings change", () => {
+    const client = new QueryClient();
+    client.setQueryData(["new-work", "harbor"], {});
+    invalidateChange(
+      client,
+      JSON.stringify({ type: "factories", id: "global" }),
+    );
+    expect(client.getQueryState(["new-work", "harbor"])?.isInvalidated).toBe(
+      true,
+    );
+    client.clear();
+  });
   it("invalidates every runs query on a runs change", () => {
     const client = new QueryClient();
     client.setQueryData(["status"], { slots: 1 });

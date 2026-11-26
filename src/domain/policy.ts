@@ -18,6 +18,19 @@ export type Stage = (typeof STAGES)[number];
 export type SpecState = "none" | "drafting" | "awaiting_approval" | "approved";
 export type ItemStatus = "active" | "waiting_human" | "paused" | "done";
 
+/**
+ * Whether a factory writes a Spec before code (ADR-0006 rule 3): always,
+ * never, or when the Work Item asks for one, the Foreman deciding otherwise.
+ */
+export const SPEC_RULES = ["always", "when_asked", "never"] as const;
+export type SpecRule = (typeof SPEC_RULES)[number];
+
+/** Why a Work Item may not ask for a Spec: only `when_asked` lets it. */
+export const specRequestRefused = (rule: SpecRule): string =>
+  rule === "always"
+    ? "This factory always writes a Spec first, so a Work Item does not ask for one."
+    : "This factory does not write Specs, so a Work Item cannot ask for one.";
+
 export const AGENT_TYPES = [
   "FOREMAN",
   "TRIAGE",
@@ -48,6 +61,10 @@ export interface PolicyState {
   maxReviews: number;
   /** The work item's own cap on revisionCount. */
   maxRevisions: number;
+  /** The Spec rule the work item snapshotted from its factory. */
+  specRule: SpecRule;
+  /** Whether the work item asked for a Spec; only possible under `when_asked`. */
+  specRequested: boolean;
   prUrl: string | null;
   prMerged: boolean;
   ciFailed?: boolean;
@@ -91,6 +108,13 @@ const refuse = (reason: string): Verdict => ({ ok: false, reason });
 
 // Agent types whose work changes code and therefore must wait for an approved spec.
 const BUILDS_CODE: ReadonlySet<AgentType> = new Set(["IMPLEMENT", "CUSTOM"]);
+
+/** Whether the work item must have an approved Spec before code is built. */
+export const specRequired = (
+  state: Pick<PolicyState, "specRule" | "specRequested">,
+): boolean =>
+  state.specRule === "always" ||
+  (state.specRule === "when_asked" && state.specRequested);
 
 const specGate = (state: PolicyState): string | null => {
   if (state.specState === "drafting")
@@ -279,6 +303,10 @@ function checkAgentWork(
       return { ok: true, next: { ...active, stage: "triage" } };
 
     case "SPEC":
+      if (state.specRule === "never")
+        return refuse(
+          "This factory does not write Specs. Dispatch implement directly.",
+        );
       // A new draft or a revision after feedback both need a fresh approval.
       return {
         ok: true,
@@ -317,6 +345,11 @@ function checkAgentWork(
     case "CUSTOM": {
       const gate = specGate(state);
       if (gate) return refuse(gate);
+      // Code needs the approved Spec the item or its factory asks for.
+      if (!isFollowUp && specRequired(state) && state.specState !== "approved")
+        return refuse(
+          "This factory writes a Spec first. Dispatch the spec agent.",
+        );
       if (state.reviewCount === 0 && !state.ciFailed)
         return { ok: true, next: { ...active, stage: "building" } };
       if (!isFollowUp && BUILDS_CODE.has(action.agentType))
