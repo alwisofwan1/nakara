@@ -84,12 +84,18 @@ export function WhereWorkComesFrom({
         ))}
       </ul>
       {!github && (
-        <p className="box-row text-muted">
-          No GitHub intake.{" "}
-          <Link to="/f/$slug/automations" params={{ slug }}>
-            Add an Automation with a GitHub label trigger.
-          </Link>
-        </p>
+        <div className="box-row">
+          <p className="text-muted">
+            No GitHub intake.{" "}
+            <Link
+              to="/f/$slug/automations"
+              params={{ slug }}
+              className="text-accent hover:underline"
+            >
+              Add an Automation with a GitHub label trigger.
+            </Link>
+          </p>
+        </div>
       )}
     </section>
   );
