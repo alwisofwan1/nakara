@@ -24,6 +24,7 @@ import {
 import {
   pauseItem,
   RunControl,
+  runLimitNeedsYou,
   runLimitPause,
   stopItemRuns,
 } from "./run-support.ts";
@@ -324,11 +325,7 @@ export class ActionApplier {
     // The foreman's last turn used the last run: nothing more can start.
     if (runsUsed(policyState(item))) {
       this.pause(item, runLimitPause(item));
-      this.store.needsYou({
-        itemId: item.id,
-        event: "paused",
-        what: runLimitPause(item),
-      });
+      runLimitNeedsYou(this.store, item);
       return;
     }
     this.log.info("item.stalled", { item_id: item.id });
