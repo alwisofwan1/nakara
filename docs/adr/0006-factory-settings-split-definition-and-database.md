@@ -7,7 +7,7 @@ The Settings page grows from rename/delete/move to every per-factory choice the 
 
 ## Rules
 
-1. **Snapshot at creation.** A Work Item copies the factory's limits, Spec rule and Handoff Gate checks when it is created, the way `budget_usd` and `max_runs` already are. Changing a setting never changes work already in flight; Raise budget / Raise run limit stay the per-item override.
+1. **Snapshot at creation.** A Work Item copies the factory's limits, Spec rule and Handoff Gate checks when it is created, the way `budget_usd` and `max_runs` already are. Changing a setting never changes work already in flight; Raise budget / Raise run limit stay the per-item override. A Work Item created by an Automation likewise copies that Automation's instructions and display name (migration 020), so deleting, editing or recreating the Automation leaves the item alone; items created before the copy existed fall back to the Automation found by name.
 2. **The Handoff Gate only grows.** "Work pushed to the Pull Request and CI passes" stays fixed for every factory. A factory may add *Review accepted* and *Verification passed*; it can never remove the fixed part.
 3. **The Spec rule** is one of `always`, `when_asked` (today's behaviour: the Foreman decides) or `never`. A Work Item may ask for a Spec when its factory's rule is `when_asked`; it cannot opt out of `always` or into `never`.
 4. **Pause stops starts, not runs.** A paused factory still takes intake, but the scheduler starts no Foreman Turn for it; Runs already started finish. Resume wakes the waiting items.

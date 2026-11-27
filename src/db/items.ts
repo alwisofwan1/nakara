@@ -22,6 +22,10 @@ export interface WorkItem {
   source_url: string | null;
   repo: string | null;
   automation: string | null;
+  /** The instructions of the Automation that created the item, copied at creation; null for other items and items before migration 020. */
+  automation_instructions: string | null;
+  /** That Automation's display name, copied at creation; null when it had none. */
+  automation_display_name: string | null;
   stage: Stage;
   status: ItemStatus;
   spec_state: SpecState;
@@ -102,6 +106,9 @@ export class ItemRepository extends Repository {
     sourceUrl?: string | null;
     repo?: string | null;
     automation?: string | null;
+    /** The Automation's instructions and display name, copied so later edits leave the item alone. */
+    automationInstructions?: string | null;
+    automationDisplayName?: string | null;
     issueUrl?: string | null;
     requestEdited?: boolean;
     /** Ask for a Spec; refused unless the factory's rule is `when_asked`. */
@@ -122,8 +129,8 @@ export class ItemRepository extends Repository {
     if (input.specRequested && limits.specRule !== "when_asked")
       throw new Error(specRequestRefused(limits.specRule));
     const id = this.run(
-      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, spec_rule, spec_requested, factory_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, automation_instructions, automation_display_name, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, spec_rule, spec_requested, factory_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.title,
       input.request,
       input.requester ?? null,
@@ -132,6 +139,8 @@ export class ItemRepository extends Repository {
       input.sourceUrl ?? null,
       input.repo ?? null,
       input.automation ?? null,
+      input.automationInstructions ?? null,
+      input.automationDisplayName ?? null,
       input.issueUrl ?? null,
       input.requestEdited ? 1 : 0,
       input.budgetUsd ?? limits.budgetUsd,
