@@ -967,8 +967,10 @@ export function createApi(
     // every pass; a lower value stops no run, it only starts nothing new.
     .put("/settings/concurrency", concurrencyBody, (c) => {
       saveConcurrency(store, c.req.valid("json").concurrency);
-      // A raise starts queued runs now rather than on the next interval.
-      void registry.pump().catch(() => {});
+      // A raise starts queued runs now rather than on the next interval. The
+      // factories share one scheduler; pumping through a Factory keeps the
+      // pump that tests and the smoke server replace.
+      void registry.default.pump().catch(() => {});
       return c.json(
         { concurrency: concurrencySetting(store, config.concurrency) },
         200,

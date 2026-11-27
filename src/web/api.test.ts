@@ -1029,9 +1029,9 @@ test("after the poller reports the Operator's merge, the item completes through 
 });
 
 test("instance concurrency: the env default until saved, a saved value in range wins, clearing returns to the default", async () => {
-  const { app, store, registry } = fixture();
+  const { app, store, factory } = fixture();
   // Nothing is queued; the pump after a save must not start a harness.
-  registry.pump = async () => {};
+  factory.pump = async () => {};
   const call = async (method: string, path: string, body?: unknown) => {
     const response = await app.request(
       `/api/${path}`,
