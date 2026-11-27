@@ -4,7 +4,7 @@ import {
   useAutomationToggle,
 } from "../automations/automation-switch";
 
-interface Intake {
+export interface Intake {
   automation: string | null;
   displayName: string;
   provider: string;
@@ -21,6 +21,12 @@ const SOURCE: Record<string, string> = {
   slack: "Slack",
 };
 
+/** Whether a GitHub-label Automation brings work in; without one Settings says so. */
+export const hasGithubIntake = (intake: readonly Intake[]) =>
+  intake.some(
+    (entry) => entry.provider === "github" && entry.event === "issue_labeled",
+  );
+
 /**
  * Where work comes from: manual intake, then each GitHub, Telegram or Slack
  * Automation with the Automations page's own switch, so the two never disagree.
@@ -33,9 +39,6 @@ export function WhereWorkComesFrom({
   intake: Intake[];
 }) {
   const toggle = useAutomationToggle(slug);
-  const github = intake.some(
-    (entry) => entry.provider === "github" && entry.event === "issue_labeled",
-  );
   return (
     <section className="box" aria-labelledby="settings-intake">
       <h2 id="settings-intake" className="box-row font-semibold">
@@ -83,7 +86,7 @@ export function WhereWorkComesFrom({
           </li>
         ))}
       </ul>
-      {!github && (
+      {!hasGithubIntake(intake) && (
         <div className="box-row">
           <p className="text-muted">
             No GitHub intake.{" "}

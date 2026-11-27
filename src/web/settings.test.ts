@@ -1330,3 +1330,29 @@ test("where work comes from: the bundled Telegram and Slack automations, and a s
   assert.equal(stale.status, 409);
   assert.equal((await entry("telegram-request"))?.enabled, true);
 });
+
+test("where work comes from: a GitHub pull request trigger is not intake, so there is still no GitHub intake", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  for (const name of ["issue-labeled", "slack-request", "telegram-request"])
+    await rm(join(harborDir, "automations", name), { recursive: true });
+  // Lifecycle notifications for factory PRs, not a way work comes in.
+  await mkdir(join(harborDir, "automations", "pr-merged"));
+  await writeFile(
+    join(harborDir, "automations", "pr-merged", "automation.md"),
+    "---\ntriggers:\n  - provider: github\n    event: pull_request_merged\n  - provider: github\n    event: pull_request_closed\n---\nA factory PR closed.\n",
+  );
+  assert.ok((await harbor.reloadDefinition()).ok);
+  assert.ok(harbor.definition?.automations.some((a) => a.name === "pr-merged"));
+  const { intake } = (await call("GET", "f/harbor/settings")).body;
+  assert.deepEqual(
+    intake.map((e: { provider: string; event: string }) => [
+      e.provider,
+      e.event,
+    ]),
+    [["nakara", "manual"]],
+  );
+  assert.equal(
+    intake.some((e: { provider: string }) => e.provider === "github"),
+    false,
+  );
+});

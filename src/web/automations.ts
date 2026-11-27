@@ -203,8 +203,15 @@ export function readAutomations(
   });
 }
 
-/** The trigger providers that bring work in from outside; see ADR-0006. */
-const INTAKE_PROVIDERS = new Set(["github", "telegram", "slack"]);
+/**
+ * The triggers that bring work in from outside; see ADR-0006. GitHub's
+ * pull_request_merged and pull_request_closed only report on factory PRs.
+ */
+const INTAKE_TRIGGERS = new Set([
+  "github:issue_labeled",
+  "telegram:message",
+  "slack:message",
+]);
 
 export interface IntakeDto {
   /** The automation whose switch this is; null for manual intake. */
@@ -220,8 +227,9 @@ export interface IntakeDto {
 }
 
 /**
- * Where work comes from: manual intake, always on, then one entry per GitHub,
- * Telegram or Slack trigger of the definition's automations. Each switch is
+ * Where work comes from: manual intake, always on, then one entry per
+ * github/issue_labeled, telegram/message or slack/message trigger of the
+ * definition's automations. Each switch is
  * the automation's own `enabled`, so there is no second switch to disagree
  * with it. A GitHub trigger without a labels filter polls the factory label.
  */
@@ -253,7 +261,9 @@ export function readIntake(
     manual,
     ...definitions.flatMap(({ name, frontmatter: fm, revision }) =>
       fm.triggers
-        .filter((trigger) => INTAKE_PROVIDERS.has(trigger.provider))
+        .filter((trigger) =>
+          INTAKE_TRIGGERS.has(`${trigger.provider}:${trigger.event}`),
+        )
         .map((trigger) => ({
           automation: name,
           displayName: fm.displayName ?? name,
