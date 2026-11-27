@@ -17,13 +17,17 @@ import { loadConfig } from "../config.ts";
 import { Store } from "../db.ts";
 import { uncheckedKey } from "../db/learnings.ts";
 import { HARNESS_DEFAULT, loadDefinition } from "../definition/load.ts";
+import { type Action, check } from "../domain/policy.ts";
 import type { PrIO } from "../domain/pushed.ts";
 import type { runTurn } from "../harness/claude.ts";
 import { diffFile, type RepoSnapshot } from "../runner/snapshot.ts";
+import type { Verifier, VerifyJob } from "../runner/verify.ts";
 import { readRunDiff } from "../web/run-diff.ts";
 import { AgentRunner } from "./agent-runner.ts";
 import { renderEvent } from "./prompts.ts";
+import { policyFor } from "./pull-request-gate.ts";
 import { RunControl } from "./run-support.ts";
+import { releaseUnrunVerify } from "./verify.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -89,7 +93,7 @@ async function fixture(t: TestContext, agentName = "implement") {
     status: "queued",
   });
   const worktree = join(config.workDir, `item-${item.id}`, "widgets");
-  const run = (turn: typeof runTurn, pr?: PrIO) =>
+  const run = (turn: typeof runTurn, pr?: PrIO, verifier?: Verifier) =>
     new AgentRunner(
       store,
       config,
@@ -98,6 +102,8 @@ async function fixture(t: TestContext, agentName = "implement") {
       undefined,
       turn,
       pr,
+      undefined,
+      verifier,
     ).run(queued);
   const snapshots = (): RepoSnapshot[] =>
     JSON.parse(store.runById(queued.id)?.snapshots ?? "[]");
@@ -545,4 +551,191 @@ test("a review run that is stopped or fails gives its review back and tells the 
         /does not count toward the review limit \(0 of 1 used\)\. You can run the review again, dispatched or as a follow_up\./,
       );
   }
+});
+
+/** An implement run whose work is the PR head, on a repository that lists `verify`, with Nakara's verify stubbed. */
+async function verifyFixture(
+  t: TestContext,
+  verify: string[] | undefined,
+  outcome: Awaited<ReturnType<Verifier>>,
+) {
+  const f = await fixture(t);
+  const PR = "https://github.com/acme/widgets/pull/1";
+  f.store.updateItem(f.item.id, { pr_url: PR });
+  f.def.factory.repositories = [{ owner: "acme", name: "widgets", verify }];
+  const pr: PrIO = {
+    readPrHead: async () => ({
+      sha: execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: f.worktree,
+        encoding: "utf8",
+      }).trim(),
+      branch: "nakara/1-snapshots",
+    }),
+    onPr: async (_url, sha, head) => sha === head.sha,
+  };
+  const jobs: VerifyJob[] = [];
+  await f.run(
+    async () => succeeded,
+    pr,
+    async (job) => {
+      jobs.push(job);
+      return outcome;
+    },
+  );
+  // biome-ignore lint/style/noNonNullAssertion: The item exists.
+  const item = f.store.item(f.item.id)!;
+  const [event] = f.store
+    .pendingEvents(item.id)
+    .filter((e) => e.kind === "agent_report");
+  assert.ok(event);
+  const repositories = ["acme/widgets"];
+  const allowed = (action: Action) =>
+    check(policyFor(f.store, item), action, repositories);
+  return {
+    ...f,
+    PR,
+    item,
+    jobs,
+    report: renderEvent(event, item, f.def),
+    payload: JSON.parse(event.payload) as Record<string, string>,
+    review: () =>
+      allowed({
+        type: "dispatch_agent",
+        agent: "review",
+        agentType: "REVIEW",
+        brief: "Review it",
+      }),
+    handoff: () => allowed({ type: "handoff", prUrl: PR, summary: "Done" }),
+    followUp: () =>
+      allowed({
+        type: "follow_up",
+        agent: "implement",
+        agentType: "IMPLEMENT",
+        message: "Fix it",
+      }),
+  };
+}
+
+test("a passing verify adds pass lines to Checked by Nakara, and review can be dispatched", async (t) => {
+  const v = await verifyFixture(t, ["npm ci", "npm test"], {
+    status: "passed",
+    commands: [
+      { command: "npm ci", ok: true, durationMs: 12_300 },
+      { command: "npm test", ok: true, durationMs: 4_100 },
+    ],
+  });
+  // The commands ran on the PR head, on the implement agent's runner.
+  assert.equal(v.jobs.length, 1);
+  assert.deepEqual(v.jobs[0]?.commands, ["npm ci", "npm test"]);
+  assert.equal(v.jobs[0]?.head.length, 40);
+  assert.equal(v.jobs[0]?.runner, v.agent.runner);
+  assert.equal(v.jobs[0]?.timeoutMs, 20 * 60_000);
+  assert.match(v.jobs[0]?.logPath ?? "", /run-\d+\.verify\.log$/);
+  assert.match(
+    v.report,
+    /### Checked by Nakara\nVerify passed on acme\/widgets/,
+  );
+  assert.match(
+    v.report,
+    /- pass `npm ci` \(12\.3 s\)\n- pass `npm test` \(4\.1 s\)/,
+  );
+  assert.equal(v.store.item(v.item.id)?.status, v.item.status);
+  assert.ok(v.review().ok);
+});
+
+test("a failing verify names the command and its output tail; review and handoff are refused, and a follow_up counts as a revision", async (t) => {
+  const v = await verifyFixture(t, ["npm ci", "npm test", "npm run lint"], {
+    status: "failed",
+    commands: [
+      { command: "npm ci", ok: true, durationMs: 1000 },
+      { command: "npm test", ok: false, durationMs: 2000 },
+    ],
+    failed: "npm test",
+    tail: "not ok 1 - adds\n```\n# fail 1",
+  });
+  assert.match(
+    v.report,
+    /Verify FAILED on acme\/widgets at \w{7}: `npm test` failed\./,
+  );
+  assert.match(
+    v.report,
+    /- pass `npm ci` \(1\.0 s\)\n- fail `npm test` \(2\.0 s\)/,
+  );
+  // The output's own fence cannot close the block it is shown in.
+  assert.match(v.report, /````text\nnot ok 1 - adds\n```\n# fail 1\n````/);
+  assert.doesNotMatch(v.report, /npm run lint/);
+  const review = v.review();
+  assert.equal(review.ok, false);
+  assert.match(!review.ok ? review.reason : "", /failed at `npm test`/);
+  const handoff = v.handoff();
+  assert.equal(handoff.ok, false);
+  assert.match(
+    !handoff.ok ? handoff.reason : "",
+    /Handoff is refused: .*`npm test`/,
+  );
+  const followUp = v.followUp();
+  assert.ok(followUp.ok);
+  assert.equal(followUp.ok && followUp.next.revisionCount, 1);
+  // A new dispatch is not the way: the fix goes to the same agent.
+  const dispatch = check(
+    policyFor(v.store, v.item),
+    {
+      type: "dispatch_agent",
+      agent: "implement",
+      agentType: "IMPLEMENT",
+      brief: "Again",
+    },
+    ["acme/widgets"],
+  );
+  assert.equal(dispatch.ok, false);
+});
+
+test("a verify that cannot run pauses the item and does not count as a failure", async (t) => {
+  const v = await verifyFixture(t, ["npm test"], {
+    status: "error",
+    commands: [],
+    reason: 'the runner "gone" is not in the definition.',
+  });
+  const item = v.store.item(v.item.id);
+  assert.equal(item?.status, "paused");
+  assert.match(
+    v.store
+      .messages(v.item.id)
+      .map((m) => m.body)
+      .join("\n"),
+    /could not run the verify commands of acme\/widgets/,
+  );
+  assert.match(
+    v.report,
+    /Verify could not run on acme\/widgets .*: the runner "gone"/,
+  );
+  assert.match(v.report, /not a failure of the change/);
+  const policy = policyFor(v.store, v.item);
+  assert.equal(policy.verifyFailed, null);
+  // Not a failure: a follow_up before review is no revision.
+  const followUp = v.followUp();
+  assert.ok(followUp.ok);
+  assert.equal(followUp.ok && followUp.next.revisionCount, 0);
+  // Review waits for the Operator, whose message lets the item go on.
+  assert.equal(v.review().ok, false);
+  releaseUnrunVerify(v.store, v.item.id);
+  assert.ok(v.review().ok);
+});
+
+test("without verify, the report and the policy are unchanged", async (t) => {
+  const v = await verifyFixture(t, undefined, {
+    status: "failed",
+    commands: [],
+    failed: "never",
+  });
+  assert.equal(v.jobs.length, 0);
+  assert.equal(v.payload.verify, undefined);
+  assert.doesNotMatch(v.report, /Checked by Nakara|Verify/);
+  assert.equal(v.store.getKv(`verify:${v.item.id}`), undefined);
+  const policy = policyFor(v.store, v.item);
+  assert.equal(policy.verifyFailed, null);
+  assert.equal(policy.verifyUnavailable, null);
+  assert.ok(v.review().ok);
+  assert.ok(v.handoff().ok);
+  assert.equal(v.store.item(v.item.id)?.status, v.item.status);
 });

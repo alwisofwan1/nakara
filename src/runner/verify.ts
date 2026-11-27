@@ -178,7 +178,11 @@ export const runVerify: Verifier = async (job) => {
           commands,
           failed: command,
           tail: redact(
-            ran.output.split("\n").slice(-TAIL_LINES).join("\n"),
+            ran.output
+              .replace(/\n$/, "")
+              .split("\n")
+              .slice(-TAIL_LINES)
+              .join("\n"),
             secrets,
           ) as string,
         };

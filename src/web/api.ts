@@ -97,6 +97,7 @@ import {
 import { slugify } from "../definition/seed.ts";
 import { FactoryCreation } from "../orchestrator/creation.ts";
 import { mergePullRequest } from "../orchestrator/operator-merge.ts";
+import { verifyLogPath } from "../orchestrator/verify.ts";
 import { agentTokenOf } from "../runner/agent-token.ts";
 import {
   ensureBareClone,
@@ -1437,10 +1438,18 @@ export function createApi(
       const systemPrompt = promptPath
         ? await readInternal(config.workDir, run.item_id, promptPath)
         : null;
+      const verifyLog = run.log_path
+        ? (await internalFile(
+            config.workDir,
+            run.item_id,
+            verifyLogPath(run.log_path),
+          )) !== null
+        : false;
       const definition = orchestrator(run.item_id).definition;
       const dto = readRun(store, id, {
         workDir: config.workDir,
         systemPrompt,
+        verifyLog,
         agent: (name) => {
           const agent = definition?.agents.get(name);
           if (!agent) return undefined;
@@ -1480,6 +1489,24 @@ export function createApi(
           ? c.json(apiError("not_found", result.reason), 404)
           : c.json(apiError("policy", result.reason), 409);
       return c.json({ run: { id: result.run.id } }, 202);
+    })
+    // The output of the verify Nakara ran after the run, redacted as it was written.
+    .get("/runs/:id/verify-log", runParam, async (c) => {
+      const run = store.runById(c.req.valid("param").id);
+      const text =
+        run?.log_path &&
+        (await readInternal(
+          config.workDir,
+          run.item_id,
+          verifyLogPath(run.log_path),
+        ));
+      if (!text)
+        return c.json(
+          apiError("not_found", "No verify output for this run"),
+          404,
+        );
+      c.header("Content-Type", "text/plain; charset=utf-8");
+      return c.body(text, 200);
     })
     .get("/runs/:id/diff", runParam, async (c) => {
       const run = store.runById(c.req.valid("param").id);

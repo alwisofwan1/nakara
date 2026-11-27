@@ -39,18 +39,20 @@ const reachLine = (repo: string) => `repository ${repo}`;
 
 /**
  * One row per repository factory.yaml lists: whether it waits for the
- * Operator's approval, and whether it can be removed (a factory keeps at
- * least one).
+ * Operator's approval, whether it can be removed (a factory keeps at least
+ * one), and the `verify` commands Nakara runs on its PRs.
  */
 export function repoRows(
   repositories: string[],
   pendingReach: string[] | null,
+  verify: Record<string, string[]> = {},
 ) {
   const pending = new Set(pendingReach ?? []);
   return repositories.map((repo) => ({
     repo,
     pending: pending.has(reachLine(repo)),
     removable: repositories.length > 1,
+    verify: verify[repo] ?? [],
   }));
 }
 

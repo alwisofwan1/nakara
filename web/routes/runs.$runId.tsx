@@ -19,7 +19,7 @@ import { loadPage, queueFollowUp, runDiffQuery, runQuery } from "../lib/api";
 import { type DiffLineKind, parseDiff } from "../features/run/diff";
 import type { LogEntry, LogState } from "../features/run/log";
 import { useRunLog } from "../features/run/run-log";
-import { defaultFactory } from "../app/runtime";
+import { defaultFactory, serverUrl } from "../app/runtime";
 import { usePageCrumbs } from "../app/shell";
 import { StopRunButton } from "../features/run/stop-run";
 
@@ -288,6 +288,19 @@ function RunTabs({ run, log }: { run: RunDetail; log: LogState }) {
         <p className="mt-sm text-tiny text-muted">
           {log.ended ? "Run ended" : "Live · auto-scroll"}
           {run.logPath ? ` · raw log: ${run.logPath}` : ""}
+          {run.verifyLog && (
+            <>
+              {" · "}
+              <a
+                className="underline"
+                href={serverUrl(`/api/runs/${run.id}/verify-log`)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Verify output
+              </a>
+            </>
+          )}
         </p>
       </Tabs.Content>
       <Tabs.Content value="prompt" className="flex flex-col gap-md">

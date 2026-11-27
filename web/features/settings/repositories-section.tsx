@@ -26,7 +26,12 @@ export function RepositoriesSection({
   queue,
 }: {
   slug: string;
-  file: { repositories: string[]; revision: string };
+  file: {
+    repositories: string[];
+    /** The `verify` commands of each repository that lists any, keyed `owner/name`. */
+    verify?: Record<string, string[]>;
+    revision: string;
+  };
   /** What a saved edit adds to agents' reach, waiting for approval; null when nothing waits. */
   pendingReach: string[] | null;
   /** The page's one queue of factory.yaml saves. */
@@ -121,7 +126,7 @@ export function RepositoriesSection({
         </p>
       </div>
       <ul aria-label="Repositories" className="grid border-t-0">
-        {repoRows(file.repositories, pendingReach).map((row) => (
+        {repoRows(file.repositories, pendingReach, file.verify).map((row) => (
           <li key={row.repo} className="box-row grid gap-xs">
             <div className="flex flex-wrap items-center gap-md">
               <code className="flex-1">{row.repo}</code>
@@ -157,6 +162,26 @@ export function RepositoriesSection({
                 A factory keeps at least one repository; add another before
                 removing this one.
               </p>
+            )}
+            {row.verify.length > 0 && (
+              <div className="grid gap-xs">
+                <p className="text-small text-muted">
+                  Verify: Nakara runs these on the PR head after each
+                  implementation run, in order, and stops at the first failure.
+                  Edit them in factory.yaml.
+                </p>
+                <ol
+                  aria-label={`Verify commands of ${row.repo}`}
+                  className="grid gap-xs text-small"
+                >
+                  {row.verify.map((command, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: The same command may run twice; the list is read-only.
+                    <li key={index}>
+                      <code>{command}</code>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             )}
             {refusal(row.repo)}
           </li>

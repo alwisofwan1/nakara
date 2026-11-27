@@ -632,7 +632,7 @@ What this version supports:
 
 | | Supported | Not yet |
 |---|---|---|
-| `factory.yaml` | `repositories`, `alias`, `agentDefaults`, `secrets`, `mcpServers` (`command`/`url`, `{{NAME}}` substitution of declared secrets, `tools` as a Nakara extension) | `integrations`, `cloudProviders`, `selfImprovement` |
+| `factory.yaml` | `repositories` (with `verify`, `runner` and `verifyTimeoutMinutes` as a Nakara extension; see [Verify commands](#verify-commands)), `alias`, `agentDefaults`, `secrets`, `mcpServers` (`command`/`url`, `{{NAME}}` substitution of declared secrets, `tools` as a Nakara extension) | `integrations`, `cloudProviders`, `selfImprovement` |
 | `agents/*/agent.md` | all agent types, `harness` `claude`/`codex`/`qwen` (qwen is a Nakara extension), `fallback` (Nakara extension, also in `agentDefaults`; see [Harness fallback](#harness-fallback)), `model` shorthand (`opus`/`sonnet`/`haiku`, `auto`), `secrets`, `mcpServers`, `spawnableBy`, `idleTimeoutMinutes`, per-agent skills | codex for the foreman or with `mcpServers` |
 | `automations/*` | `github/issue_labeled` (polling), `nakara/manual`, `telegram/message` (long polling, one trusted chat), `slack/message` (Socket Mode, `filter.members` required), `schedule/cron_fired` (5-field UTC cron or `@hourly`, `@daily`/`@midnight`, `@weekly`, `@monthly`; no month/day names; missed minutes are not caught up) | Linear/Jira, other GitHub events |
 | `runners/*` | `setupCommands` once per clone; `linux.dockerImage` runs agents in a container (no image = host); `instanceShape` as container CPU/memory limits; `egress.allow` (Nakara extension) as the hosts containers may reach | macOS/Windows |
@@ -698,6 +698,67 @@ is a warning, as it is for `harness`.
 
 The wait is kept in the `kv` table (`limit-wait:<item>`, and
 `fallback-of:<run>` for a moved run), so it survives a restart.
+
+### Verify commands
+
+An implementation report that says "tests pass" is the agent's word; CI
+confirms it only minutes after the push, and a repository without CI never
+does. List the commands that prove a change under the repository in
+`factory.yaml`, and Nakara runs them itself:
+
+```yaml
+repositories:
+  - owner: acme
+    name: web
+    verify:
+      - npm ci
+      - npm run typecheck
+      - npm test
+    runner: linux-standard      # optional; default: the implement agent's runner
+    verifyTimeoutMinutes: 20    # optional; all the commands together, 1-240
+```
+
+`verify` is a list of at most 20 non-empty strings; anything else is a
+definition error, and so is a `runner` that `runners/` does not define. The
+Settings page shows each repository's commands read-only; edit them in
+`factory.yaml`.
+
+- **When.** After an implementation run that reports success and whose work
+  Nakara found on the item's PR (the same pushed check the handoff uses), and
+  before the foreman reads the report. A run whose work is not on the PR, or an
+  item without a PR yet, is not verified.
+- **Where.** On the PR head commit, in a fresh checkout Nakara makes from the
+  repository cache beside the item's directory (`item-<id>.verify`, removed
+  afterwards), never in the agent's clone. With a `dockerImage` the commands
+  run in a fresh container of the runner's image, behind the same egress
+  allowlist and with the same `instanceShape`; without one, on the host, as
+  the runner's agents do. They get no agent session, no agent token, no GitHub
+  token and no secrets: each command runs as `bash -lc '<command>'` in the
+  checkout, in order, and the first one that exits non-zero stops the verify.
+  A command that needs the network for packages (`npm ci`) needs its registry
+  in the runner's `egress.allow`.
+- **What it costs.** The commands' own time, at most `verifyTimeoutMinutes`
+  (default 20), on every implementation run that reports success, follow-ups
+  included. The run stays "running" until the verify ends, so it holds its
+  concurrency slot that long. No model tokens: no agent runs.
+- **The report.** The foreman's "Checked by Nakara" section lists each command
+  with pass or fail and its duration and, for a failure, the last 200 lines of
+  its output with secrets redacted as in the logs. The full output is kept
+  beside the run's log (`run-<id>.verify.log`) and linked as "Verify output" on
+  the run page.
+- **A failure.** While the latest verify of the item's PR failed, dispatching
+  or following up review and handoff are refused, naming the failing command.
+  The way forward is a `follow_up` to the implementation agent, which counts
+  toward the revision cap like a CI failure; its run is verified again.
+- **Could not run.** No runner, Docker unavailable, a head that cannot be
+  checked out or the timeout is not a failure of the change: the item pauses
+  for the Operator with the reason, and review and handoff wait. A message to
+  the item, or an answer to the foreman's question, lets it go on without that
+  verify; the next implementation run verifies again.
+- **Without `verify`** nothing changes.
+
+The latest result is kept per item in the `kv` table (`verify:<item>`, with
+the PR head it ran on); recording another PR clears it.
 
 ### Giving the foreman tools
 

@@ -365,4 +365,6 @@ export async function removeWorkspace(
   // A plain delete: rm never follows the symlinks an agent left in there.
   await rm(root, { recursive: true, force: true });
   await rm(`${root}.home`, { recursive: true, force: true });
+  // A verify's checkout (runner/verify.ts), when one was cut short.
+  await rm(`${root}.verify`, { recursive: true, force: true });
 }

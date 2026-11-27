@@ -123,6 +123,8 @@ export interface RunDetailDto extends RunSummaryDto {
   input: string;
   /** The agent's system prompt, when it is still on disk. */
   systemPrompt: string | null;
+  /** Whether Nakara kept the output of a verify it ran after this run, served at /runs/:id/verify-log. */
+  verifyLog: boolean;
   report: string | null;
   error: string | null;
   /** The run retries the brief of a run that hit a rate or usage limit, on a fallback harness. */
@@ -150,6 +152,7 @@ export interface RunContext {
     name: string,
   ) => { type: AgentType; runner: string; docker: boolean } | undefined;
   systemPrompt: string | null;
+  verifyLog: boolean;
 }
 
 const summary = (run: Run): RunSummaryDto => ({
@@ -194,6 +197,7 @@ export function readRun(
     logPath: run.log_path,
     input: run.input,
     systemPrompt: context.systemPrompt,
+    verifyLog: context.verifyLog,
     report: run.result,
     error: run.error,
     fallback: fallbackOf(store, run.id),

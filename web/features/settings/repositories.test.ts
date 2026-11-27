@@ -48,6 +48,13 @@ describe("Repository rows", () => {
     ).toEqual([true, true]);
     expect(repoRows(["acme/web"], null)[0]?.removable).toBe(false);
   });
+
+  it("lists each repository's verify commands, none without", () => {
+    const rows = repoRows(["acme/web", "acme/docs"], null, {
+      "acme/web": ["npm ci", "npm test"],
+    });
+    expect(rows.map((r) => r.verify)).toEqual([["npm ci", "npm test"], []]);
+  });
 });
 
 describe("Where a refusal shows", () => {
