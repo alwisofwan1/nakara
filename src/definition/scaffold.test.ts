@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { HARNESS_FALLBACK, loadDefinition } from "./load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "./load.ts";
 import {
   type ScaffoldChoices,
   type ScaffoldDeps,
@@ -185,7 +185,7 @@ async function created(choice: ScaffoldChoices) {
   assert.ok(result.ok, JSON.stringify(!result.ok && result.errors));
   const dir = join(await mkdtemp(join(tmpdir(), "nakara-scaffold-")), "f");
   await writeTree(dir, result.files);
-  const loaded = await loadDefinition(dir, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(dir, HARNESS_DEFAULT);
   assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.errors));
   return { result, dir, definition: loaded.definition };
 }

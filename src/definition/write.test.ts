@@ -27,7 +27,7 @@ import { Scheduler } from "../intake/schedule.ts";
 import { SlackBridge } from "../intake/slack.ts";
 import { routeRequest, type TelegramFactories } from "../intake/telegram.ts";
 import { Factory } from "../orchestrator/factory.ts";
-import { fileRevision, HARNESS_FALLBACK, loadDefinition } from "./load.ts";
+import { fileRevision, HARNESS_DEFAULT, loadDefinition } from "./load.ts";
 import {
   AGENT_NAME,
   AUTOMATION_NAME,
@@ -119,7 +119,7 @@ test("a written agent loads with the edited values, its body and unknown keys", 
     "helper",
     edit,
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   // The result names the written bytes, so the page can save again without a reload.
   assert.deepEqual(result, {
@@ -129,7 +129,7 @@ test("a written agent loads with the edited values, its body and unknown keys", 
     revision: await revision(root, "helper"),
   });
 
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.errors));
   const agent = loaded.definition.agents.get("helper");
   assert.ok(agent);
@@ -168,10 +168,10 @@ test("a written agent loads with the edited values, its body and unknown keys", 
       prompt: agent.instructions,
     },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(cleared.ok);
-  const reloaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const reloaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(reloaded.ok);
   const plain = reloaded.definition.agents.get("helper");
   assert.equal(plain?.description, "");
@@ -194,7 +194,7 @@ test("an invalid edit returns the loader errors and leaves every file byte-ident
     "helper",
     { ...edit, harness: "gemini" },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!result.ok && result.code === "invalid");
   assert.equal(result.errors[0]?.path, "agents/helper/agent.md");
@@ -206,7 +206,7 @@ test("an invalid edit returns the loader errors and leaves every file byte-ident
     "helper",
     { ...edit, runner: "gpu" },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!missingRunner.ok && missingRunner.code === "invalid");
   assert.deepEqual(missingRunner.errors, [
@@ -266,7 +266,7 @@ test("the Default harness refuses to drop harness keys the form does not edit", 
     "helper",
     { ...edit, harness: null, model: null, effort: null, prompt: "Help." },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!result.ok && result.code === "invalid");
   assert.equal(result.errors.length, 1);
@@ -280,7 +280,7 @@ test("the Default harness refuses to drop harness keys the form does not edit", 
     "helper",
     { ...edit, harness: "claude-code", model: "opus", prompt: "Help." },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(kept.ok);
   assert.match(
@@ -295,13 +295,7 @@ test("a stale revision is a conflict and never overwrites the newer file", async
   const stale = await revision(root, "helper");
   const newer = HELPER.replace("Help with", "Someone else edited");
   await writeFile(path, newer);
-  const result = await writeAgent(
-    root,
-    "helper",
-    edit,
-    stale,
-    HARNESS_FALLBACK,
-  );
+  const result = await writeAgent(root, "helper", edit, stale, HARNESS_DEFAULT);
   assert.ok(!result.ok && result.code === "conflict");
   assert.match(result.message, /agents\/helper\/agent\.md changed on disk/);
   assert.equal(await readFile(path, "utf8"), newer);
@@ -312,7 +306,7 @@ test("a stale revision is a conflict and never overwrites the newer file", async
     "helper",
     edit,
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
     () => writeFile(path, "---\nagentType: CUSTOM\n---\nRaced.\n"),
   );
   assert.ok(!raced.ok && raced.code === "conflict");
@@ -337,7 +331,7 @@ test("the swap keeps the file mode and writes through a symlinked agent.md", asy
     "helper",
     edit,
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(result.ok);
   assert.ok((await lstat(link)).isSymbolicLink());
@@ -357,7 +351,7 @@ test("a CRLF agent.md keeps CRLF line endings throughout", async () => {
     "helper",
     { ...edit, prompt: "# Helper\r\n\r\nShip the release.\r\nCarefully." },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(result.ok);
   const text = await readFile(path, "utf8");
@@ -368,7 +362,7 @@ test("a CRLF agent.md keeps CRLF line endings throughout", async () => {
       "---\r\n\r\n# Helper\r\n\r\nShip the release.\r\nCarefully.\r\n",
     ),
   );
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const agent = loaded.definition.agents.get("helper");
   assert.equal(
@@ -383,7 +377,7 @@ test("a CRLF agent.md keeps CRLF line endings throughout", async () => {
     "helper",
     { ...edit, prompt: agent?.instructions ?? "" },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.deepEqual(same, {
     ok: true,
@@ -412,7 +406,7 @@ test("an edit that changes nothing writes nothing", async () => {
       prompt: "# Helper\n\nHelp with **care**.",
     },
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.deepEqual(result, {
     ok: true,
@@ -447,14 +441,14 @@ test("a created agent writes a valid agent.md that loads under the foreman", asy
       description: "Writes docs: guides and READMEs.",
       prompt: "# Docs\r\n\r\nWrite the docs.\r\n",
     },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.deepEqual(result, { ok: true, changed: true, warnings: [] });
   assert.equal(
     await readFile(join(root, "agents/docs-writer/agent.md"), "utf8"),
     '---\ndescription: "Writes docs: guides and READMEs."\nagentType: CUSTOM\n---\n\n# Docs\n\nWrite the docs.\n',
   );
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const agent = loaded.definition.agents.get("docs-writer");
   assert.equal(agent?.type, "CUSTOM");
@@ -468,7 +462,7 @@ test("a created agent writes a valid agent.md that loads under the foreman", asy
       await createAgent(
         root,
         { name: "bare", type: "REVIEW", description: "  ", prompt: "" },
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       )
     ).ok,
   );
@@ -490,7 +484,7 @@ test("creating an agent refuses a taken or invalid name and an invalid tree, wri
   const taken = await createAgent(
     root,
     { ...agent, name: "helper" },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!taken.ok && taken.code === "conflict");
   assert.match(taken.message, /agents\/helper already exists/);
@@ -499,7 +493,7 @@ test("creating an agent refuses a taken or invalid name and an invalid tree, wri
     const invalid = await createAgent(
       root,
       { ...agent, name },
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
     assert.ok(!invalid.ok && invalid.code === "invalid", name);
   }
@@ -508,7 +502,7 @@ test("creating an agent refuses a taken or invalid name and an invalid tree, wri
   const foreman = await createAgent(
     root,
     { ...agent, name: "boss-2", type: "FOREMAN" },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!foreman.ok && foreman.code === "invalid");
   assert.deepEqual(foreman.errors, [
@@ -535,11 +529,11 @@ test("deleting an agent removes its folder and the tree still loads", async () =
     root,
     "helper",
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.deepEqual(result, { ok: true, changed: true, warnings: [] });
   assert.deepEqual(await readdir(join(root, "agents")), ["boss"]);
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   assert.deepEqual([...loaded.definition.agents.keys()], ["boss"]);
 });
@@ -557,7 +551,7 @@ test("deleting the foreman or a referenced agent is refused with the loader's me
     root,
     "helper",
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!referenced.ok && referenced.code === "invalid");
   assert.deepEqual(
@@ -569,7 +563,7 @@ test("deleting the foreman or a referenced agent is refused with the loader's me
     root,
     "boss",
     await revision(root, "boss"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!foreman.ok && foreman.code === "invalid");
   assert.deepEqual(
@@ -584,7 +578,7 @@ test("deleting an agent changed since it was loaded is a conflict", async () => 
   const path = join(root, "agents/helper/agent.md");
   const stale = await revision(root, "helper");
   await writeFile(path, HELPER.replace("Help with", "Someone else edited"));
-  const result = await deleteAgent(root, "helper", stale, HARNESS_FALLBACK);
+  const result = await deleteAgent(root, "helper", stale, HARNESS_DEFAULT);
   assert.ok(!result.ok && result.code === "conflict");
   assert.match(result.message, /agents\/helper\/agent\.md changed on disk/);
 
@@ -593,7 +587,7 @@ test("deleting an agent changed since it was loaded is a conflict", async () => 
     root,
     "helper",
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
     () => writeFile(path, "---\nagentType: CUSTOM\n---\nRaced.\n"),
   );
   assert.ok(!raced.ok && raced.code === "conflict");
@@ -607,7 +601,7 @@ test("deleting an agent changed since it was loaded is a conflict", async () => 
     root,
     "..",
     await revision(root, "helper"),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!outside.ok && outside.code === "conflict");
   assert.ok(await stat(join(root, "factory.yaml")));
@@ -641,14 +635,14 @@ test("a created automation writes an automation.md that loads with its trigger",
   const result = await createAutomation(
     root,
     { name: "nightly", ...NEW_AUTOMATION },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.deepEqual(result, { ok: true, changed: true, warnings: [] });
   assert.equal(
     await readFile(join(root, "automations/nightly/automation.md"), "utf8"),
     "---\ndisplayName: Nightly report\nenabled: true\nagent: helper\ntriggers:\n  - provider: schedule\n    event: cron_fired\n    schedule:\n      cron: 0 3 * * *\n---\nReport\n\nthe night.\n",
   );
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const [nightly] = loaded.definition.automations;
   assert.equal(nightly?.name, "nightly");
@@ -677,7 +671,7 @@ test("a created automation writes an automation.md that loads with its trigger",
           instructions: "",
           enabled: false,
         },
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       )
     ).ok,
   );
@@ -699,7 +693,7 @@ test("creating an automation refuses a taken or invalid name, a bad trigger and 
   const taken = await createAutomation(
     root,
     { name: "nightly", ...NEW_AUTOMATION },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!taken.ok && taken.code === "conflict");
   assert.equal(
@@ -718,7 +712,7 @@ test("creating an automation refuses a taken or invalid name, a bad trigger and 
     const invalid = await createAutomation(
       root,
       { ...NEW_AUTOMATION, name },
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
     assert.ok(!invalid.ok && invalid.code === "invalid", name);
     assert.match(invalid.errors[0]?.message ?? "", /an automation name uses/);
@@ -731,7 +725,7 @@ test("creating an automation refuses a taken or invalid name, a bad trigger and 
       name: "weekly",
       trigger: { kind: "schedule", cron: "every day" },
     },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!cron.ok && cron.code === "invalid");
   assert.deepEqual(
@@ -748,7 +742,7 @@ test("creating an automation refuses a taken or invalid name, a bad trigger and 
   const ghost = await createAutomation(
     root,
     { ...NEW_AUTOMATION, name: "weekly", agent: "ghost" },
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!ghost.ok && ghost.code === "invalid");
   assert.deepEqual(
@@ -765,7 +759,7 @@ test("deleting an automation removes its folder; a stale one is a conflict", asy
       await createAutomation(
         root,
         { name: "nightly", ...NEW_AUTOMATION },
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       )
     ).ok,
   );
@@ -776,7 +770,7 @@ test("deleting an automation removes its folder; a stale one is a conflict", asy
     root,
     "nightly",
     stale,
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!conflict.ok && conflict.code === "conflict");
   assert.match(
@@ -790,7 +784,7 @@ test("deleting an automation removes its folder; a stale one is a conflict", asy
     root,
     "..",
     fileRevision(await readFile(path)),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!outside.ok && outside.code === "conflict");
 
@@ -798,11 +792,11 @@ test("deleting an automation removes its folder; a stale one is a conflict", asy
     root,
     "nightly",
     fileRevision(await readFile(path)),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.deepEqual(deleted, { ok: true, changed: true, warnings: [] });
   assert.deepEqual(await readdir(join(root, "automations")), []);
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   assert.deepEqual(loaded.definition.automations, []);
 });
@@ -824,7 +818,7 @@ Run the suite.
   await writeFile(path, original);
   const current = async () => fileRevision(await readFile(path));
   const load = async () => {
-    const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+    const loaded = await loadDefinition(root, HARNESS_DEFAULT);
     assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.errors));
     return loaded.definition.automations.find((a) => a.name === "nightly");
   };
@@ -836,7 +830,7 @@ Run the suite.
       "nightly",
       { enabled: true, instructions: "Run the suite." },
       await current(),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     ),
     { ok: true, changed: false, warnings: [], revision: await current() },
   );
@@ -847,7 +841,7 @@ Run the suite.
     "nightly",
     { enabled: false, instructions: "Run the suite." },
     await current(),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.equal(disabled.ok && disabled.revision, await current());
   assert.equal(
@@ -865,7 +859,7 @@ Run the suite.
       instructions: "Run the suite.\r\n\r\nReport **failures**.\n",
     },
     stale,
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   const loaded = await load();
   assert.equal(loaded?.frontmatter.enabled, true);
@@ -893,7 +887,7 @@ Report **failures**.
     "nightly",
     { enabled: false, instructions: "Gone." },
     stale,
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.equal(conflict.ok || conflict.code, "conflict");
   assert.equal(await readFile(path, "utf8"), before);
@@ -906,13 +900,13 @@ test("approved lessons append to a shared learnings skill that every agent loads
   const first = await appendLearning(
     root,
     ["  Run the linter before the PR. "],
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.equal(first.ok && first.changed, true);
   const second = await appendLearning(
     root,
     ["Never edit generated files.", "Cite the issue."],
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.equal(second.ok, true);
   const text = await readFile(path, "utf8");
@@ -923,7 +917,7 @@ test("approved lessons append to a shared learnings skill that every agent loads
     ),
   );
 
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   for (const agent of loaded.definition.agents.values())
     assert.ok(
@@ -944,7 +938,7 @@ test("a lesson that is not 1-3 short plain lines is refused and writes no file",
     ["---"],
     ["<script>"],
   ]) {
-    const result = await appendLearning(root, lines, HARNESS_FALLBACK);
+    const result = await appendLearning(root, lines, HARNESS_DEFAULT);
     assert.equal(result.ok || result.code, "invalid", JSON.stringify(lines));
   }
   await assert.rejects(lstat(join(root, LEARNINGS_PATH)));
@@ -954,10 +948,10 @@ test("the learnings skill refuses lessons past its cap and keeps the file", asyn
   const root = await tree();
   for (let i = 0; i < LEARNINGS_CAP; i++)
     assert.ok(
-      (await appendLearning(root, [`Lesson ${i}.`], HARNESS_FALLBACK)).ok,
+      (await appendLearning(root, [`Lesson ${i}.`], HARNESS_DEFAULT)).ok,
     );
   const before = await readFile(join(root, LEARNINGS_PATH), "utf8");
-  const full = await appendLearning(root, ["One more."], HARNESS_FALLBACK);
+  const full = await appendLearning(root, ["One more."], HARNESS_DEFAULT);
   assert.equal(full.ok || full.code, "invalid");
   assert.equal(await readFile(join(root, LEARNINGS_PATH), "utf8"), before);
 });
@@ -977,11 +971,11 @@ async function automationTree(
       "intake",
       { enabled: true, instructions: "Do the work.", ...edit },
       await current(),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
   /** A factory running the definition as loaded from disk now. */
   const factory = async () => {
-    const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+    const loaded = await loadDefinition(root, HARNESS_DEFAULT);
     assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.errors));
     const store = new Store(":memory:", { defaultBudgetUsd: 15 });
     const factory = new Factory(
@@ -1188,7 +1182,7 @@ test("factory.yaml: a description is added under the name, changed and removed, 
     root,
     { description: "  Ships the web app.  " },
     await current(),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(added.ok && added.changed);
   assert.equal(
@@ -1199,7 +1193,7 @@ test("factory.yaml: a description is added under the name, changed and removed, 
     ),
   );
   assert.equal(added.revision, await current());
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   assert.equal(loaded.definition.factory.description, "Ships the web app.");
 
@@ -1207,7 +1201,7 @@ test("factory.yaml: a description is added under the name, changed and removed, 
     root,
     { description: "Ships: the API" },
     await current(),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(changed.ok && changed.changed);
   const text = await readFile(path, "utf8");
@@ -1219,7 +1213,7 @@ test("factory.yaml: a description is added under the name, changed and removed, 
     root,
     { description: "Ships: the API" },
     await current(),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(same.ok && !same.changed);
 
@@ -1229,7 +1223,7 @@ test("factory.yaml: a description is added under the name, changed and removed, 
       root,
       { description },
       await current(),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
     assert.ok(removed.ok);
     assert.equal(await readFile(path, "utf8"), FACTORY);
@@ -1254,7 +1248,7 @@ test("factory.yaml: a stale revision is a conflict and writes nothing", async ()
     root,
     { description: "Late." },
     stale,
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!result.ok && result.code === "conflict");
   assert.match(result.message, /factory\.yaml changed on disk/);
@@ -1271,7 +1265,7 @@ test("factory.yaml: an edit the loader rejects writes nothing", async () => {
     root,
     { description: "Anything." },
     fileRevision(await readFile(path)),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(!result.ok && result.code === "invalid");
   assert.ok(result.errors.some((e) => e.path === "factory.yaml"));
@@ -1308,7 +1302,7 @@ test("factory.yaml agentDefaults: a model replaces the harness and back; secrets
       root,
       { agentDefaults },
       fileRevision(await readFile(path)),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
       { models: MODELS },
     );
   const kept = [
@@ -1324,7 +1318,7 @@ test("factory.yaml agentDefaults: a model replaces the harness and back; secrets
   assert.match(text, /^agentDefaults:\n {2}runner: std\n/m);
   assert.match(text, /^ {2}model: opus$/m);
   for (const line of kept) assert.ok(text.includes(line), line);
-  let loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  let loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   assert.deepEqual(loaded.definition.agents.get("boss")?.harness, {
     kind: "claude",
@@ -1342,7 +1336,7 @@ test("factory.yaml agentDefaults: a model replaces the harness and back; secrets
   // Runner and idle timeout alone leave the harness as it is; null removes them.
   const runner = await save({ runner: "big", idleTimeoutMinutes: 15 });
   assert.ok(runner.ok && runner.changed);
-  loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const boss = loaded.definition.agents.get("boss");
   assert.equal(boss?.runner, "big");
@@ -1374,7 +1368,7 @@ test("factory.yaml agentDefaults: an unknown harness, runner or timeout, or a lo
       root,
       { agentDefaults },
       fileRevision(await readFile(path)),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
     assert.ok(!result.ok && result.code === "invalid", String(message));
     assert.match(
@@ -1394,7 +1388,7 @@ test("factory.yaml agentDefaults: an unknown harness, runner or timeout, or a lo
     root,
     { agentDefaults: { harness: null, model: "opus" } },
     fileRevision(await readFile(path)),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
     { models: MODELS },
   );
   assert.ok(!auth.ok && auth.code === "invalid");
@@ -1420,7 +1414,7 @@ agentDefaults:
     root,
     { agentDefaults: { runner: "big" } },
     fileRevision(await readFile(path)),
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   );
   assert.ok(result.ok && result.changed);
   assert.equal(
@@ -1447,7 +1441,7 @@ test("factory.yaml agentDefaults: a model must be one its harness lists; nothing
       root,
       { agentDefaults },
       fileRevision(await readFile(path)),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
       { models },
     );
   for (const [agentDefaults, message, models] of [
@@ -1476,7 +1470,7 @@ test("factory.yaml agentDefaults: a model must be one its harness lists; nothing
   assert.ok((await save({ runner: "big" }, {})).ok);
   // A file that already names an unlisted model still loads: the check is the write's.
   await writeFile(path, DEFAULTS.replace("model: haiku", "model: opus-9"));
-  assert.ok((await loadDefinition(root, HARNESS_FALLBACK)).ok);
+  assert.ok((await loadDefinition(root, HARNESS_DEFAULT)).ok);
   assert.ok((await save({ idleTimeoutMinutes: 10 }, {})).ok);
 
   assert.equal(modelListOf({ model: "qwen3-coder" }), null);
@@ -1507,7 +1501,7 @@ test("factory.yaml repositories: added at the end and removed by owner/name, kee
       root,
       { repositories },
       fileRevision(await readFile(path)),
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
 
   const added = await save({ add: [{ owner: "acme", name: "docs.site" }] });
@@ -1519,7 +1513,7 @@ test("factory.yaml repositories: added at the end and removed by owner/name, kee
       "    deferred: true\n  - owner: acme\n    name: docs.site\n",
     ),
   );
-  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   assert.deepEqual(
     loaded.definition.factory.repositories.map((r) => `${r.owner}/${r.name}`),
@@ -1572,7 +1566,7 @@ test("factory.yaml repositories: a duplicate, an unknown or the last repository 
       root,
       { repositories },
       revision,
-      HARNESS_FALLBACK,
+      HARNESS_DEFAULT,
     );
     assert.ok(!result.ok && result.code === "invalid", String(message));
     assert.match(result.errors[0]?.message ?? "", message);

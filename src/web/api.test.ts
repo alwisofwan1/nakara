@@ -14,7 +14,7 @@ import { type TestContext, test } from "node:test";
 import type { HttpBindings } from "@hono/node-server";
 import { loadConfig } from "../config.ts";
 import { Store } from "../db.ts";
-import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "../definition/load.ts";
 import { GithubPoller } from "../intake/github.ts";
 import { ActionApplier } from "../orchestrator/action-applier.ts";
 import {
@@ -972,7 +972,7 @@ test("after the poller reports the Operator's merge, the item completes through 
   const { app, store, config } = fixture();
   t.after(() => store.db.close());
   const gh = await fakeMergeGh(t);
-  const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
+  const loaded = await loadDefinition("factory", HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const definition = {
     ...loaded.definition,

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   loadDefinition,
   resolveHarness,
   splitFrontmatter,
@@ -451,7 +451,7 @@ test("an agent whose harness cannot reach its model through its runner's egress 
     "agents/local/agent.md":
       "---\nagentType: CUSTOM\nrunner: local\nharness: { type: codex }\n---\n# Local\n",
   });
-  const result = await loadDefinition(root, HARNESS_FALLBACK);
+  const result = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(result.ok);
   const message =
     'agent "review" uses codex but runner "std" egress does not allow chatgpt.com, auth.openai.com, so its runs cannot reach the model; add them under egress.allow, or give the agent a harness the runner reaches';

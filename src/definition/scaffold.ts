@@ -20,7 +20,7 @@ import { parseDocument, stringify } from "yaml";
 import type { AgentType } from "../domain/policy.ts";
 import {
   filterList,
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   loadDefinition,
   type Problem,
   repoClaims,
@@ -239,7 +239,7 @@ function templateAgents(files: FileTree): TemplateAgent[] {
     {}) as { agentDefaults?: Parameters<typeof resolveHarness>[0] };
   const inherited = resolveHarness(
     factory.agentDefaults ?? {},
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   ).harness;
   const roles = Object.entries(ROLE_TYPES) as [AgentRole, AgentType][];
   const agents: TemplateAgent[] = [];
@@ -249,7 +249,7 @@ function templateAgents(files: FileTree): TemplateAgent[] {
     >[0] & { description?: unknown };
     const harness =
       fm.model || fm.harness
-        ? resolveHarness(fm, HARNESS_FALLBACK).harness
+        ? resolveHarness(fm, HARNESS_DEFAULT).harness
         : inherited;
     agents.push({
       name: agent.dir.slice("agents/".length),
@@ -542,10 +542,8 @@ function applyAgents(
   const factory = parseDocument(textOf(files, "factory.yaml")).toJS() as {
     agentDefaults?: Parameters<typeof resolveHarness>[0];
   };
-  const inherited = resolveHarness(
-    factory.agentDefaults ?? {},
-    HARNESS_FALLBACK,
-  ).harness.kind;
+  const inherited = resolveHarness(factory.agentDefaults ?? {}, HARNESS_DEFAULT)
+    .harness.kind;
   const disabled: string[] = [];
   for (const [role, choice] of Object.entries(agents)) {
     if (!choice) continue;
@@ -588,7 +586,7 @@ function withHarness(
     const fm = current() as Parameters<typeof resolveHarness>[0];
     const kind =
       fm.model || fm.harness
-        ? resolveHarness(fm, HARNESS_FALLBACK).harness.kind
+        ? resolveHarness(fm, HARNESS_DEFAULT).harness.kind
         : inherited;
     if (kind === harness) return;
     put(["model"], null);
@@ -704,7 +702,7 @@ async function validate(files: FileTree): Promise<
   const scratch = await mkdtemp(join(tmpdir(), "nakara-scaffold-"));
   try {
     await materialize(scratch, files);
-    const result = await loadDefinition(scratch, HARNESS_FALLBACK);
+    const result = await loadDefinition(scratch, HARNESS_DEFAULT);
     if (!result.ok) return result;
     const { alias, factory } = result.definition;
     return {

@@ -16,7 +16,7 @@ import { type TestContext, test } from "node:test";
 import { loadConfig } from "../config.ts";
 import { Store } from "../db.ts";
 import { uncheckedKey } from "../db/learnings.ts";
-import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "../definition/load.ts";
 import type { PrIO } from "../domain/pushed.ts";
 import type { runTurn } from "../harness/claude.ts";
 import { diffFile, type RepoSnapshot } from "../runner/snapshot.ts";
@@ -60,7 +60,7 @@ async function fixture(t: TestContext, agentName = "implement") {
     "+refs/heads/*:refs/remotes/origin/*",
   );
 
-  const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
+  const loaded = await loadDefinition("factory", HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const def = loaded.definition;
   def.factory.repositories = [{ owner: "acme", name: "widgets" }];

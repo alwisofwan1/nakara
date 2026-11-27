@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { Store, stubFactorySeed } from "../db.ts";
 import { uncheckedKey } from "../db/learnings.ts";
-import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "../definition/load.ts";
 import {
   applyReflection,
   parseRecurs,
@@ -12,7 +12,7 @@ import {
 } from "./reflect.ts";
 
 async function setup() {
-  const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
+  const loaded = await loadDefinition("factory", HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const store = new Store(":memory:", { defaultBudgetUsd: 5 });
   const item = store.createItem({ title: "T", request: "R", source: "manual" });

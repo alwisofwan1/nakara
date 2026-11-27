@@ -41,7 +41,7 @@ export interface ResolvedHarness {
 }
 
 /** The harness an agent runs on when neither it nor agentDefaults names one. */
-export const HARNESS_FALLBACK: ResolvedHarness = {
+export const HARNESS_DEFAULT: ResolvedHarness = {
   kind: "claude",
   model: undefined,
 };
