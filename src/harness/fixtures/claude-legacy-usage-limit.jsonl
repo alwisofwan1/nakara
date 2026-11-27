@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"s-legacy","tools":[]}
+{"type":"assistant","message":{"id":"m-1","type":"message","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"Claude AI usage limit reached|1795874400"}]},"parent_tool_use_id":null,"session_id":"s-legacy"}
+{"type":"result","subtype":"success","is_error":true,"duration_ms":300,"num_turns":1,"result":"Claude AI usage limit reached|1795874400","session_id":"s-legacy","total_cost_usd":0}

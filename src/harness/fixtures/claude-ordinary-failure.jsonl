@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"s-fail","tools":[]}
+{"type":"assistant","message":{"id":"m-1","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"The API client retries when it sees 429 Too Many Requests; the usage limit reached branch is untested."}],"usage":{"input_tokens":10,"output_tokens":20}},"parent_tool_use_id":null,"session_id":"s-fail"}
+{"type":"result","subtype":"error_max_turns","is_error":false,"duration_ms":9000,"num_turns":50,"session_id":"s-fail","total_cost_usd":0.4}

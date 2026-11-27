@@ -18,6 +18,7 @@ import {
 import { hostEnv } from "../runner/env.ts";
 import { openCodexHome } from "./codex-home.ts";
 import { EgressWatch } from "./egress-watch.ts";
+import { LIMIT_HIT, LimitWatch, type RateLimit } from "./limits.ts";
 import { StreamCost } from "./pricing.ts";
 import { openInternal, writeInternal } from "../runner/workspace.ts";
 
@@ -60,6 +61,8 @@ export interface TurnOutcome {
   sessionId: string | null;
   result: string | null;
   error: string | null;
+  /** The run failed because the harness hit a rate or usage limit (see limits.ts). */
+  limit?: RateLimit | null;
   costUsd: number;
   numTurns: number | null;
   durationMs: number;
@@ -250,6 +253,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
   req.signal?.addEventListener("abort", kill, { once: true });
   // A model host the egress proxy refuses ends the run instead of retrying until the idle timeout.
   const egress = new EgressWatch(req.harness, req.docker?.egress?.allow, kill);
+  const limits = new LimitWatch();
 
   let final: Record<string, unknown> | undefined;
   let lastAssistantText: string | null = null;
@@ -276,6 +280,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
     try {
       const event = JSON.parse(line) as Record<string, unknown>;
       if (codex) {
+        limits.codex(event);
         if (
           event.type === "thread.started" &&
           typeof event.thread_id === "string"
@@ -289,6 +294,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
         if (event.type === "error") egress.line(String(event.message ?? ""));
         else if (String(event.type).startsWith("item.")) egress.progress();
       } else {
+        limits.claude(event);
         if (event.type === "result") final = event;
         if (event.type === "system" && typeof event.session_id === "string")
           initSession ??= event.session_id;
@@ -335,16 +341,23 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
     // Usage streamed before the end was spent; qwen and codex bill nothing per token.
     const estimate = req.harness === "claude" && streamed.seen;
     const costUsd = estimate ? streamed.usd : 0;
+    const limit =
+      req.signal?.aborted || egress.blocked || idleFired
+        ? null
+        : limits.limit(stderrTail);
     return {
       ...failed(
         estimate
-          ? `${why.trim()} Its cost ($${costUsd.toFixed(2)}) is estimated from the streamed token usage.`
-          : why,
+          ? `${(limit ? limitError(req.harness, limit) : why).trim()} Its cost ($${costUsd.toFixed(2)}) is estimated from the streamed token usage.`
+          : limit
+            ? limitError(req.harness, limit)
+            : why,
         durationMs,
       ),
       result: lastAssistantText,
       sessionId: initSession,
       costUsd,
+      limit,
     };
   }
   if (codex) {
@@ -353,24 +366,42 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
         ? ((final.error as { message?: string } | undefined)?.message ??
           "Turn failed.")
         : null;
+    const limit = failure ? limits.limit(failure) : null;
     // ponytail: cost is 0 because ChatGPT-plan usage is not billed per token; add pricing if API keys are used.
     return {
       ok: !failure,
       sessionId: initSession,
       result: lastAssistantText,
-      error: failure,
+      error: limit ? limitError(req.harness, limit) : failure,
+      limit,
       costUsd: 0,
       numTurns: null,
       durationMs,
     };
   }
   const isError = final.is_error === true || final.subtype !== "success";
+  // An error result's text is the error, never the agent's report.
+  const limit = isError
+    ? limits.limit(
+        final.api_error === "usage_limit_reached"
+          ? "usage limit reached"
+          : null,
+        final.is_error === true && typeof final.result === "string"
+          ? final.result
+          : null,
+      )
+    : null;
   return {
     ok: !isError,
     sessionId:
       typeof final.session_id === "string" ? final.session_id : initSession,
     result: typeof final.result === "string" ? final.result : lastAssistantText,
-    error: isError ? `Run ended with ${String(final.subtype)}.` : null,
+    error: limit
+      ? limitError(req.harness, limit)
+      : isError
+        ? `Run ended with ${String(final.subtype)}.`
+        : null,
+    limit,
     costUsd: req.harness === "qwen" ? 0 : Number(final.total_cost_usd ?? 0),
     numTurns: typeof final.num_turns === "number" ? final.num_turns : null,
     durationMs,
@@ -412,6 +443,15 @@ export function toolCalls(line: string, seen: Set<string>): string[] {
     }
     return [name];
   });
+}
+
+/** A limited run's error, for the run page and the operator. */
+export function limitError(harness: HarnessKind, limit: RateLimit): string {
+  // A sentence of its own, so the reset time and what follows read apart from the CLI's text.
+  const said = /[.!?]$/.test(limit.message)
+    ? limit.message
+    : `${limit.message}.`;
+  return `${harness} ${LIMIT_HIT}: ${said}${limit.resetAt ? ` It resets at ${limit.resetAt}.` : ""}`;
 }
 
 function failed(error: string, durationMs: number): TurnOutcome {
