@@ -35,6 +35,8 @@ const row = (
 const NO_VERIFY_AGENT = "has no verify agent, so no Verification can pass";
 const ONE_REVIEW =
   "a review that asks for changes leaves the Work Item waiting for you";
+const ONE_REVIEW_WAY_OUT =
+  "you review and merge the pull request yourself, or cancel the Work Item. Raising the review limit applies only to new Work Items, not to one already waiting.";
 
 /** Each switch's label and whether it is on and locked, in order. */
 const switches = (html: string) =>
@@ -88,6 +90,9 @@ describe("Handoff Gate row", () => {
   it("hints under Review accepted when it is on and the review limit is 1", () => {
     const html = row(["review"], { maxReviews: 1 });
     expect(html).toContain(ONE_REVIEW);
+    // The item copied its review limit: raising the factory's does not free it.
+    expect(html).toContain(ONE_REVIEW_WAY_OUT);
+    expect(html).not.toContain("to let the Foreman review again");
     expect(html.indexOf(ONE_REVIEW)).toBeGreaterThan(
       html.indexOf("Review accepted"),
     );

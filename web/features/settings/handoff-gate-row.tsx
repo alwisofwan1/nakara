@@ -128,8 +128,9 @@ export function HandoffGateRow({
                 <p role="note" className="text-muted">
                   With a review limit of 1, a review that asks for changes
                   leaves the Work Item waiting for you: review cannot run again
-                  to accept the fix. Raise the review limit to let the Foreman
-                  review again.
+                  to accept the fix, so you review and merge the pull request
+                  yourself, or cancel the Work Item. Raising the review limit
+                  applies only to new Work Items, not to one already waiting.
                 </p>
               )}
             {s.check === "verification" &&

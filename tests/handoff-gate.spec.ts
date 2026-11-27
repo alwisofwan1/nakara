@@ -42,6 +42,9 @@ test("Handoff Gate: CI is on and locked, Review and Verification switch on and o
     page.locator(".toast").getByText("Handoff Gate saved", { exact: true }),
   ).toBeVisible();
   await expect(oneReview).toBeVisible();
+  await expect(oneReview).toContainText(
+    "you review and merge the pull request yourself, or cancel the Work Item. Raising the review limit applies only to new Work Items, not to one already waiting.",
+  );
   await expect(noVerifyAgent).toBeHidden();
   await verification.click();
   await expect(verification).toBeChecked();
