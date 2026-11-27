@@ -121,7 +121,8 @@ export class FactoryRepository extends Repository {
 
   /**
    * Remove the factory with its closed items and their runs, events,
-   * messages, approvals and per-item settings (the Telegram and Slack marks
+   * messages, approvals, stage transitions, evidence (UI proof), lesson
+   * proposals and per-item settings (the Telegram and Slack marks
    * of its approvals, and the kv keys under `itemKeyPrefixes` that other
    * modules own), its saved limits, its repository status (`repo:<slug>`,
    * see runner/repos.ts), its approved and pending reach (`reach:<id>` and
@@ -129,6 +130,10 @@ export class FactoryRepository extends Repository {
    * Ids are not reused (migration 023), but nothing keyed by them outlives
    * them. The caller refuses a factory with active items; the foreign keys
    * refuse what is left behind.
+   *
+   * Every lesson proposal goes, approved ones too: an approved lesson was
+   * already written into the factory's own skills/learnings/SKILL.md, and
+   * approved lessons are scoped to their factory, which is going away.
    */
   deleteFactory(id: number, itemKeyPrefixes: readonly string[] = []): void {
     const items = "SELECT id FROM work_items WHERE factory_id = ?";
@@ -165,6 +170,8 @@ export class FactoryRepository extends Repository {
         "approvals",
         "messages",
         "events",
+        "evidence",
+        "learnings",
         "runs",
         "stage_transitions",
       ])
