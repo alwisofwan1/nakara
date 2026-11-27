@@ -6,10 +6,12 @@ import {
   decideSpec,
   raiseBudget,
   raiseRunLimit,
+  runLimitReached,
 } from "../domain/policy.ts";
 import { removeWorkspace } from "../runner/workspace.ts";
 import type { ActionApplier } from "./action-applier.ts";
 import { checkFollowUp } from "./follow-up.ts";
+import { limitWait, resumeLimited } from "./limit-wait.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
 import {
   type RunControl,
@@ -108,6 +110,13 @@ export class HumanInput {
     const item = this.store.item(itemId);
     if (!item || item.stage === "complete" || item.stage === "cancelled")
       throw new Error("The work item is closed.");
+    // A message ends a wait for a rate or usage limit: the held runs start now.
+    resumeLimited(
+      this.store,
+      this.telemetry.log,
+      itemId,
+      "The operator resumed the work item before the limit reset.",
+    );
     this.store.transaction(() => {
       this.store.addMessage(itemId, "human", message);
       if (item.status === "paused" || item.status === "waiting_human")
@@ -221,6 +230,19 @@ export class HumanInput {
       ({ ok: false, code: "policy", reason }) as const;
     if (runs.some((r) => r.status === "queued" || r.status === "running"))
       return refuse("A run is already in progress. Wait for it to finish.");
+    // Retry of a run that waits for a limit to reset resumes the wait now.
+    if (limitWait(this.store, itemId)?.runs.length) {
+      const [resumed] = resumeLimited(
+        this.store,
+        this.telemetry.log,
+        itemId,
+        "The operator retried before the limit reset.",
+      );
+      this.pump();
+      if (resumed) return { ok: true, run: resumed };
+      // biome-ignore lint/style/noNonNullAssertion: Work items are never deleted.
+      return refuse(runLimitReached(policyState(this.store.item(itemId)!)));
+    }
     if (last?.status !== "failed")
       return refuse("Only a failed agent run can be retried.");
     const agent = this.definition()?.agents.get(last.agent);
@@ -335,6 +357,8 @@ export class HumanInput {
   async cancel(itemId: number): Promise<void> {
     stopItemRuns(this.store, this.control, itemId);
     this.store.updateItem(itemId, { stage: "cancelled", status: "done" });
+    // A closed item drops its wait for a limit to reset.
+    resumeLimited(this.store, this.telemetry.log, itemId, "");
     this.store.addMessage(itemId, "factory", "Cancelled by the operator.");
     this.store.markEventsProcessed(
       this.store.pendingEvents(itemId).map((e) => e.id),

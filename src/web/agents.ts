@@ -3,7 +3,7 @@ import type { Store } from "../db.ts";
 import {
   type AgentDef,
   type Definition,
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   resolveHarness,
 } from "../definition/load.ts";
 import { AGENT_NAME, type AgentEdit } from "../definition/write.ts";
@@ -110,7 +110,7 @@ export function readAgent(
   });
   const base = resolveHarness(
     definition.factory.agentDefaults,
-    HARNESS_FALLBACK,
+    HARNESS_DEFAULT,
   ).harness;
   return {
     ...summary(agent),

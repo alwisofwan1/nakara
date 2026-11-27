@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"s-outside","model":"claude-opus-5-5","tools":["Bash"]}
+{"type":"assistant","message":{"id":"m-1","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"Opening the PR with gh."}]},"parent_tool_use_id":null,"session_id":"s-outside"}
+{"type":"assistant","message":{"id":"m-2","type":"message","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"API Error: 429 from GitHub: You have exceeded a secondary rate limit."}]},"parent_tool_use_id":null,"session_id":"s-outside","is_api_error_message":true}
+{"type":"result","subtype":"success","is_error":true,"duration_ms":5000,"num_turns":2,"result":"API Error: 429 from GitHub: You have exceeded a secondary rate limit.","session_id":"s-outside","total_cost_usd":0.1}

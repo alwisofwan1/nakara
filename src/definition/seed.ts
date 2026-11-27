@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 
 import type { Config } from "../config.ts";
 import type { FactorySeed } from "../db.ts";
-import { HARNESS_FALLBACK, loadDefinition } from "./load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "./load.ts";
 
 const AVATAR_COLOR = "#6d4aff";
 
@@ -38,7 +38,7 @@ export async function factorySeed(
   config: Pick<Config, "definitionDir" | "dataDir">,
 ): Promise<FactorySeed> {
   const dir = config.definitionDir;
-  const loaded = await loadDefinition(dir, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(dir, HARNESS_DEFAULT);
   if (!loaded.ok)
     throw new Error(
       `The definition at ${dir} must load to name the first factory: ${loaded.errors

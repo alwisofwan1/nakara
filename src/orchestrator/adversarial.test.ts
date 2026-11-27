@@ -23,7 +23,7 @@ import { loadConfig } from "../config.ts";
 import { Store } from "../db.ts";
 import {
   type Definition,
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   loadDefinition,
 } from "../definition/load.ts";
 import { ensureEgress } from "../runner/docker.ts";
@@ -149,7 +149,7 @@ test("an attacking agent container cannot run code on the host, make it write th
     "+refs/heads/*:refs/remotes/origin/*",
   );
 
-  const loaded = await loadDefinition(resolve("factory"), HARNESS_FALLBACK);
+  const loaded = await loadDefinition(resolve("factory"), HARNESS_DEFAULT);
   assert.ok(loaded.ok);
   const def = loaded.definition;
   def.factory.repositories = [{ owner: "acme", name: "widgets" }];

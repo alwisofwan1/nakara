@@ -10,7 +10,7 @@ import { commitDefinition, ensureHistory } from "../definition/history.ts";
 
 import {
   DEFINITION_ENTRIES,
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   loadDefinition,
   type Problem,
 } from "../definition/load.ts";
@@ -232,7 +232,7 @@ export class FactorySettings {
             `Could not copy the definition into ${dir}; nothing was moved: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
-        const loaded = await loadDefinition(dir, HARNESS_FALLBACK);
+        const loaded = await loadDefinition(dir, HARNESS_DEFAULT);
         if (!loaded.ok) {
           await rm(dir, { recursive: true, force: true });
           return {
@@ -366,7 +366,7 @@ export class FactorySettings {
             `Could not copy the definition from ${from}; nothing changed: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
-        const loaded = await loadDefinition(staging, HARNESS_FALLBACK);
+        const loaded = await loadDefinition(staging, HARNESS_DEFAULT);
         if (!loaded.ok)
           return failed(
             "The repository definition does not load; nothing changed.",

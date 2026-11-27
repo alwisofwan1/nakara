@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   loadDefinition,
   resolveHarness,
   splitFrontmatter,
@@ -451,7 +451,7 @@ test("an agent whose harness cannot reach its model through its runner's egress 
     "agents/local/agent.md":
       "---\nagentType: CUSTOM\nrunner: local\nharness: { type: codex }\n---\n# Local\n",
   });
-  const result = await loadDefinition(root, HARNESS_FALLBACK);
+  const result = await loadDefinition(root, HARNESS_DEFAULT);
   assert.ok(result.ok);
   const message =
     'agent "review" uses codex but runner "std" egress does not allow chatgpt.com, auth.openai.com, so its runs cannot reach the model; add them under egress.allow, or give the agent a harness the runner reaches';
@@ -462,4 +462,74 @@ test("an agent whose harness cannot reach its model through its runner's egress 
     [["agents/review/agent.md", message, 3]],
   );
   assert.deepEqual(harnessReachWarnings(result.definition), [`T: ${message}`]);
+});
+
+test("fallback lists resolve, inherit from agentDefaults, and drop the agent's own harness", async () => {
+  const root = await tree({
+    "factory.yaml": FACTORY.replace(
+      "agentDefaults: { model: auto, runner: std }",
+      "agentDefaults: { model: auto, runner: local, fallback: [codex, qwen] }",
+    ),
+    "runners/local.yaml": "platform: { os: linux }\n",
+    "agents/boss/agent.md":
+      "---\nagentType: FOREMAN\nfallback: [qwen, claude]\n---\n# Boss\n",
+    "agents/impl/agent.md": "---\nagentType: IMPLEMENT\n---\n# Impl\n",
+    "agents/review/agent.md":
+      "---\nagentType: REVIEW\nharness: { type: codex }\nfallback:\n  - { type: claude, model: sonnet }\n  - codex\n---\n# Review\n",
+  });
+  const result = await loadDefinition(root, HARNESS_DEFAULT);
+  assert.ok(result.ok, JSON.stringify(!result.ok && result.errors));
+  const fallback = (name: string) =>
+    result.definition.agents.get(name)?.fallback;
+  assert.deepEqual(fallback("impl"), [
+    { kind: "codex", model: undefined },
+    { kind: "qwen", model: undefined },
+  ]);
+  assert.deepEqual(fallback("boss"), [{ kind: "qwen", model: undefined }]);
+  assert.deepEqual(fallback("review"), [{ kind: "claude", model: "sonnet" }]);
+});
+
+test("fallback refuses unknown kinds, and the foreman and mcpServers rules of codex apply to it", async () => {
+  const root = await tree({
+    "factory.yaml": FACTORY.replace(
+      "agentDefaults: { model: auto, runner: std }",
+      "agentDefaults:\n  model: auto\n  runner: local\n  fallback: [codex]\n",
+    ),
+    "runners/local.yaml": "platform: { os: linux }\n",
+    "agents/boss/agent.md":
+      "---\nagentType: FOREMAN\nmcpServers: {}\n---\n# Boss\n",
+    "agents/docs/agent.md":
+      "---\nagentType: CUSTOM\nfallback:\n  - gemini\n  - { type: oz }\n---\n# Docs\n",
+    "agents/web/agent.md":
+      "---\nagentType: CUSTOM\nmcpServers:\n  browser: { url: 'http://localhost:9000' }\nfallback: [qwen, codex]\n---\n# Web\n",
+  });
+  const result = await loadDefinition(root, HARNESS_DEFAULT);
+  assert.equal(result.ok, false);
+  const errors = (!result.ok ? result.errors : []).map((e) => [
+    e.path,
+    e.message,
+    e.line,
+  ]);
+  assert.deepEqual(errors, [
+    [
+      "factory.yaml",
+      "fallback: the foreman cannot use the codex harness (it needs the nakara MCP tools)",
+      8,
+    ],
+    [
+      "agents/docs/agent.md",
+      'fallback: unknown harness "gemini"; use claude, codex or qwen',
+      4,
+    ],
+    [
+      "agents/docs/agent.md",
+      'fallback: unknown harness "oz"; use claude, codex or qwen',
+      5,
+    ],
+    [
+      "agents/web/agent.md",
+      'fallback: codex agents cannot use mcpServers yet, so agent "web" cannot fall back to codex',
+      5,
+    ],
+  ]);
 });

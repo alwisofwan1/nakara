@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import type { Store } from "../db.ts";
 import {
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   loadDefinition,
   type Problem,
   repoClaims,
@@ -405,7 +405,7 @@ export class FactoryCreation {
 
   /** Load the written tree; a repository another factory owns is refused, as on reload. */
   private async validate(job: CreationJob): Promise<string> {
-    const loaded = await loadDefinition(job.dir, HARNESS_FALLBACK);
+    const loaded = await loadDefinition(job.dir, HARNESS_DEFAULT);
     if (!loaded.ok) throw new Error(problems(loaded.errors));
     const owned = ownedElsewhere(
       repoClaims(loaded.definition),
