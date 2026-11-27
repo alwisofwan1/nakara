@@ -16,6 +16,10 @@ import type { HttpBindings } from "@hono/node-server";
 
 import { loadConfig } from "../config.ts";
 import { type ScheduledRun, Store, stubFactorySeed } from "../db.ts";
+import {
+  concurrencySetting,
+  saveConcurrency,
+} from "../db/instance-settings.ts";
 import { GithubPoller } from "../intake/github.ts";
 import { Logger } from "../telemetry/log.ts";
 import { Metrics } from "../telemetry/metrics.ts";
@@ -230,6 +234,95 @@ test("the concurrency limit is shared across factories", async (t) => {
   release.get(b1.id)?.();
   await until(() => running.size === 0);
   assert.equal(peak, 2);
+});
+
+test("a saved concurrency applies on the next pass: raising it starts a queued run, lowering it stops none and starts nothing until the running count is under it", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-registry-"));
+  const secondDir = join(dir, "second");
+  await copyDefinition(secondDir, "Second", ["acme/second"]);
+  const { store, registry, first, second } = twoFactories(
+    secondDir,
+    join(dir, "backups"),
+    { NAKARA_CONCURRENCY: "2" },
+  );
+  const running = new Set<number>();
+  const release = new Map<number, () => void>();
+  t.after(async () => {
+    // A failed assertion leaves runs holding their slot; drain waits for them.
+    for (const id of [...running]) release.get(id)?.();
+    await registry.drain(0);
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  for (const factory of registry.factories)
+    factory.agentRun = (run: ScheduledRun) => {
+      store.markRunStarted(run.id, "");
+      running.add(run.id);
+      return new Promise<void>((resolve) =>
+        release.set(run.id, () => {
+          running.delete(run.id);
+          store.finishRun(run.id, {
+            status: "succeeded",
+            result: "done",
+            error: null,
+            cost_usd: 0,
+            num_turns: 1,
+            duration_ms: 1,
+            session_id: null,
+            log_path: null,
+          });
+          resolve();
+        }),
+      );
+    };
+  await registry.start();
+  const queue = (factory: Factory) =>
+    queueRun(
+      store,
+      store.createItem({
+        title: "Work",
+        request: "r",
+        source: "manual",
+        factoryId: factory.record?.id,
+      }).id,
+    );
+  const [a, b, c, d] = [
+    queue(first),
+    queue(second),
+    queue(first),
+    queue(second),
+  ];
+  await registry.pump();
+  assert.deepEqual([...running], [a.id, b.id]);
+
+  // Raised to 3 with 2 running: the third starts on the next pass, no restart.
+  saveConcurrency(store, 3);
+  await registry.pump();
+  assert.deepEqual([...running], [a.id, b.id, c.id]);
+  assert.equal(store.runById(d.id)?.status, "queued");
+
+  // Lowered to 1 with 3 running: all three keep running, and nothing new
+  // starts until all three have ended.
+  saveConcurrency(store, 1);
+  await registry.pump();
+  assert.equal(running.size, 3);
+  release.get(a.id)?.();
+  await until(() => !running.has(a.id));
+  await registry.pump();
+  release.get(b.id)?.();
+  await until(() => !running.has(b.id));
+  await registry.pump();
+  assert.deepEqual([...running], [c.id]);
+  assert.equal(store.runById(d.id)?.status, "queued");
+  release.get(c.id)?.();
+  await until(() => running.has(d.id));
+  assert.deepEqual([...running], [d.id]);
+
+  // Cleared: back to NAKARA_CONCURRENCY.
+  saveConcurrency(store, null);
+  assert.equal(concurrencySetting(store, 2).concurrency, 2);
+  release.get(d.id)?.();
+  await until(() => running.size === 0);
 });
 
 test("a paused factory starts no foreman turn or queued run, lets running work finish, and starts its waiting work on resume; the other factory keeps running", async (t) => {

@@ -1,5 +1,6 @@
 import type { Config } from "../config.ts";
 import type { Run, ScheduledRun, Store } from "../db.ts";
+import { concurrencySetting } from "../db/instance-settings.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
 import { failRun, pauseItem, type RunControl } from "./run-support.ts";
 
@@ -202,7 +203,11 @@ export class Scheduler {
         .runningRuns()
         .filter((r) => r.role === "agent");
       const busy = new Set(running.map(conversation));
-      let capacity = this.config.concurrency - running.length;
+      // Read on every pass, so a saved value applies without a restart. A
+      // lower value stops no run: nothing new starts until enough have ended.
+      let capacity =
+        concurrencySetting(this.store, this.config.concurrency).concurrency -
+        running.length;
       for (const queued of this.store.queuedRuns()) {
         if (capacity <= 0) break;
         if (!this.hooks.ready(queued.item_id)) continue;

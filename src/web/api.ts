@@ -7,6 +7,12 @@ import { z } from "zod";
 import type { Config } from "../config.ts";
 import type { ChangeEvent } from "../db.ts";
 import {
+  CONCURRENCY_MAX,
+  CONCURRENCY_MIN,
+  concurrencySetting,
+  saveConcurrency,
+} from "../db/instance-settings.ts";
+import {
   hasSpecAgent,
   hasVerifyAgent,
   type LoadResult,
@@ -252,6 +258,18 @@ const renameBody = jsonBody(renameInput, "Invalid factory settings");
 const factoryFileBody = jsonBody(factoryFileInput, "Invalid factory settings");
 const moveBody = jsonBody(moveInput, "Invalid folder");
 const limitsBody = jsonBody(limitsInput, "Invalid limits");
+/** The instance's concurrency: a whole number in range, or null for the environment default. */
+const concurrencyBody = jsonBody(
+  z.strictObject({
+    concurrency: z
+      .number()
+      .int("must be a whole number")
+      .min(CONCURRENCY_MIN, `must be at least ${CONCURRENCY_MIN}`)
+      .max(CONCURRENCY_MAX, `must be at most ${CONCURRENCY_MAX}`)
+      .nullable(),
+  }),
+  "Invalid concurrency",
+);
 const notificationsBody = jsonBody(
   notificationsInput,
   "Invalid notification settings",
@@ -929,7 +947,8 @@ export function createApi(
           telegramConfigured: Boolean(
             config.telegram.token && config.telegram.chatId,
           ),
-          concurrency: config.concurrency,
+          concurrency: concurrencySetting(store, config.concurrency)
+            .concurrency,
           factories: registry.factories.map((factory) => ({
             slug: factory.record?.slug ?? "",
             loaded: Boolean(factory.definition),
@@ -940,6 +959,21 @@ export function createApi(
         }),
       ),
     )
+    // The instance's settings, which span factories; the Settings page.
+    .get("/settings", (c) =>
+      c.json({ concurrency: concurrencySetting(store, config.concurrency) }),
+    )
+    // How many agent runs Nakara starts at once. The scheduler reads it on
+    // every pass; a lower value stops no run, it only starts nothing new.
+    .put("/settings/concurrency", concurrencyBody, (c) => {
+      saveConcurrency(store, c.req.valid("json").concurrency);
+      // A raise starts queued runs now rather than on the next interval.
+      void registry.pump().catch(() => {});
+      return c.json(
+        { concurrency: concurrencySetting(store, config.concurrency) },
+        200,
+      );
+    })
     // What Nakara needs to run, checked now; the Setup page.
     .get("/setup", async (c) => {
       const poll = store.getKv("github:lastPoll");

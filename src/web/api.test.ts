@@ -1027,3 +1027,88 @@ test("after the poller reports the Operator's merge, the item completes through 
   assert.equal((await complete()).length, 1);
   assert.equal(store.item(item.id)?.stage, "complete");
 });
+
+test("instance concurrency: the env default until saved, a saved value in range wins, clearing returns to the default", async () => {
+  const { app, store, registry } = fixture();
+  // Nothing is queued; the pump after a save must not start a harness.
+  registry.pump = async () => {};
+  const call = async (method: string, path: string, body?: unknown) => {
+    const response = await app.request(
+      `/api/${path}`,
+      body === undefined
+        ? { method }
+        : {
+            method,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+      bindings(),
+    );
+    return {
+      status: response.status,
+      body: (await response.json()) as {
+        concurrency: { concurrency: number };
+        slots: { total: number };
+        error: { code: string };
+      },
+    };
+  };
+  const total = async () => (await call("GET", "status")).body.slots.total;
+
+  // No saved value: NAKARA_CONCURRENCY (2).
+  assert.deepEqual((await call("GET", "settings")).body, {
+    concurrency: { concurrency: 2, saved: null, default: 2 },
+  });
+  assert.equal(await total(), 2);
+
+  assert.deepEqual(
+    await call("PUT", "settings/concurrency", { concurrency: 3 }),
+    {
+      status: 200,
+      body: { concurrency: { concurrency: 3, saved: 3, default: 2 } },
+    },
+  );
+  assert.equal(await total(), 3);
+
+  // Out of range, not whole, or not a number: 400, and the saved value stays.
+  for (const concurrency of [0, 11, 1.5, "3", "many", true, undefined]) {
+    const refused = await call("PUT", "settings/concurrency", { concurrency });
+    assert.equal(refused.status, 400, JSON.stringify(concurrency));
+    assert.equal(refused.body.error.code, "invalid_input");
+  }
+  assert.equal(
+    (await call("PUT", "settings/concurrency", { concurrency: 3, other: 1 }))
+      .status,
+    400,
+  );
+  assert.equal(await total(), 3);
+
+  // The bounds themselves are accepted.
+  for (const concurrency of [1, 10])
+    assert.equal(
+      (await call("PUT", "settings/concurrency", { concurrency })).body
+        .concurrency.concurrency,
+      concurrency,
+    );
+
+  // Clearing the field returns to the env default.
+  assert.deepEqual(
+    (await call("PUT", "settings/concurrency", { concurrency: null })).body,
+    { concurrency: { concurrency: 2, saved: null, default: 2 } },
+  );
+  assert.equal(await total(), 2);
+
+  // The same auth as the rest of the API.
+  const remote = await app.request(
+    "/api/settings/concurrency",
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json", authorization: "" },
+      body: JSON.stringify({ concurrency: 5 }),
+    },
+    bindings("192.0.2.1"),
+  );
+  assert.equal(remote.status, 401);
+  assert.equal(await total(), 2);
+  store.db.close();
+});
