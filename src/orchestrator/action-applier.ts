@@ -1,6 +1,10 @@
 import type { Config } from "../config.ts";
 import { policyState, type Store, type WorkItem } from "../db.ts";
-import { type Definition, factoryRepositories } from "../definition/load.ts";
+import {
+  type Definition,
+  factoryRepositories,
+  hasSpecAgent,
+} from "../definition/load.ts";
 import { type Action, check, runsUsed } from "../domain/policy.ts";
 import { pushOnlyPrompt, short } from "../domain/pushed.ts";
 import type { RecordedAction } from "../mcp/types.ts";
@@ -116,8 +120,13 @@ export class ActionApplier {
       if (!accepted) continue;
       // biome-ignore lint/style/noNonNullAssertion: Preserve the existing required-record assumption instead of silently skipping missing data.
       let item = this.store.item(itemId)!;
-      const repositories = factoryRepositories(this.definition());
-      let verdict = check(this.gate.policyFor(item), action, repositories);
+      const def = this.definition();
+      const repositories = factoryRepositories(def);
+      const policy = (current: WorkItem) => ({
+        ...this.gate.policyFor(current),
+        specAgent: hasSpecAgent(def),
+      });
+      let verdict = check(policy(item), action, repositories);
       if (!verdict.ok) {
         log.info("action.refused", {
           action: action.type,
@@ -141,7 +150,7 @@ export class ActionApplier {
         // judge the handoff again against the state it will be applied to.
         // biome-ignore lint/style/noNonNullAssertion: Preserve the existing required-record assumption instead of silently skipping missing data.
         item = this.store.item(itemId)!;
-        verdict = check(this.gate.policyFor(item), action, repositories);
+        verdict = check(policy(item), action, repositories);
         if (!verdict.ok) {
           log.info("action.refused", {
             action: action.type,

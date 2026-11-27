@@ -75,6 +75,11 @@ export interface PolicyState {
   specRule: SpecRule;
   /** Whether the work item asked for a Spec; only possible under `when_asked`. */
   specRequested: boolean;
+  /**
+   * Whether the factory's definition has a SPEC agent the Foreman may
+   * dispatch. Absent counts as present: only the loaded definition can tell.
+   */
+  specAgent?: boolean;
   prUrl: string | null;
   prMerged: boolean;
   ciFailed?: boolean;
@@ -125,6 +130,25 @@ export const specRequired = (
 ): boolean =>
   state.specRule === "always" ||
   (state.specRule === "when_asked" && state.specRequested);
+
+/**
+ * The refusal when a Spec is required but the definition has no spec agent.
+ * The item copied its rule when it was created (ADR-0006), so changing the
+ * factory's rule in Settings does not free it.
+ */
+const noSpecAgent = (rule: SpecRule): string =>
+  `${rule === "always" ? "This factory writes a Spec first" : "This Work Item asked for a Spec first"}, but the definition has no spec agent, so no Spec can be written. Do not dispatch one: ask_human to add a SPEC agent to the definition, or to cancel this Work Item. Changing the factory's Spec rule only affects new Work Items, not this one.`;
+
+/**
+ * Why code cannot be built or handed off yet for want of the approved Spec the
+ * item or its factory asks for; null when nothing is missing. Without a spec
+ * agent the Foreman cannot write one, so it is told so plainly.
+ */
+const specMissing = (state: PolicyState): string | null => {
+  if (!specRequired(state) || state.specState === "approved") return null;
+  if (state.specAgent === false) return noSpecAgent(state.specRule);
+  return "This factory writes a Spec first. Dispatch the spec agent.";
+};
 
 const specGate = (state: PolicyState): string | null => {
   if (state.specState === "drafting")
@@ -208,6 +232,9 @@ export function check(
     case "handoff": {
       const gate = specGate(state);
       if (gate) return refuse(gate);
+      // Code built without the Spec the rule asks for is not handed off either.
+      const missing = specMissing(state);
+      if (missing) return refuse(missing);
       if (!action.prUrl)
         return refuse("handoff requires the pull request URL.");
       return {
@@ -356,10 +383,8 @@ function checkAgentWork(
       const gate = specGate(state);
       if (gate) return refuse(gate);
       // Code needs the approved Spec the item or its factory asks for.
-      if (!isFollowUp && specRequired(state) && state.specState !== "approved")
-        return refuse(
-          "This factory writes a Spec first. Dispatch the spec agent.",
-        );
+      const missing = isFollowUp ? null : specMissing(state);
+      if (missing) return refuse(missing);
       if (state.reviewCount === 0 && !state.ciFailed)
         return { ok: true, next: { ...active, stage: "building" } };
       if (!isFollowUp && BUILDS_CODE.has(action.agentType))

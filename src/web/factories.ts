@@ -39,6 +39,8 @@ export function readFactorySettings(
     archiveDir: string | null;
     /** Where a delete saves its database snapshot. */
     backupDir: string;
+    /** Whether the applied definition has a SPEC agent; null when none is loaded. */
+    specAgent: boolean | null;
     /** factory.yaml on disk, as the Description row edits it; null when unreadable. */
     factoryFile: { description: string | null; revision: string } | null;
   },
@@ -66,6 +68,8 @@ export function readFactorySettings(
       repositories: running.repositories,
       history: running.history,
       archiveDir: running.archiveDir,
+      // The Spec rule row warns when `always` has no spec agent to write one.
+      specAgent: running.specAgent,
     },
   };
 }

@@ -28,6 +28,7 @@ import {
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
 import { AdoptDefinition } from "../features/definition/adopt-definition";
+import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
   AVATAR_COLORS,
   DEFAULT_FOLDER,
@@ -384,72 +385,12 @@ function Limits({ settings }: { settings: Settings }) {
           limits={settings.limits}
         />
       ))}
-      <SpecRuleRow slug={settings.slug} rule={settings.limits.specRule} />
+      <SpecRuleRow
+        slug={settings.slug}
+        rule={settings.limits.specRule}
+        specAgent={settings.definition.specAgent}
+      />
     </section>
-  );
-}
-
-type SpecRule = Settings["limits"]["specRule"];
-
-const SPEC_RULE_OPTIONS: { rule: SpecRule; label: string }[] = [
-  { rule: "always", label: "Always" },
-  { rule: "when_asked", label: "When triage asks" },
-  { rule: "never", label: "Never" },
-];
-
-/** Spec before code: Always, When triage asks (the Foreman decides) or Never. */
-function SpecRuleRow({ slug, rule }: { slug: string; rule: SpecRule }) {
-  const client = useQueryClient();
-  const toast = useToast();
-  const save = useMutation({
-    mutationFn: (specRule: SpecRule) => saveLimits(slug, { specRule }),
-    onSuccess: (_, specRule) => {
-      void client.invalidateQueries({ queryKey: ["factories", slug] });
-      toast({
-        title: "Spec rule saved",
-        description: `Spec before code: ${SPEC_RULE_OPTIONS.find((o) => o.rule === specRule)?.label} for new Work Items.`,
-        tone: "ok",
-      });
-    },
-  });
-  // The pressed option follows the click until the saved rule arrives.
-  const shown = save.isPending ? save.variables : rule;
-  return (
-    <div className="box-row grid gap-xs">
-      <div className="limit-row">
-        <span id="spec-rule-label" className="field-label">
-          Spec before code
-        </span>
-        <fieldset
-          className="segmented"
-          aria-labelledby="spec-rule-label"
-          disabled={save.isPending}
-        >
-          {SPEC_RULE_OPTIONS.map((option) => (
-            <button
-              key={option.rule}
-              type="button"
-              className="segmented-option"
-              aria-pressed={shown === option.rule}
-              onClick={() => {
-                if (option.rule !== rule) save.mutate(option.rule);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </fieldset>
-      </div>
-      <p className="text-muted">
-        A Spec is written into the Pull Request, and you approve it before
-        implement starts.
-      </p>
-      {save.error && (
-        <p className="form-error" role="alert">
-          {save.error.message}
-        </p>
-      )}
-    </div>
   );
 }
 

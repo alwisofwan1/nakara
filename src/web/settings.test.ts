@@ -70,6 +70,7 @@ test("factory settings: the record, its definition and its active items", () => 
       history,
       archiveDir: "/data/archive/factories/harbor",
       backupDir: "/data/backups",
+      specAgent: true,
       factoryFile: { description: "Ships.", revision: "r" },
     }),
     {
@@ -103,6 +104,7 @@ test("factory settings: the record, its definition and its active items", () => 
         repositories: ["acme/widgets"],
         history,
         archiveDir: "/data/archive/factories/harbor",
+        specAgent: true,
       },
     },
   );
@@ -113,6 +115,7 @@ test("factory settings: the record, its definition and its active items", () => 
       history: [],
       archiveDir: null,
       backupDir: "/data/backups",
+      specAgent: false,
       factoryFile: null,
     })?.isDefault,
     true,
@@ -124,6 +127,7 @@ test("factory settings: the record, its definition and its active items", () => 
       history: [],
       archiveDir: null,
       backupDir: "/data/backups",
+      specAgent: false,
       factoryFile: null,
     }),
     undefined,
@@ -400,6 +404,25 @@ test("spec rule: saved with the limits, copied by new items, and items created b
       .status,
     400,
   );
+});
+
+test("spec rule: always on a definition without a spec agent is saved, and Settings reports the missing agent for the row's warning", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  const specAgent = async () =>
+    (await call("GET", "f/harbor/settings")).body.definition.specAgent;
+  assert.equal(await specAgent(), true);
+
+  await rm(join(harborDir, "agents", "spec"), { recursive: true });
+  assert.ok((await harbor.reloadDefinition()).ok);
+  assert.equal(await specAgent(), false);
+  // Allowed with the warning: the definition can change after the rule is
+  // saved, so the Foreman's refusal, not this save, guards the stall.
+  const always = await call("PUT", "f/harbor/settings/limits", {
+    specRule: "always",
+  });
+  assert.equal(always.status, 200);
+  assert.equal(always.body.specRule, "always");
+  assert.equal(await specAgent(), false);
 });
 
 test("pause and resume are idempotent, return the new state, and show in the settings and the factory list", async (t) => {

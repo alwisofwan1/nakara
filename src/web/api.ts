@@ -6,7 +6,11 @@ import { validator } from "hono/validator";
 import { z } from "zod";
 import type { Config } from "../config.ts";
 import type { ChangeEvent } from "../db.ts";
-import type { LoadResult, Problem } from "../definition/load.ts";
+import {
+  hasSpecAgent,
+  type LoadResult,
+  type Problem,
+} from "../definition/load.ts";
 import type { Factory } from "../orchestrator/factory.ts";
 import type { FactoryRegistry } from "../orchestrator/registry.ts";
 import { isGitTracked, readFactoryFile } from "../definition/write.ts";
@@ -658,6 +662,9 @@ function createFactoryApi(
                 ? settings.archiveDir(factory.record.slug)
                 : null,
             backupDir: registry.config.backup.dir,
+            specAgent: factory.definition
+              ? hasSpecAgent(factory.definition)
+              : null,
             factoryFile: await readFactoryFile(factory.config.definitionDir),
           },
         );

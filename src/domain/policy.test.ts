@@ -140,6 +140,78 @@ test("a Spec the rule asks for, once approved, lets implement start", () => {
   );
 });
 
+const NO_SPEC_AGENT =
+  "This factory writes a Spec first, but the definition has no spec agent, so no Spec can be written. Do not dispatch one: ask_human to add a SPEC agent to the definition, or to cancel this Work Item. Changing the factory's Spec rule only affects new Work Items, not this one.";
+
+test("under always without a spec agent, implement is refused with a reason that does not ask for the spec agent", () => {
+  const state: PolicyState = { ...fresh, specRule: "always", specAgent: false };
+  for (const agentType of ["IMPLEMENT", "CUSTOM"] as const)
+    assert.deepEqual(check(state, dispatch(agentType), repos), {
+      ok: false,
+      reason: NO_SPEC_AGENT,
+    });
+  // A factory with a spec agent keeps its reason, and the other rules ignore the agent.
+  assert.deepEqual(
+    check({ ...state, specAgent: true }, dispatch("IMPLEMENT"), repos),
+    { ok: false, reason: SPEC_FIRST },
+  );
+  for (const specRule of ["when_asked", "never"] as const)
+    assert.equal(
+      apply({ ...state, specRule }, dispatch("IMPLEMENT")).stage,
+      "building",
+    );
+  // An item that asked for a Spec is told it asked, not that the factory always does.
+  assert.deepEqual(
+    check(
+      { ...state, specRule: "when_asked", specRequested: true },
+      dispatch("IMPLEMENT"),
+      repos,
+    ),
+    {
+      ok: false,
+      reason: NO_SPEC_AGENT.replace(
+        "This factory writes a Spec first",
+        "This Work Item asked for a Spec first",
+      ),
+    },
+  );
+});
+
+test("handoff waits for the Spec the rule asks for", () => {
+  const handoff: Action = {
+    type: "handoff",
+    prUrl: "https://github.com/o/r/pull/2",
+    summary: "s",
+  };
+  const always: PolicyState = { ...fresh, specRule: "always" };
+  assert.deepEqual(check(always, handoff, repos), {
+    ok: false,
+    reason: SPEC_FIRST,
+  });
+  assert.deepEqual(check({ ...always, specAgent: false }, handoff, repos), {
+    ok: false,
+    reason: NO_SPEC_AGENT,
+  });
+  const approved = decideSpec(
+    apply(always, dispatch("SPEC"), {
+      type: "request_spec_approval",
+      specPrUrl: "https://github.com/o/r/pull/2",
+      summary: "s",
+    }),
+    true,
+  );
+  assert.equal(
+    apply(approved, dispatch("IMPLEMENT"), handoff).stage,
+    "handoff",
+  );
+  // An item that asked for a Spec waits too; one that did not hands off as before.
+  assert.equal(
+    check({ ...fresh, specRequested: true }, handoff, repos).ok,
+    false,
+  );
+  assert.equal(apply(fresh, handoff).stage, "handoff");
+});
+
 test("review runs once and needs a PR", () => {
   assert.equal(check(fresh, dispatch("REVIEW"), repos).ok, false);
   const reviewed = apply(

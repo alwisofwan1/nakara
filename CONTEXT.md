@@ -96,7 +96,7 @@ The written plan for a **Work Item**, committed to its **Pull Request**, that a 
 _Avoid_: Design doc, plan, spec PR
 
 **Spec rule**:
-Whether a **Factory** writes a **Spec** before code: always, when asked (the **Work Item** asks for one, or the **Foreman** decides) or never. A **Work Item** copies its factory's rule when it is created.
+Whether a **Factory** writes a **Spec** before code: always, when asked (the **Work Item** asks for one, or the **Foreman** decides) or never. A **Work Item** copies its factory's rule when it is created. Under always, neither implement nor the **Handoff** proceeds until a **Spec** is approved; a factory whose definition has no SPEC agent cannot meet that, so Settings warns and the **Foreman** is told to ask the human.
 
 **Pull Request**:
 The single pull request that carries a **Work Item**'s change, first as a draft and later ready for a human to merge.
