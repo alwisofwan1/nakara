@@ -300,3 +300,37 @@ test("spec: true asks for a Spec under when_asked and is refused with 400 under 
   assert.equal(store.items().length, 4);
   store.db.close();
 });
+
+test("an import with spec: true is refused with 400 when the Spec rule changes while gh runs", async () => {
+  const url = "https://github.com/alwisofwan1/nakara/issues/21";
+  for (const [specRule, message] of [
+    [
+      "always",
+      "This factory always writes a Spec first, so a Work Item does not ask for one.",
+    ],
+    [
+      "never",
+      "This factory does not write Specs, so a Work Item cannot ask for one.",
+    ],
+  ] as const) {
+    let store: Store | undefined;
+    const fixtureResult = await fixture(async () => {
+      assert.ok(store);
+      const { id } = store.repos.factories.defaultFactory();
+      store.repos.factorySettings.saveLimits(id, { specRule });
+      return { title: "Imported", body: "Body", url };
+    });
+    store = fixtureResult.store;
+    const refused = await fixtureResult.post({
+      ...form,
+      issueUrl: url,
+      spec: true,
+    });
+    assert.deepEqual(refused, {
+      status: 400,
+      body: { error: { code: "invalid", message } },
+    });
+    assert.equal(store.items().length, 0);
+    store.db.close();
+  }
+});
