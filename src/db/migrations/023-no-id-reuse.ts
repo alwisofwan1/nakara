@@ -12,8 +12,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { Migration } from "../migrate.ts";
 
-const PLAIN = "id INTEGER PRIMARY KEY,";
-const AUTO = "id INTEGER PRIMARY KEY AUTOINCREMENT,";
+export const PLAIN = "id INTEGER PRIMARY KEY,";
+export const AUTO = "id INTEGER PRIMARY KEY AUTOINCREMENT,";
 
 /** kv keys `<prefix><item id>` or `<prefix><item id>:…`, as of this migration. */
 const ITEM_KEY_PREFIXES = [
@@ -36,7 +36,7 @@ const FACTORY_KEY_PREFIXES = ["reach:", "reflect:factory:"];
  * again after the rows are back, so no trigger fires for them. Needs foreign
  * keys off, as migrate() and migrateDown() run.
  */
-function rebuild(
+export function rebuild(
   db: DatabaseSync,
   table: string,
   edit: (sql: string) => string,
@@ -59,7 +59,7 @@ function rebuild(
 }
 
 /** Replace the one `from` in a CREATE TABLE text, or fail. */
-const swap = (from: string, to: string) => (sql: string) => {
+export const swap = (from: string, to: string) => (sql: string) => {
   const at = sql.indexOf(from);
   if (at < 0 || sql.indexOf(from, at + 1) >= 0)
     throw new Error(`Expected one "${from}" in: ${sql}`);
@@ -71,7 +71,7 @@ const swap = (from: string, to: string) => (sql: string) => {
  * from 1 up to Number.MAX_SAFE_INTEGER; anything else is no id. Ids read from free-form text (kv keys and values)
  * must neither fail the read nor start the sequence near SQLite's limit.
  */
-const parseId = (text: string | undefined): number | undefined => {
+export const parseId = (text: string | undefined): number | undefined => {
   if (!text || !/^[1-9]\d{0,15}$/.test(text)) return undefined;
   const id = Number(text);
   return id >= 1 && id <= Number.MAX_SAFE_INTEGER ? id : undefined;
@@ -85,7 +85,11 @@ const highestOf = (texts: Iterable<string | undefined>): number => {
 };
 
 /** The highest in-range integer in `column` of `table`; other values are ignored. */
-const highestIn = (db: DatabaseSync, table: string, column: string): number =>
+export const highestIn = (
+  db: DatabaseSync,
+  table: string,
+  column: string,
+): number =>
   Number(
     (
       db
@@ -123,7 +127,11 @@ const kvTexts = (
   ).flatMap((r) => (r.v === null ? [] : [r.v]));
 
 /** Start `table`'s ids after `used`, unless they already start later. */
-function seedSequence(db: DatabaseSync, table: string, used: number): void {
+export function seedSequence(
+  db: DatabaseSync,
+  table: string,
+  used: number,
+): void {
   // Set by the rebuild from the rows' own ids.
   const seq = Number(
     (
