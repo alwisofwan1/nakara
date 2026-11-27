@@ -562,13 +562,13 @@ export type FactoryFileEdit = InferRequestType<
   typeof factoryApi.settings.definition.$put
 >["json"];
 /**
- * Writes the description into factory.yaml and reloads; a stale revision
- * throws code "conflict", an invalid definition its problems.
+ * Writes the description or agent defaults into factory.yaml and reloads; a
+ * stale revision throws code "conflict", an invalid definition its problems.
  */
 export const saveFactoryFile = (slug: string, json: FactoryFileEdit) =>
   body(
     factoryApi.settings.definition.$put({ param: { slug }, json }),
-    "Unable to save the description",
+    "Unable to save factory.yaml",
   );
 
 export type LimitsEdit = InferRequestType<

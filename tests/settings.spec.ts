@@ -47,7 +47,10 @@ test("factory settings: rename, managed history, delete refused, move and delete
   await expect(name).toHaveValue("Quarry");
   await name.fill("Quarry Works");
   await page.getByRole("radio", { name: "#b45309" }).check();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page
+    .getByRole("form", { name: "General" })
+    .getByRole("button", { name: "Save changes" })
+    .click();
   await expect(
     page.locator(".toast").getByText("Settings saved", { exact: true }),
   ).toBeVisible();
@@ -107,13 +110,35 @@ test("factory settings: rename, managed history, delete refused, move and delete
   await expect(
     page.getByRole("form", { name: "General" }).getByRole("alert"),
   ).toHaveCount(0);
+
+  // Agent defaults write the same factory.yaml: two saves right after the
+  // description's, still before the refetch, take the revision each wrote.
+  const defaults = page.getByRole("region", { name: "Agent defaults" });
+  const saveDefaults = async (minutes: string) => {
+    const response = page.waitForResponse(
+      (r) =>
+        r.request().method() === "PUT" &&
+        r.url().endsWith("/api/f/quarry/settings/definition"),
+    );
+    await defaults
+      .getByRole("spinbutton", { name: /Idle timeout/ })
+      .fill(minutes);
+    await defaults.getByRole("button", { name: "Save changes" }).click();
+    return (await response).status();
+  };
+  expect(await saveDefaults("20")).toBe(200);
+  expect(await saveDefaults("25")).toBe(200);
+  await expect(defaults.getByRole("alert")).toHaveCount(0);
   await page.unroute("**/api/f/quarry/settings");
   await expect(page.locator(".header-description")).toHaveText(
     "Quarry digs gravel and sand.",
   );
   const stored = await (await request.get("./api/f/quarry/settings")).json();
   expect(stored.factoryFile.description).toBe("Quarry digs gravel and sand.");
+  expect(stored.factoryFile.agentDefaults.idleTimeoutMinutes).toBe(25);
   await expect(history.getByRole("listitem")).toHaveText([
+    /Edit factory settings/,
+    /Edit factory settings/,
     /Edit factory settings/,
     /Edit factory settings/,
     /Create agent surveyor/,

@@ -175,7 +175,8 @@ export function readAgent(
       harness: base.kind,
       model: base.model ?? "Harness default",
       runner: definition.factory.agentDefaults.runner ?? "local",
-      idleTimeoutMinutes: 60,
+      idleTimeoutMinutes:
+        definition.factory.agentDefaults.idleTimeoutMinutes ?? 60,
     },
     options: {
       runners: [...definition.runners.keys()],

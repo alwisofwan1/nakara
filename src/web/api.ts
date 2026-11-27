@@ -13,7 +13,12 @@ import {
 } from "../definition/load.ts";
 import type { Factory } from "../orchestrator/factory.ts";
 import type { FactoryRegistry } from "../orchestrator/registry.ts";
-import { isGitTracked, readFactoryFile } from "../definition/write.ts";
+import {
+  isGitTracked,
+  type KnownModels,
+  modelListOf,
+  readFactoryFile,
+} from "../definition/write.ts";
 import { ModelCatalog } from "../harness/models.ts";
 import {
   agentDeleteInput,
@@ -157,10 +162,7 @@ export type { FactoryDto, FactorySettingsDto } from "./factories.ts";
 export type { PullRequestDto } from "./pull-request.ts";
 export type { RepoDiffDto, RunDiffDto } from "./run-diff.ts";
 export type { RunDetailDto, RunRowDto, RunsDto } from "./runs.ts";
-export type {
-  TemplateAgent,
-  TemplateInfo,
-} from "../definition/scaffold.ts";
+export type { TemplateAgent, TemplateInfo } from "../definition/scaffold.ts";
 export type {
   AgentTokenDto,
   CreationDto,
@@ -347,6 +349,7 @@ function createFactoryApi(
   registry: FactoryRegistry,
   fetchIssue: FetchIssue,
   settings: FactorySettings,
+  models: ModelCatalog,
 ) {
   const store = registry.store;
   return (
@@ -667,6 +670,13 @@ function createFactoryApi(
               ? hasSpecAgent(factory.definition)
               : null,
             factoryFile: await readFactoryFile(factory.config.definitionDir),
+            runners: [...(factory.definition?.runners ?? new Map())].map(
+              ([name, runner]) => ({
+                name,
+                sandbox: Boolean(runner.platform?.linux?.dockerImage),
+              }),
+            ),
+            pendingReach: factory.pendingReach(),
             intake: readIntake(
               factory.definition?.automations ?? [],
               factory.definition?.label,
@@ -684,13 +694,27 @@ function createFactoryApi(
         return c.json({ slug: c.req.param("slug") ?? "" }, 200);
       })
       // Writes factory.yaml only when the edited tree loads and the form is not
-      // stale, then reloads; an empty description removes the key.
+      // stale, then reloads; an empty description removes the key. A reload
+      // that widens reach (a Runner moved to the host) waits for approval.
+      // A model must be one the harness lists (GET /models/:harness); when
+      // the list cannot be had, the edit is not saved rather than unchecked.
       .put("/settings/definition", factoryFileBody, async (c) => {
-        const { revision, description } = c.req.valid("json");
-        const result = await c.var.factory.saveFactory(
-          { description },
-          revision,
-        );
+        const { revision, ...edit } = c.req.valid("json");
+        const list = modelListOf(edit.agentDefaults);
+        let known: KnownModels = {};
+        if (list)
+          try {
+            known = { [list]: (await models.list(list)).map((m) => m.id) };
+          } catch (error) {
+            return c.json(
+              apiError(
+                "unavailable",
+                `The ${list} model list could not be loaded to check the model, so nothing was saved: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`,
+              ),
+              503,
+            );
+          }
+        const result = await c.var.factory.saveFactory(edit, revision, known);
         if (!result.ok && result.code === "conflict")
           return c.json(apiError("conflict", result.message), 409);
         if (!result.ok)
@@ -851,7 +875,7 @@ export function createApi(
   const settings = new FactorySettings(registry, creation);
   const liveDiffs = new LiveDiffs();
   const api = new Hono()
-    .route("/f/:slug", createFactoryApi(registry, fetchIssue, settings))
+    .route("/f/:slug", createFactoryApi(registry, fetchIssue, settings, models))
     .get("/status", (c) =>
       c.json(
         readStatus(store, {

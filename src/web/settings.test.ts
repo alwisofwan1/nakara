@@ -71,7 +71,19 @@ test("factory settings: the record, its definition and its active items", () => 
       archiveDir: "/data/archive/factories/harbor",
       backupDir: "/data/backups",
       specAgent: true,
-      factoryFile: { description: "Ships.", revision: "r" },
+      factoryFile: {
+        description: "Ships.",
+        agentDefaults: {
+          harness: "claude",
+          model: "sonnet",
+          effort: null,
+          runner: "docker",
+          idleTimeoutMinutes: null,
+        },
+        revision: "r",
+      },
+      runners: [{ name: "docker", sandbox: true }],
+      pendingReach: null,
       intake: [],
     }),
     {
@@ -83,7 +95,19 @@ test("factory settings: the record, its definition and its active items", () => 
       isDefault: false,
       activeItems: 2,
       backupDir: "/data/backups",
-      factoryFile: { description: "Ships.", revision: "r" },
+      factoryFile: {
+        description: "Ships.",
+        agentDefaults: {
+          harness: "claude",
+          model: "sonnet",
+          effort: null,
+          runner: "docker",
+          idleTimeoutMinutes: null,
+        },
+        revision: "r",
+      },
+      runners: [{ name: "docker", sandbox: true }],
+      pendingReach: null,
       intake: [],
       limits: {
         budgetUsd: 15,
@@ -119,6 +143,8 @@ test("factory settings: the record, its definition and its active items", () => 
       backupDir: "/data/backups",
       specAgent: false,
       factoryFile: null,
+      runners: [],
+      pendingReach: null,
       intake: [],
     })?.isDefault,
     true,
@@ -132,6 +158,8 @@ test("factory settings: the record, its definition and its active items", () => 
       backupDir: "/data/backups",
       specAgent: false,
       factoryFile: null,
+      runners: [],
+      pendingReach: null,
       intake: [],
     }),
     undefined,
@@ -159,10 +187,31 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }) {
       "repositories:\n  - owner: acme\n    name: harbor\n",
     ),
   );
+  // A claude that only answers the model lookup; codex cannot list its models.
+  const fakeClaude = join(dataDir, "fake-claude");
+  await writeFile(
+    fakeClaude,
+    `#!/bin/sh\nread -r _\necho '${JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: "models",
+        response: {
+          models: [
+            { value: "opus", displayName: "Opus" },
+            { value: "sonnet", displayName: "Sonnet" },
+          ],
+        },
+      },
+    })}'\n`,
+    { mode: 0o755 },
+  );
   const config = loadConfig({
     NAKARA_DATA_DIR: dataDir,
     NAKARA_DEFINITION_DIR: defaultDir,
     NAKARA_GITHUB_MIRROR: "false",
+    NAKARA_CLAUDE_BIN: fakeClaude,
+    NAKARA_CODEX_BIN: "/bin/false",
   });
   const store = new Store(":memory:", {
     defaultBudgetUsd: 15,
@@ -1151,6 +1200,7 @@ test("the factory description: saved through the API, committed once in a manage
   assert.equal(saved.body.revision, fileRevision(await readFile(yaml)));
   assert.equal(harbor.definition?.factory.description, "Ships the harbor.");
   assert.deepEqual((await call("GET", "f/harbor/settings")).body.factoryFile, {
+    ...before,
     description: "Ships the harbor.",
     revision: saved.body.revision,
   });
@@ -1236,6 +1286,133 @@ test("the factory description in a repository definition is an uncommitted chang
     cwd: repo,
   });
   assert.equal(log.stdout.trim(), "1");
+});
+
+test("agent defaults: saved through Settings, shown for agents without their own, refused when unknown, and a move to the host waits for approval", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  const yaml = join(harborDir, "factory.yaml");
+  const settings = async () => (await call("GET", "f/harbor/settings")).body;
+  const before = await settings();
+  assert.deepEqual(before.factoryFile.agentDefaults, {
+    harness: "claude",
+    model: "sonnet",
+    effort: null,
+    runner: "docker",
+    idleTimeoutMinutes: null,
+  });
+  assert.deepEqual(
+    before.runners.map((r: { name: string; sandbox: boolean }) => [
+      r.name,
+      r.sandbox,
+    ]),
+    [
+      ["docker-browser", true],
+      ["docker", true],
+      ["local", false],
+    ],
+  );
+  // An agent of its own settings only: it takes whatever agentDefaults says.
+  assert.equal(
+    (
+      await call("POST", "f/harbor/agents", {
+        name: "helper",
+        type: "CUSTOM",
+        description: null,
+        prompt: "Help.",
+      })
+    ).status,
+    201,
+  );
+  const helper = async () =>
+    (await call("GET", "f/harbor/agents")).body.find(
+      (a: { name: string }) => a.name === "helper",
+    );
+  assert.deepEqual(
+    [(await helper()).harness, (await helper()).model],
+    ["claude", "sonnet"],
+  );
+
+  const saved = await call("PUT", "f/harbor/settings/definition", {
+    revision: before.factoryFile.revision,
+    agentDefaults: {
+      harness: "claude",
+      model: "opus",
+      effort: null,
+      idleTimeoutMinutes: 20,
+    },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.ok, true);
+  // The description stays; the Agents page shows the new default after the reload.
+  const after = await settings();
+  assert.equal(after.factoryFile.description, before.factoryFile.description);
+  assert.equal(after.factoryFile.revision, saved.body.revision);
+  assert.equal(after.factoryFile.agentDefaults.model, "opus");
+  assert.deepEqual(
+    [(await helper()).harness, (await helper()).model],
+    ["claude", "opus"],
+  );
+  assert.equal(harbor.definition?.agents.get("helper")?.idleTimeoutMinutes, 20);
+  const agent = (await call("GET", "f/harbor/agents/helper")).body;
+  assert.equal(agent.defaults.model, "opus");
+  assert.equal(agent.defaults.idleTimeoutMinutes, 20);
+
+  // An unknown harness, runner or model, or a timeout out of range: problems, nothing written.
+  const text = await readFile(yaml, "utf8");
+  for (const [agentDefaults, message] of [
+    [{ harness: "gemini", model: null }, /harness\.type/],
+    [
+      { harness: "claude", model: "opus-9" },
+      /"opus-9" is not a model claude offers \(opus, sonnet\)/,
+    ],
+    [{ harness: null, model: "gpt-5.5" }, /not a model claude offers/],
+    [{ runner: "missing" }, /runner "missing" is not defined/],
+    [{ idleTimeoutMinutes: 90 }, /idleTimeoutMinutes/],
+  ] as const) {
+    const refused = await call("PUT", "f/harbor/settings/definition", {
+      revision: saved.body.revision,
+      agentDefaults,
+    });
+    assert.equal(refused.status, 422, JSON.stringify(agentDefaults));
+    assert.equal(refused.body.error.code, "invalid_definition");
+    assert.match(
+      refused.body.error.problems
+        .map((p: { message: string }) => p.message)
+        .join("\n"),
+      message,
+    );
+  }
+  // Codex cannot list its models here: the model is not saved unchecked.
+  const offline = await call("PUT", "f/harbor/settings/definition", {
+    revision: saved.body.revision,
+    agentDefaults: { harness: "codex", model: "gpt-5.5" },
+  });
+  assert.equal(offline.status, 503);
+  assert.equal(offline.body.error.code, "unavailable");
+  assert.match(
+    offline.body.error.message,
+    /codex model list could not be loaded/,
+  );
+  assert.equal(await readFile(yaml, "utf8"), text);
+
+  // To the host: written, but the running definition keeps the container until approved.
+  const host = await call("PUT", "f/harbor/settings/definition", {
+    revision: saved.body.revision,
+    agentDefaults: { runner: "local" },
+  });
+  assert.equal(host.status, 200);
+  assert.equal(host.body.ok, false);
+  assert.match(host.body.errors[0].message, /waits for your approval/);
+  assert.match(await readFile(yaml, "utf8"), /^ {2}runner: local$/m);
+  assert.equal(harbor.definition?.agents.get("helper")?.runner, "docker");
+  const pending = (await call("GET", "f/harbor/definition")).body.pendingReach;
+  assert.ok(pending.includes("helper · runner host"), pending.join("\n"));
+  // Settings shows what waits, until the Operator decides.
+  assert.deepEqual((await settings()).pendingReach, pending);
+  const approved = await call("POST", "f/harbor/definition/reach/approve");
+  assert.equal(approved.body.ok, true);
+  assert.equal(harbor.definition?.agents.get("helper")?.runner, "local");
+  assert.equal((await settings()).pendingReach, null);
 });
 
 test("where work comes from: manual intake, then only the GitHub, Telegram and Slack automations", async (t) => {
