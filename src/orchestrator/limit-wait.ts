@@ -35,6 +35,8 @@ export interface PendingRun {
 export interface LimitWait {
   /** When the item resumes (ISO). */
   until: string;
+  /** `until` is a reset time a harness gave, not the fixed LIMIT_WAIT_MS. */
+  known: boolean;
   runs: PendingRun[];
   /** A foreman turn hit the limit: its events stay pending until the item resumes. */
   foreman: boolean;
@@ -89,7 +91,10 @@ export function recordFallback(
 /**
  * Pause the item until the limit resets: its reset time, or LIMIT_WAIT_MS
  * from now when the harness did not say. A second limit while it waits adds
- * its run, and the item waits for the later reset.
+ * its run; the item then resumes at the earliest known reset of the two, and
+ * only when neither is known at the earlier fixed wait. A run still limited
+ * then waits again. Only the pause itself tells the Operator (needsYou); a
+ * limit on an item already waiting updates the wait and its timeline only.
  */
 export function waitForReset(
   store: Store,
@@ -108,28 +113,34 @@ export function waitForReset(
   now = Date.now(),
 ): void {
   const reset = hit.limit.resetAt ? Date.parse(hit.limit.resetAt) : Number.NaN;
+  const known = !Number.isNaN(reset);
   // A reset already past (a clock skew, or a limit that just lifted) waits a minute.
-  const until = Number.isNaN(reset)
-    ? now + LIMIT_WAIT_MS
-    : Math.max(reset, now + 60_000);
+  const until = known ? Math.max(reset, now + 60_000) : now + LIMIT_WAIT_MS;
   const before = limitWait(store, item.id);
+  // A known reset wins over the fixed wait; between two of a kind, the earlier.
+  const keepBefore =
+    before !== undefined &&
+    (before.known === known ? Date.parse(before.until) <= until : before.known);
   const wait: LimitWait = {
-    until: new Date(
-      Math.max(until, before ? Date.parse(before.until) : 0),
-    ).toISOString(),
+    until: keepBefore ? before.until : new Date(until).toISOString(),
+    known: keepBefore ? before.known : known,
     runs: [...(before?.runs ?? []), ...(hit.run ? [hit.run] : [])],
     foreman: Boolean(before?.foreman || hit.foreman),
   };
   store.setKv(waitKey(item.id), JSON.stringify(wait));
-  const when = Number.isNaN(reset)
-    ? `${hit.harness} did not say when the limit resets, so Nakara resumes the work item after ${LIMIT_WAIT_MS / 60_000} minutes, at ${wait.until}`
-    : `Nakara resumes the work item when the limit resets, at ${wait.until}`;
+  const when = wait.known
+    ? `Nakara resumes the work item when the limit resets, at ${wait.until}`
+    : `${hit.harness} did not say when the limit resets, so Nakara resumes the work item after ${LIMIT_WAIT_MS / 60_000} minutes, at ${wait.until}`;
   const history = hit.earlier?.length
     ? `\n\nThe same brief hit a limit before: ${hit.earlier.join("; ")}.`
     : "";
   const notice = `${hit.who} hit the ${hit.harness} rate or usage limit: ${hit.limit.message}${history}\n\n${when}. Send a message to resume it sooner.`;
+  // Read before pausing: only the move from running to paused notifies.
+  const wasPaused =
+    before !== undefined || store.item(item.id)?.status === "paused";
   pauseItem(store, log, item.id, notice);
-  store.needsYou({ itemId: item.id, event: "paused", what: notice });
+  if (!wasPaused)
+    store.needsYou({ itemId: item.id, event: "paused", what: notice });
 }
 
 /**

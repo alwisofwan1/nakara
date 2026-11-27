@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { runTurn } from "./claude.ts";
-import { isLimitText, resetFromText } from "./limits.ts";
+import { isClaudeLimit, isCodexLimit, resetFromText } from "./limits.ts";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 
@@ -79,9 +79,12 @@ test("codex's usage limit carries its reset time", async (t) => {
   assert.match(out.limit.message, /^You've hit your usage limit\./);
 });
 
+// Tool output, MCP errors, the agent's reply and an error that only quotes an API's 429 are no limit of the harness.
 for (const [harness, fixture] of [
   ["claude", "claude-ordinary-failure.jsonl"],
+  ["claude", "claude-tool-quotes-limit.jsonl"],
   ["codex", "codex-ordinary-failure.jsonl"],
+  ["codex", "codex-tool-quotes-limit.jsonl"],
 ] as const)
   test(`an ordinary failure is no limit: ${fixture}`, async (t) => {
     const out = await replay(harness, fixture, t);
@@ -89,12 +92,27 @@ for (const [harness, fixture] of [
     assert.equal(out.limit ?? null, null);
   });
 
-test("a limit on stderr, when the CLI exits without a result", () => {
-  assert.ok(isLimitText("Error: Claude AI usage limit reached|1795874400"));
-  assert.ok(isLimitText("You've hit your weekly limit · resets Mon 9am"));
-  assert.ok(isLimitText("You’ve reached your Opus limit"));
-  assert.ok(!isLimitText("Error: connect ECONNREFUSED 127.0.0.1:443"));
-  assert.ok(!isLimitText("the run hit the idle limit"));
+test("only the CLI's own limit error counts, where its text starts", () => {
+  assert.ok(isClaudeLimit("Claude AI usage limit reached|1795874400"));
+  assert.ok(isClaudeLimit("You've hit your weekly limit · resets Mon 9am"));
+  assert.ok(isClaudeLimit("You’ve reached your Opus limit"));
+  assert.ok(isClaudeLimit('API Error: 429 {"type":"error"}'));
+  assert.ok(!isClaudeLimit("The test failed: API Error: 429 from GitHub"));
+  assert.ok(!isClaudeLimit("usage limit reached for this key"));
+  assert.ok(!isClaudeLimit("429 Too Many Requests"));
+  assert.ok(isCodexLimit("You've hit your usage limit. Try again in 2 hours."));
+  assert.ok(
+    isCodexLimit("exceeded retry limit, last status: 429 Too Many Requests"),
+  );
+  assert.ok(
+    isCodexLimit("Rate limit reached for gpt-5 in organization org-1."),
+  );
+  assert.ok(
+    !isCodexLimit(
+      "stream disconnected: upstream returned 429 Too Many Requests",
+    ),
+  );
+  assert.ok(!isCodexLimit("rate limit reached"));
 });
 
 test("reset times in the limit texts", () => {

@@ -603,10 +603,12 @@ What this version supports:
 ### Harness fallback
 
 A subscription's usage limit or a rate limit makes a harness refuse runs until
-it resets. Nakara recognises that in the CLI's own output (claude's
-`rate_limit_event`, its 429 `rate_limit`/`usage_limit_reached` errors and
-"You've hit your … limit" text; codex's "You've hit your usage limit … try
-again at …" and "exceeded retry limit, last status: 429"), and the run then
+it resets. Nakara recognises that only in the CLI's own limit signal (claude's
+`rate_limit_event`, its 429 `rate_limit`/`usage_limit_reached` API-error
+message and error result, whose text starts "You've hit your … limit";
+codex's error event starting "You've hit your usage limit … try again at …"
+or "exceeded retry limit, last status: 429"), never in tool output, MCP
+errors, the agent's reply or stderr that quote such a text. The run then
 ends as rate limited instead of failed. List the harnesses to move to, in
 order, under `fallback` in `agentDefaults` or in an agent's frontmatter (an
 agent's own list replaces the default one):
@@ -643,9 +645,11 @@ is a warning, as it is for `harness`.
   Inbox notice ("Waiting for a usage limit") that names the harness and its
   limit, every earlier harness the brief hit a limit on, and when it resumes.
   Nakara holds its queued runs and foreman turns, and resumes it on its own
-  once the earliest reset time the CLIs gave has passed, or after a fixed
-  wait of 60 minutes (`LIMIT_WAIT_MS` in `src/orchestrator/limit-wait.ts`)
-  when one of them did not say. A fresh brief resumes on the agent's own
+  once the earliest reset time the CLIs gave has passed, or, only when none of
+  them gave one, after a fixed wait of 60 minutes (`LIMIT_WAIT_MS` in
+  `src/orchestrator/limit-wait.ts`). A harness still limited then waits
+  again. More limits while the item waits (other agents' runs) join the same
+  wait without a second notification. A fresh brief resumes on the agent's own
   harness, and can move down the list again; a session continues where it
   stopped. A message to the item, or Retry, resumes it at once.
 - **Without `fallback`** nothing changes except that a limited run pauses the

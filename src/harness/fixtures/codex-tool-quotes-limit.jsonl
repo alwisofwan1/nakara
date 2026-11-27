@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"t-quote"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"curl -i https://api.example.com/v1/items","aggregated_output":"HTTP/1.1 429 Too Many Requests\n{\"error\":\"rate limit reached\"}","exit_code":22,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"You've hit your usage limit on api.example.com: exceeded retry limit, last status: 429. Rate limit reached for this key."}}
+{"type":"error","message":"stream disconnected before completion: upstream returned 429 Too Many Requests (usage limit reached)"}
+{"type":"turn.failed","error":{"message":"stream disconnected before completion: upstream returned 429 Too Many Requests (usage limit reached)"}}

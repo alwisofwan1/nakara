@@ -20,6 +20,7 @@ import {
   LIMIT_WAIT_MS,
   limitWait,
   resumeDue,
+  waitForReset,
 } from "./limit-wait.ts";
 import { RunControl } from "./run-support.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -403,4 +404,75 @@ test("a counted review that moves to a fallback harness keeps using one review",
   const [moved] = f.queuedRuns();
   assert.equal(moved?.counts_review, 1);
   assert.equal(f.store.item(f.item.id)?.review_count, 1);
+});
+
+test("a fallback chain with one known and one unknown reset waits for the known one", async (t) => {
+  const f = await fixture(t);
+  f.agent.fallback = [{ kind: "codex", model: undefined }];
+  const reset = new Date(Date.now() + 2 * 3_600_000).toISOString();
+  const turn = async (req: { harness: string }) =>
+    req.harness === "claude" ? limited("claude", reset) : limited("codex");
+  await f.run(f.queue(), turn);
+  const [moved] = f.queuedRuns();
+  assert.ok(moved);
+  await f.run(moved, turn);
+  const wait = limitWait(f.store, f.item.id);
+  assert.deepEqual([wait?.until, wait?.known], [reset, true]);
+  assert.match(
+    f.store.messages(f.item.id).at(-1)?.body ?? "",
+    new RegExp(
+      `Nakara resumes the work item when the limit resets, at ${reset}`,
+    ),
+  );
+});
+
+test("a second limit on a waiting item keeps the earliest known reset, and a known reset beats the fixed wait", async (t) => {
+  const f = await fixture(t);
+  const log = quietTelemetry().log;
+  const now = Date.now();
+  const at = (hours: number) => new Date(now + hours * 3_600_000).toISOString();
+  // biome-ignore lint/style/noNonNullAssertion: The item exists.
+  const item = () => f.store.item(f.item.id)!;
+  const hit = (resetAt: string | null) => ({
+    who: "implement (run #1)",
+    harness: "claude",
+    limit: { resetAt, message: "limited", worked: false },
+  });
+  const wait = () => {
+    const w = limitWait(f.store, f.item.id);
+    return [w?.until, w?.known];
+  };
+  waitForReset(f.store, log, item(), hit(at(3)), now);
+  waitForReset(f.store, log, item(), hit(at(2)), now);
+  assert.deepEqual(wait(), [at(2), true]);
+  // A later known reset, or an unknown one, does not move it.
+  waitForReset(f.store, log, item(), hit(at(5)), now);
+  waitForReset(f.store, log, item(), hit(null), now);
+  assert.deepEqual(wait(), [at(2), true]);
+
+  // With only unknown resets, the fixed wait; a known reset then replaces it, even a later one.
+  f.store.repos.kv.deleteKv(`limit-wait:${f.item.id}`);
+  waitForReset(f.store, log, item(), hit(null), now);
+  assert.deepEqual(wait(), [
+    new Date(now + LIMIT_WAIT_MS).toISOString(),
+    false,
+  ]);
+  waitForReset(f.store, log, item(), hit(at(4)), now);
+  assert.deepEqual(wait(), [at(4), true]);
+});
+
+test("two limits on an item already waiting tell the operator once", async (t) => {
+  const f = await fixture(t);
+  const told: number[] = [];
+  f.store.attention.on("needsYou", (e) => told.push(e.itemId));
+  // Three agents' runs, limited one after another.
+  const runs = [f.queue(), f.queue(), f.queue()];
+  for (const run of runs) await f.run(run, async () => limited("claude"));
+  assert.deepEqual(told, [f.item.id]);
+  const wait = limitWait(f.store, f.item.id);
+  assert.deepEqual(
+    wait?.runs.map((r) => r.limitedRun),
+    runs.map((r) => r.id),
+  );
+  assert.equal(f.store.item(f.item.id)?.status, "paused");
 });

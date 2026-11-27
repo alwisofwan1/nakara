@@ -524,7 +524,7 @@ export class AgentRunner {
       from = fallbackOf(this.store, from.runId)
     )
       earlier.unshift(from);
-    // It resumes once the first of its harnesses resets; unknown resets wait the fixed time.
+    // It resumes once the first known reset of its harnesses has passed; only with none known, after the fixed wait.
     const resets = [limit.resetAt, ...earlier.map((e) => e.resetAt)];
     const known = resets
       .filter((r): r is string => r !== null)
@@ -539,7 +539,7 @@ export class AgentRunner {
       harness: harness.kind,
       limit: {
         ...limit,
-        resetAt: known.length === resets.length ? (known[0] ?? null) : null,
+        resetAt: known[0] ?? null,
       },
       earlier: earlier.map(
         (e) =>

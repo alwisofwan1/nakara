@@ -344,7 +344,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
     const limit =
       req.signal?.aborted || egress.blocked || idleFired
         ? null
-        : limits.limit(stderrTail);
+        : limits.limit();
     return {
       ...failed(
         estimate
@@ -366,7 +366,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
         ? ((final.error as { message?: string } | undefined)?.message ??
           "Turn failed.")
         : null;
-    const limit = failure ? limits.limit(failure) : null;
+    const limit = failure ? limits.limit() : null;
     // ponytail: cost is 0 because ChatGPT-plan usage is not billed per token; add pricing if API keys are used.
     return {
       ok: !failure,
@@ -380,17 +380,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
     };
   }
   const isError = final.is_error === true || final.subtype !== "success";
-  // An error result's text is the error, never the agent's report.
-  const limit = isError
-    ? limits.limit(
-        final.api_error === "usage_limit_reached"
-          ? "usage limit reached"
-          : null,
-        final.is_error === true && typeof final.result === "string"
-          ? final.result
-          : null,
-      )
-    : null;
+  const limit = isError ? limits.limit() : null;
   return {
     ok: !isError,
     sessionId:
