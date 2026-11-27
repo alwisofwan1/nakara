@@ -2,6 +2,7 @@ import type { Config } from "../config.ts";
 import type { Run, ScheduledRun, Store } from "../db.ts";
 import { concurrencySetting } from "../db/instance-settings.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
+import { resumeDue, waitingItems } from "./limit-wait.ts";
 import { failRun, pauseItem, type RunControl } from "./run-support.ts";
 
 const MAX_FOREMAN_TURNS_IN_FLIGHT = 2;
@@ -181,14 +182,24 @@ export class Scheduler {
     }
   }
 
-  /** Start whatever can start: foreman turns for items with pending events, then queued agent runs. */
+  /**
+   * Start whatever can start: foreman turns for items with pending events, then
+   * queued agent runs. An item that waits for a rate or usage limit to reset
+   * starts neither, until its wait is over (see limit-wait.ts).
+   */
   async pump(): Promise<void> {
     if (this.pumping || this.draining) return;
     this.pumping = true;
     try {
+      resumeDue(this.store, this.log);
+      const waiting = waitingItems(this.store);
       for (const itemId of this.store.itemsWithPendingEvents()) {
         if (this.foremanInFlight.size >= MAX_FOREMAN_TURNS_IN_FLIGHT) break;
-        if (this.foremanInFlight.has(itemId) || !this.hooks.ready(itemId))
+        if (
+          this.foremanInFlight.has(itemId) ||
+          waiting.has(itemId) ||
+          !this.hooks.ready(itemId)
+        )
           continue;
         this.foremanInFlight.add(itemId);
         void this.launch(() => this.hooks.foremanTurn(itemId), itemId).then(
@@ -210,7 +221,8 @@ export class Scheduler {
         running.length;
       for (const queued of this.store.queuedRuns()) {
         if (capacity <= 0) break;
-        if (!this.hooks.ready(queued.item_id)) continue;
+        if (waiting.has(queued.item_id) || !this.hooks.ready(queued.item_id))
+          continue;
         // A follow-up continues a conversation, so it waits for that agent's current run to end.
         if (queued.session_id && busy.has(conversation(queued))) continue;
         busy.add(conversation(queued));

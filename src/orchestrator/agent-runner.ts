@@ -2,8 +2,13 @@ import { pickSecrets } from "../secrets.ts";
 import { join } from "node:path";
 
 import type { Config } from "../config.ts";
-import type { ScheduledRun, Store } from "../db.ts";
-import type { Definition } from "../definition/load.ts";
+import { policyState, type Run, type ScheduledRun, type Store } from "../db.ts";
+import type {
+  AgentDef,
+  Definition,
+  ResolvedHarness,
+} from "../definition/load.ts";
+import { runsUsed } from "../domain/policy.ts";
 import {
   findUnpushed,
   GH_PR,
@@ -11,7 +16,8 @@ import {
   unpushedRefusal,
 } from "../domain/pushed.ts";
 import { reviewVerdict } from "../domain/review.ts";
-import { runTurn } from "../harness/claude.ts";
+import { runTurn, type TurnOutcome } from "../harness/claude.ts";
+import type { RateLimit } from "../harness/limits.ts";
 import {
   agentCredentials,
   runLabels,
@@ -38,6 +44,13 @@ import {
 } from "../runner/workspace.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
 import { agentSystemPrompt } from "./prompts.ts";
+import {
+  type FallbackOf,
+  fallbackOf,
+  type PendingRun,
+  recordFallback,
+  waitForReset,
+} from "./limit-wait.ts";
 import { applyReflection, countUnchecked } from "./reflect.ts";
 import {
   ended,
@@ -160,6 +173,12 @@ export class AgentRunner {
       return fail(
         `Agent "${queued.agent}" is no longer in the factory definition.`,
       );
+    // A run queued on one of the agent's fallbacks runs there; any other on its harness.
+    const harnesses = [agent.harness, ...agent.fallback];
+    const harness =
+      harnesses.find(
+        (h) => h.kind === queued.harness && (h.model ?? null) === queued.model,
+      ) ?? agent.harness;
     // Only claude takes a budget cap; no harness starts on a spent budget,
     // e.g. a resume queued before other runs spent it.
     if (item.cost_usd >= item.budget_usd)
@@ -196,7 +215,7 @@ export class AgentRunner {
       if (docker)
         Object.assign(
           env,
-          await agentCredentials(agent.harness.kind, "agent", this.slug),
+          await agentCredentials(harness.kind, "agent", this.slug),
         );
     } catch (error) {
       return fail(
@@ -237,9 +256,9 @@ export class AgentRunner {
       : undefined;
     const outcome = await this.turn(
       {
-        harness: agent.harness.kind,
-        model: agent.harness.model,
-        effort: agent.harness.effort,
+        harness: harness.kind,
+        model: harness.model,
+        effort: harness.effort,
         cwd: ws.root,
         prompt: queued.input,
         systemPromptFile,
@@ -320,6 +339,23 @@ export class AgentRunner {
       : controller.signal.aborted
         ? "cancelled"
         : "failed";
+    // A reflect run that hits a limit fails as before: Nakara starts it, the item does not wait on it.
+    const limit =
+      status === "failed" && !stopped && reports
+        ? (outcome.limit ?? null)
+        : null;
+    if (limit) {
+      this.store.transaction(() =>
+        this.limited(queued, agent, harness, session, outcome, limit, logPath),
+      );
+      recordEnd({
+        status,
+        costUsd: outcome.costUsd,
+        reachedBudget: reachedBudget(this.store, item.id, spentBefore),
+        error: outcome.error,
+      });
+      return;
+    }
     this.store.transaction(() => {
       this.store.finishRun(queued.id, {
         status,
@@ -373,6 +409,143 @@ export class AgentRunner {
       costUsd: outcome.costUsd,
       reachedBudget: reachedBudget(this.store, item.id, spentBefore),
       error: outcome.error,
+    });
+  }
+
+  /**
+   * A run that failed at a rate or usage limit. A fresh dispatch that did no
+   * work moves to the next fallback harness as a new run, which counts like
+   * any run; a follow-up, a resume, or a run that worked stays in its session
+   * on its harness, so the item waits for the limit to reset (limit-wait.ts).
+   * The foreman hears of neither: the brief goes on.
+   */
+  private limited(
+    queued: Run,
+    agent: AgentDef,
+    harness: ResolvedHarness,
+    session: string | undefined,
+    outcome: TurnOutcome,
+    limit: RateLimit,
+    logPath: string,
+  ): void {
+    const harnesses = [agent.harness, ...agent.fallback];
+    const fresh = !session && !limit.worked;
+    const next = fresh ? harnesses[harnesses.indexOf(harness) + 1] : undefined;
+    // biome-ignore lint/style/noNonNullAssertion: Work items are never deleted.
+    const item = this.store.item(queued.item_id)!;
+    const canRun = !runsUsed(policyState(item));
+    const finish = (error: string) => {
+      this.store.finishRun(queued.id, {
+        status: "failed",
+        result: outcome.result,
+        error,
+        cost_usd: outcome.costUsd,
+        num_turns: outcome.numTurns,
+        duration_ms: outcome.durationMs,
+        session_id: outcome.sessionId ?? queued.session_id,
+        log_path: logPath,
+      });
+      this.store.addCost(item.id, outcome.costUsd);
+    };
+    const who = `${agent.name} (run #${queued.id})`;
+    if (next && canRun) {
+      const moved = this.store.createRun({
+        item_id: item.id,
+        role: "agent",
+        agent: agent.name,
+        agent_type: agent.type,
+        harness: next.kind,
+        model: next.model ?? null,
+        session_id: null,
+        status: "queued",
+        input: queued.input,
+        counts_review: queued.counts_review,
+      });
+      finish(
+        `${outcome.error} Run #${moved.id} retries the brief on ${next.kind}.`,
+      );
+      // The limited review gave its review back as it failed; the retry takes it again.
+      if (queued.counts_review)
+        this.store.updateItem(item.id, {
+          // biome-ignore lint/style/noNonNullAssertion: Work items are never deleted.
+          review_count: this.store.item(item.id)!.review_count + 1,
+        });
+      recordFallback(this.store, moved.id, {
+        runId: queued.id,
+        harness: harness.kind,
+        reason: limit.message,
+        resetAt: limit.resetAt,
+      });
+      this.store.addMessage(
+        item.id,
+        "factory",
+        `${who} hit the ${harness.kind} rate or usage limit: ${limit.message}\n\nRun #${moved.id} retries the brief on the fallback harness ${next.kind}.`,
+      );
+      return;
+    }
+    if (!canRun) {
+      // At the run limit nothing more starts: the foreman hears of the failure and pauses there.
+      finish(outcome.error ?? "Rate or usage limit.");
+      this.store.addEvent(item.id, "agent_report", {
+        runId: String(queued.id),
+        agent: agent.name,
+        status: "failed",
+        error: outcome.error ?? undefined,
+      });
+      return;
+    }
+    // A fresh brief starts again on the agent's own harness; a session continues where it stopped.
+    const pending: PendingRun = fresh
+      ? {
+          agent: agent.name,
+          agentType: agent.type,
+          harness: agent.harness.kind,
+          model: agent.harness.model ?? null,
+          session: null,
+          input: queued.input,
+          countsReview: queued.counts_review,
+          limitedRun: queued.id,
+        }
+      : {
+          agent: agent.name,
+          agentType: agent.type,
+          harness: harness.kind,
+          model: harness.model ?? null,
+          session: outcome.sessionId ?? session ?? null,
+          input: `Your previous run stopped at a rate or usage limit. Continue the task where you left off.\n\nThe task was:\n\n${queued.input}`,
+          countsReview: queued.counts_review,
+          limitedRun: queued.id,
+        };
+    // The limits this brief hit before, on the harnesses it moved from.
+    const earlier: FallbackOf[] = [];
+    for (
+      let from = fallbackOf(this.store, queued.id);
+      from && earlier.length < harnesses.length;
+      from = fallbackOf(this.store, from.runId)
+    )
+      earlier.unshift(from);
+    // It resumes once the first of its harnesses resets; unknown resets wait the fixed time.
+    const resets = [limit.resetAt, ...earlier.map((e) => e.resetAt)];
+    const known = resets
+      .filter((r): r is string => r !== null)
+      .sort((a, b) => Date.parse(a) - Date.parse(b));
+    finish(
+      `${outcome.error} The work item waits for the limit to reset${
+        earlier.length ? "; every fallback harness is limited too" : ""
+      }.`,
+    );
+    waitForReset(this.store, this.telemetry.log, item, {
+      who,
+      harness: harness.kind,
+      limit: {
+        ...limit,
+        resetAt: known.length === resets.length ? (known[0] ?? null) : null,
+      },
+      earlier: earlier.map(
+        (e) =>
+          `run #${e.runId} hit the ${e.harness} limit: ${e.reason}${e.resetAt ? ` (resets at ${e.resetAt})` : ""}`,
+      ),
+      run: pending,
     });
   }
 

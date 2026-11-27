@@ -306,7 +306,7 @@ export function renderState(
     `- spec rule: ${specRuleLine(item)}`,
     `- handoff gate: ${handoffGateLine(item, runs, verifyAgent)}`,
     `- cost: $${item.cost_usd.toFixed(2)} of $${item.budget_usd.toFixed(2)} · runs: ${item.run_count + 1} of ${item.max_runs} (this turn included)`,
-    `- agents in progress: ${active.length ? active.map((r) => `${r.agent} (#${r.id}, ${r.status})`).join(", ") : "none"}`,
+    `- agents in progress: ${active.length ? active.map((r) => `${r.agent} (#${r.id}, ${r.status}, on ${r.harness})`).join(", ") : "none"}`,
   ].join("\n");
 }
 
