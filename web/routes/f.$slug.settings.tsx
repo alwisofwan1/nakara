@@ -34,6 +34,7 @@ import {
   revisionQueue,
 } from "../features/settings/agent-defaults";
 import { HandoffGateRow } from "../features/settings/handoff-gate-row";
+import { RepositoriesSection } from "../features/settings/repositories-section";
 import { WhereWorkComesFrom } from "../features/settings/intake-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
@@ -76,6 +77,14 @@ function SettingsPage() {
         </p>
       </div>
       <General settings={data} queue={factoryFile} />
+      {data.factoryFile && (
+        <RepositoriesSection
+          slug={slug}
+          file={data.factoryFile}
+          pendingReach={data.pendingReach}
+          queue={factoryFile}
+        />
+      )}
       <WhereWorkComesFrom slug={data.slug} intake={data.intake} />
       <Limits settings={data} />
       {data.factoryFile && (
