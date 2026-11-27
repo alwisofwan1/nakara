@@ -17,8 +17,8 @@ import {
 import type { FactoryRecord } from "../db/factories.ts";
 import type { FactoryCreation } from "./creation.ts";
 import type { Factory } from "./factory.ts";
-import { MERGE_SUBMITTED } from "./operator-merge.ts";
-import { ITEM_KEY_PREFIXES } from "./pull-request-gate.ts";
+import { appliedDir } from "./freed-ids.ts";
+import { ITEM_KV_PREFIXES } from "./item-keys.ts";
 import type { FactoryRegistry } from "./registry.ts";
 
 export type SettingsRefusal = {
@@ -140,11 +140,13 @@ export class FactorySettings {
         `Could not snapshot the database before deleting ${record.name}; nothing was deleted: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    this.factories.deleteFactory(record.id, [
-      ...ITEM_KEY_PREFIXES,
-      MERGE_SUBMITTED,
-    ]);
+    this.factories.deleteFactory(record.id, ITEM_KV_PREFIXES);
     this.registry.unregister(factory);
+    // The last applied copy (see Factory): ids are not reused, but it is the factory's alone.
+    await rm(appliedDir(this.registry.config.dataDir, record.id), {
+      recursive: true,
+      force: true,
+    });
     if (record.definition_mode === "managed")
       await rm(record.definition_dir, { recursive: true, force: true });
     return { ok: true, snapshot: saved };

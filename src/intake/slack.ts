@@ -21,6 +21,7 @@ import { basename } from "node:path";
 import type { Config } from "../config.ts";
 import type { NeedsYou } from "../db.ts";
 import type { Factory } from "../orchestrator/factory.ts";
+import { SLACK_ITEM } from "../orchestrator/item-keys.ts";
 import type { SlackChannels } from "../web/factories.ts";
 import { itemView, stateLabel } from "../web/items.ts";
 import { routeRequest, shorten, type TelegramFactories } from "./telegram.ts";
@@ -530,7 +531,7 @@ export class SlackBridge implements SlackChannels {
       automation,
     });
     store.setKv(`slack:thread:${e.channel}:${e.ts}`, String(item.id));
-    store.setKv(`slack:item:${item.id}`, JSON.stringify(thread));
+    store.setKv(`${SLACK_ITEM}${item.id}`, JSON.stringify(thread));
     await this.post(
       thread,
       `Created #${item.id}${this.factories.factories.length > 1 ? ` in ${factory.record?.name}` : ""}. Reply in this thread to add to it.`,
@@ -604,7 +605,7 @@ export class SlackBridge implements SlackChannels {
   }
 
   private thread(itemId: number): Thread | undefined {
-    const v = this.factory.store.getKv(`slack:item:${itemId}`);
+    const v = this.factory.store.getKv(`${SLACK_ITEM}${itemId}`);
     return v ? (JSON.parse(v) as Thread) : undefined;
   }
 

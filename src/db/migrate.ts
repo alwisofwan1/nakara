@@ -27,6 +27,7 @@ import { specRule } from "./migrations/019-spec-rule.ts";
 import { automationSnapshot } from "./migrations/020-automation-snapshot.ts";
 import { handoffGateChecks } from "./migrations/021-handoff-gate-checks.ts";
 import { slackNotifications } from "./migrations/022-slack-notifications.ts";
+import { noIdReuse } from "./migrations/023-no-id-reuse.ts";
 
 export interface MigrationContext {
   /** The budget of items that predate per-item budgets. */
@@ -77,6 +78,7 @@ export const MIGRATIONS: readonly Migration[] = [
   automationSnapshot,
   handoffGateChecks,
   slackNotifications,
+  noIdReuse,
 ];
 
 export const schemaVersion = (db: DatabaseSync): number =>
@@ -198,19 +200,39 @@ export function migrateDown(
       ...options.backup,
       reason: `pre-downgrade-${String(target).padStart(3, "0")}`,
     });
-  for (const m of undo) {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      m.down?.(db);
-      db.exec(`PRAGMA user_version = ${m.version - 1}`);
-      db.exec("COMMIT");
-    } catch (error) {
-      if (db.isTransaction) db.exec("ROLLBACK");
-      throw new Error(
-        `Undoing schema migration ${m.version} (${m.name}) failed: ${error instanceof Error ? error.message : error}`,
-        { cause: error },
-      );
+  // As in migrate(): table rebuilds need foreign keys off, checked per step.
+  const foreignKeys = (
+    db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number }
+  ).foreign_keys;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    for (const m of undo) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const foreignKeyViolations = () =>
+          db
+            .prepare("PRAGMA foreign_key_check")
+            .all()
+            .map((v) => JSON.stringify(v));
+        const before = new Set(foreignKeyViolations());
+        m.down?.(db);
+        const violations = foreignKeyViolations().filter((v) => !before.has(v));
+        if (violations.length)
+          throw new Error(
+            `${violations.length} new foreign key violations, first: ${violations[0]}`,
+          );
+        db.exec(`PRAGMA user_version = ${m.version - 1}`);
+        db.exec("COMMIT");
+      } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw new Error(
+          `Undoing schema migration ${m.version} (${m.name}) failed: ${error instanceof Error ? error.message : error}`,
+          { cause: error },
+        );
+      }
     }
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys ? "ON" : "OFF"}`);
   }
   return target;
 }

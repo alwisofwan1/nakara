@@ -20,10 +20,12 @@ function tempDir(t: { after: (fn: () => void) => void }) {
   return dir;
 }
 
+// sqlite_sequence is left out: SQLite never drops it, so a downgrade past
+// migration 023 keeps it, empty, where the older schema had none.
 const schema = (db: DatabaseSync) =>
   db
     .prepare(
-      "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
+      "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name <> 'sqlite_sequence' ORDER BY type, name",
     )
     .all();
 
@@ -583,18 +585,19 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
     ["pre-migration-005"],
   );
 
-  // Item ids stay global, and an unknown factory is refused.
+  // Item ids stay global, and an unknown factory is refused. Migration 023
+  // counts the orphan event's item 999 as used, so 999 is not handed out.
   const store = open();
   const item = store.createItem({
     title: "New",
     request: "R",
     source: "manual",
   });
-  assert.equal(item.id, 10);
+  assert.equal(item.id, 1000);
   assert.equal(item.factory_id, store.repos.factories.defaultFactory().id);
   assert.throws(() =>
     store.db
-      .prepare("UPDATE work_items SET factory_id = 99 WHERE id = 10")
+      .prepare("UPDATE work_items SET factory_id = 99 WHERE id = 1000")
       .run(),
   );
   store.close();
@@ -1085,4 +1088,213 @@ test("migration 022 adds the Slack channel, unset, and the notification switches
     { ...db.prepare("SELECT budget_usd FROM factory_settings").get() },
     { budget_usd: 5 },
   );
+});
+
+/** A database at version 22 whose newest factory (3) and newest items (4, 5) were deleted. */
+function withFreedIds(path: string) {
+  const db = new DatabaseSync(path);
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 22),
+  });
+  const factory = db.prepare(
+    `INSERT INTO factories (slug, name, avatar_color, foreman_handle, definition_dir, definition_mode, created_at)
+     VALUES (?, ?, '#000', ?, '/f', 'managed', 't')`,
+  );
+  const item = db.prepare(
+    `INSERT INTO work_items (title, request, source, budget_usd, created_at, updated_at, factory_id)
+     VALUES (?, 'r', 'manual', 5, 't', 't', ?)`,
+  );
+  for (const slug of ["two", "three"]) factory.run(slug, slug, slug);
+  for (const [title, factoryId] of [
+    ["a", 1],
+    ["b", 2],
+    ["c", 2],
+    ["d", 3],
+    ["e", 3],
+  ] as const)
+    item.run(title, factoryId);
+  db.exec(`
+    INSERT INTO runs (item_id, role, agent, agent_type, harness, status, input, started_at)
+      VALUES (2, 'implement', 'implement', 'agent', 'claude', 'succeeded', '{}', 't');
+    INSERT INTO approvals (item_id, kind, prompt, created_at) VALUES (3, 'question', 'q', 't');
+    INSERT INTO messages (item_id, author, body, created_at) VALUES (1, 'factory', 'm', 't');
+    INSERT INTO factory_settings (factory_id, budget_usd, updated_at) VALUES (2, 9, 't');
+    DELETE FROM stage_transitions WHERE item_id IN (4, 5);
+    DELETE FROM work_items WHERE factory_id = 3;
+    DELETE FROM factories WHERE id = 3;
+    INSERT INTO kv (key, value) VALUES ('cursor', '1');
+    -- What a delete before this fix left behind.
+    INSERT INTO kv (key, value) VALUES ('reflect:factory:3:unchecked', '1'), ('run-limit-told:5', '50');`);
+  return db;
+}
+
+const rows = (db: DatabaseSync) =>
+  Object.fromEntries(
+    [
+      "factories",
+      "work_items",
+      "runs",
+      "approvals",
+      "messages",
+      "stage_transitions",
+      "factory_settings",
+      "kv",
+    ].map((t) => [t, db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all()]),
+  );
+
+test("migration 023 keeps every row and id, and a deleted factory's or item's id is not handed out again", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedIds(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  const before = rows(db);
+  // Without 023, SQLite would give the next factory 3 and the next item 4,
+  // and they would inherit the keys left behind.
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  assert.deepEqual(rows(db), before);
+  assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+  assert.deepEqual(schema(db), freshSchema());
+
+  const store = new Store(join(dir, "nakara.db"), { defaultBudgetUsd: 15 });
+  t.after(() => store.close());
+  const next = store.repos.factories.createFactory({
+    ...stubFactorySeed(),
+    slug: "four",
+  });
+  assert.equal(next.id, 4);
+  const item = store.createItem({ title: "f", request: "r", source: "manual" });
+  assert.equal(item.id, 6);
+  // The stage trigger came back with the table.
+  assert.deepEqual(
+    store.db
+      .prepare("SELECT to_stage FROM stage_transitions WHERE item_id = 6")
+      .all()
+      .map((r) => r.to_stage),
+    ["intake"],
+  );
+  // A delete from now on frees no id either.
+  store.repos.factories.deleteFactory(next.id);
+  const after = store.repos.factories.createFactory({
+    ...stubFactorySeed(),
+    slug: "five",
+  });
+  assert.equal(after.id, 5);
+  store.db.exec("DELETE FROM stage_transitions WHERE item_id = 6");
+  store.db.exec("DELETE FROM work_items WHERE id = 6");
+  assert.equal(
+    store.createItem({ title: "g", request: "r", source: "manual" }).id,
+    7,
+  );
+});
+
+test("migration 023 does not hand out an id that a child row or kv key shows was used", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedIds(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    INSERT INTO kv (key, value) VALUES
+      ('reach:7:pending', ''), ('reach:default', '[]'), ('reflect:factory:5:unchecked', '1'),
+      ('run-limit-told:9', '50'), ('reflect:11:event', '3'), ('ci-wait:8', '1'),
+      ('slack:thread:C1:1.2', '12'), ('tg:m:99', '{"item":13}'), ('tg:cursor', '500');
+    INSERT INTO events (item_id, kind, payload, created_at) VALUES (10, 'work_received', '{}', 't');`);
+  migrate(db, { defaultBudgetUsd: 15 });
+  const seq = Object.fromEntries(
+    db
+      .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+      .all()
+      .map((r) => [r.name, r.seq]),
+  );
+  assert.deepEqual(seq, { factories: 7, work_items: 13 });
+});
+
+test("migration 023 ignores malformed and oversized ids in kv keys and values, and completes", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedIds(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  const insert = db.prepare("INSERT INTO kv (key, value) VALUES (?, ?)");
+  for (const [key, value] of [
+    // Slack: only all digits, in range.
+    ["slack:thread:C1:1", "999999999999999999999999x"],
+    ["slack:thread:C1:2", "99999999999999999999999999"],
+    ["slack:thread:C1:3", "9223372036854775807"],
+    ["slack:thread:C1:4", "9007199254740993"],
+    ["slack:thread:C1:5", "12abc"],
+    ["slack:thread:C1:6", "-40"],
+    ["slack:thread:C1:7", "1e9"],
+    ["slack:thread:C1:8", "0"],
+    ["slack:thread:C1:9", "007"],
+    // Telegram: only a JSON integer, in range.
+    ["tg:m:1", '{"item":"999999999999999999999999x"}'],
+    ["tg:m:2", '{"item":"70"}'],
+    ["tg:m:3", '{"item":71.5}'],
+    ["tg:m:4", '{"item":72.0}'],
+    ["tg:m:5", '{"item":1e9}'],
+    ["tg:m:6", '{"item":99999999999999999999}'],
+    ["tg:m:7", '{"item":9223372036854775807}'],
+    ["tg:m:8", '{"item":-73}'],
+    ["tg:m:9", "not json"],
+    ["tg:m:10", '{"item":null}'],
+    // Keys: an oversized or malformed id is no id.
+    ["run-limit-told:99999999999999999999999", "50"],
+    ["ci-wait:9223372036854775807", "1"],
+    ["merge-submitted:12x", "u"],
+    ["reach:99999999999999999999999:pending", ""],
+    ["reach:00", "[]"],
+  ] as const)
+    insert.run(key, value);
+  // A well-formed value of each kind still counts.
+  insert.run("slack:thread:C1:10", "21");
+  insert.run("tg:m:11", '{"item":22}');
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  const seq = Object.fromEntries(
+    db
+      .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+      .all()
+      .map((r) => [r.name, r.seq]),
+  );
+  // reflect:factory:3 and run-limit-told:5 from the fixture; 22 from tg:m:11.
+  assert.deepEqual(seq, { factories: 3, work_items: 22 });
+  const store = new Store(join(dir, "nakara.db"), { defaultBudgetUsd: 15 });
+  t.after(() => store.close());
+  assert.equal(
+    store.createItem({ title: "n", request: "r", source: "manual" }).id,
+    23,
+  );
+});
+
+test("migration 023 down restores version 22 with every row, and up again", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedIds(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  const version22 = schema(db);
+  migrate(db, { defaultBudgetUsd: 15 });
+  db.exec(
+    `INSERT INTO factories (slug, name, avatar_color, foreman_handle, definition_dir, definition_mode, created_at)
+     VALUES ('four', 'four', '#000', 'four', '/f', 'managed', 't')`,
+  );
+  const before = rows(db);
+
+  assert.equal(migrateDown(db, 22), 22);
+  assert.deepEqual(schema(db), version22);
+  assert.deepEqual(rows(db), before);
+  assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+  // Foreign keys are as the connection had them.
+  assert.equal(
+    (db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number })
+      .foreign_keys,
+    1,
+  );
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM sqlite_sequence").get()?.n,
+    0,
+  );
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.deepEqual(rows(db), before);
+  assert.deepEqual(schema(db), freshSchema());
 });

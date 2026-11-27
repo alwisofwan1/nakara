@@ -5,6 +5,7 @@ import type { FactoryRecord, Store } from "../db.ts";
 import { repoClaims } from "../definition/load.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
 import { Factory, type SharedRuntime } from "./factory.ts";
+import { sweepFreedIds } from "./freed-ids.ts";
 import { migrateOldLayout } from "./migrate-layout.ts";
 import { RunControl, recoverOrphanedRuns } from "./run-support.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -234,9 +235,13 @@ export class FactoryRegistry {
    * Load every factory's definition, each on its own: a broken one records
    * its errors and the others load. They load in registry order, so of two
    * factories claiming a repository the earlier one owns it. Then recover
-   * the runs of dead instances and start the shared scheduler.
+   * the runs of dead instances and start the shared scheduler. First, beside
+   * a database that outlives a restart, state left by deleted factories and
+   * items is swept (see freed-ids.ts).
    */
   async start(): Promise<void> {
+    if (this.store.db.location() !== null)
+      await sweepFreedIds(this.store, this.config, this.telemetry.log);
     const mismatch = this.definitionDirMismatch();
     if (mismatch)
       this.telemetry.log.warn("startup.definition_dir_ignored", {

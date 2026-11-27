@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import type { Config } from "../config.ts";
 import type { FactoryRecord, ScheduledRun, Store, WorkItem } from "../db.ts";
 import type { Definition, LoadResult } from "../definition/load.ts";
@@ -16,6 +14,7 @@ import {
 import { ActionApplier, ghIO } from "./action-applier.ts";
 import { AgentRunner } from "./agent-runner.ts";
 import { ForemanRunner } from "./foreman-runner.ts";
+import { appliedDir } from "./freed-ids.ts";
 import { HumanInput } from "./human-input.ts";
 import { migrateOldLayout } from "./migrate-layout.ts";
 import { failRun, RunControl, recoverOrphanedRuns } from "./run-support.ts";
@@ -96,7 +95,7 @@ export class Factory {
         // Only beside a database that outlives a restart, where the copy is wanted.
         appliedDir:
           options.record && store.db.location() !== null
-            ? join(config.dataDir, "applied", String(options.record.id))
+            ? appliedDir(config.dataDir, options.record.id)
             : undefined,
       },
       (repo) =>
