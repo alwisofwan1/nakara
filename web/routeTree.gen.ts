@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as InboxRouteImport } from './routes/inbox'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as FactoriesNewRouteImport } from './routes/factories.new'
 import { Route as ItemsItemIdRouteImport } from './routes/items.$itemId'
@@ -40,6 +41,11 @@ const SplatRoute = SplatRouteImport.update({
 const InboxRoute = InboxRouteImport.update({
   id: '/inbox',
   path: '/inbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -117,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/inbox': typeof InboxRoute
+  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/factories/new': typeof FactoriesNewRoute
   '/items/$itemId': typeof ItemsItemIdRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/inbox': typeof InboxRoute
+  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/factories/new': typeof FactoriesNewRoute
   '/items/$itemId': typeof ItemsItemIdRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/inbox': typeof InboxRoute
+  '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
   '/factories/new': typeof FactoriesNewRoute
   '/items/$itemId': typeof ItemsItemIdRoute
@@ -177,6 +186,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/inbox'
+    | '/settings'
     | '/setup'
     | '/factories/new'
     | '/items/$itemId'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/inbox'
+    | '/settings'
     | '/setup'
     | '/factories/new'
     | '/items/$itemId'
@@ -215,6 +226,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/inbox'
+    | '/settings'
     | '/setup'
     | '/factories/new'
     | '/items/$itemId'
@@ -235,6 +247,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   InboxRoute: typeof InboxRoute
+  SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
   FactoriesNewRoute: typeof FactoriesNewRoute
   ItemsItemIdRoute: typeof ItemsItemIdRoute
@@ -272,6 +285,13 @@ declare module '@tanstack/react-router' {
       path: '/inbox'
       fullPath: '/inbox'
       preLoaderRoute: typeof InboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -379,6 +399,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   InboxRoute: InboxRoute,
+  SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,
   FactoriesNewRoute: FactoriesNewRoute,
   ItemsItemIdRoute: ItemsItemIdRoute,
