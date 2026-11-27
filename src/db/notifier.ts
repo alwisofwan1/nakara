@@ -14,9 +14,23 @@ export type ChangeEvent =
   | { type: "creation"; id: string };
 export type ChangeType = ChangeEvent["type"];
 
+/**
+ * A Work Item needs the Operator: a Spec or Question waits (`approvals`), its
+ * Pull Request is ready to merge (`handoff`), or it stopped at its Budget or
+ * run limit (`paused`). Intake bridges tell the Operator (see SlackBridge).
+ */
+export interface NeedsYou {
+  itemId: number;
+  event: "approvals" | "handoff" | "paused";
+  /** What the Operator is asked to do, in plain text. */
+  what: string;
+}
+
 /** Tells live clients which resources changed, coalescing a burst of writes. */
 export class Notifier {
   readonly changes = new EventEmitter<{ change: [event: ChangeEvent] }>();
+  /** Work Items that need the Operator; see NeedsYou. */
+  readonly attention = new EventEmitter<{ needsYou: [event: NeedsYou] }>();
   private readonly pending = new Map<string, ChangeEvent>();
 
   constructor() {
@@ -34,6 +48,21 @@ export class Notifier {
       const events = [...this.pending.values()];
       this.pending.clear();
       for (const e of events) this.changes.emit("change", e);
+    });
+  }
+
+  /**
+   * Tell the listeners that a Work Item needs the Operator, after the
+   * synchronous transaction that recorded it commits. A listener's failure
+   * never reaches the writer: notifying is never why work fails.
+   */
+  needsYou(event: NeedsYou): void {
+    queueMicrotask(() => {
+      try {
+        this.attention.emit("needsYou", event);
+      } catch {
+        // A listener reports its own failures (SlackBridge logs them).
+      }
     });
   }
 }

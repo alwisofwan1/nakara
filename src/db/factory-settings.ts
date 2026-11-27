@@ -42,6 +42,29 @@ type Row = { [K in (typeof COLUMNS)[keyof FactoryLimits]]: number | null } & {
   gate_verification: number | null;
 };
 
+/** The events a factory can tell the Operator about in Slack. */
+export const NOTIFY_EVENTS = ["approvals", "handoff", "paused"] as const;
+export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
+
+/** Where and when Nakara tells the Operator that a Work Item needs them. */
+export interface NotificationSettings {
+  /** A Slack channel ID, or the name the Operator gave when it did not resolve; null sends nothing. */
+  slackChannel: string | null;
+  /** Each event's switch; on when unsaved. */
+  notify: Record<NotifyEvent, boolean>;
+}
+
+/** A notifications edit: an omitted key stays, `null` clears the channel or turns the switch back on. */
+export type NotificationsEdit = {
+  slackChannel?: string | null;
+} & { [K in NotifyEvent]?: boolean | null };
+
+const NOTIFY_COLUMNS = {
+  approvals: "notify_approvals",
+  handoff: "notify_handoff",
+  paused: "notify_paused",
+} as const satisfies Record<NotifyEvent, string>;
+
 /** What a factory without a saved rule does: the Foreman decides, unless the item asks. */
 const DEFAULT_SPEC_RULE: SpecRule = "when_asked";
 
@@ -90,18 +113,65 @@ export class FactorySettingsRepository extends Repository {
     const keys = (Object.keys(all) as (keyof typeof all)[]).filter(
       (key) => edit[key] !== undefined,
     );
-    const columns = keys.map((key) => all[key]);
-    this.run(
-      `INSERT INTO factory_settings (factory_id, ${[...columns, "updated_at"].join(", ")})
-       VALUES (?, ${[...columns, "updated_at"].map(() => "?").join(", ")})
-       ON CONFLICT(factory_id) DO UPDATE SET ${[...columns, "updated_at"].map((c) => `${c} = excluded.${c}`).join(", ")}`,
+    this.upsert(
       factoryId,
-      ...keys.map((key) => {
+      keys.map((key) => {
         const value = edit[key];
         // A gate check is on (1) or off (NULL).
-        if (typeof value === "boolean") return value ? 1 : null;
-        return value ?? null;
+        if (typeof value === "boolean") return [all[key], value ? 1 : null];
+        return [all[key], value ?? null];
       }),
+    );
+  }
+
+  /** Where the factory's Slack notifications go, and which events send one. */
+  notifications(factoryId: number): NotificationSettings {
+    const row = this.get<
+      { slack_channel: string | null } & Record<
+        (typeof NOTIFY_COLUMNS)[NotifyEvent],
+        number | null
+      >
+    >(
+      "SELECT slack_channel, notify_approvals, notify_handoff, notify_paused FROM factory_settings WHERE factory_id = ?",
+      factoryId,
+    );
+    return {
+      slackChannel: row?.slack_channel ?? null,
+      // NULL falls back to on (ADR-0006); only a saved 0 turns an event off.
+      notify: {
+        approvals: row?.notify_approvals !== 0,
+        handoff: row?.notify_handoff !== 0,
+        paused: row?.notify_paused !== 0,
+      },
+    };
+  }
+
+  /** Save the given channel and switches; the others keep their saved value. */
+  saveNotifications(factoryId: number, edit: NotificationsEdit): void {
+    const values: [string, string | number | null][] = [];
+    if (edit.slackChannel !== undefined)
+      values.push(["slack_channel", edit.slackChannel || null]);
+    for (const event of NOTIFY_EVENTS) {
+      const on = edit[event];
+      // A switch is off (0) or on (NULL, the default).
+      if (on !== undefined)
+        values.push([NOTIFY_COLUMNS[event], on === false ? 0 : null]);
+    }
+    this.upsert(factoryId, values);
+  }
+
+  /** Insert or update the factory's row with the given column values. */
+  private upsert(
+    factoryId: number,
+    values: [column: string, value: string | number | null][],
+  ): void {
+    const columns = [...values.map(([c]) => c), "updated_at"];
+    this.run(
+      `INSERT INTO factory_settings (factory_id, ${columns.join(", ")})
+       VALUES (?, ${columns.map(() => "?").join(", ")})
+       ON CONFLICT(factory_id) DO UPDATE SET ${columns.map((c) => `${c} = excluded.${c}`).join(", ")}`,
+      factoryId,
+      ...values.map(([, v]) => v),
       now(),
     );
     this.notifier.notify({ type: "factories", id: "global" });

@@ -235,6 +235,9 @@
   .banner {
     @apply grid gap-sm rounded-control border px-lg py-md text-small;
   }
+  .banner a {
+    @apply underline;
+  }
   .banner.bad {
     @apply border-bad-line bg-bad-bg text-bad;
   }

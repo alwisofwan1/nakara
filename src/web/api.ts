@@ -72,7 +72,9 @@ import {
   factoryFileInput,
   limitsInput,
   moveInput,
+  notificationsInput,
   pauseState,
+  type SlackChannels,
   readFactories,
   readFactorySettings,
   renameInput,
@@ -249,6 +251,10 @@ const renameBody = jsonBody(renameInput, "Invalid factory settings");
 const factoryFileBody = jsonBody(factoryFileInput, "Invalid factory settings");
 const moveBody = jsonBody(moveInput, "Invalid folder");
 const limitsBody = jsonBody(limitsInput, "Invalid limits");
+const notificationsBody = jsonBody(
+  notificationsInput,
+  "Invalid notification settings",
+);
 const creationParam = validator("param", (value, c) => {
   const id = z.uuid().safeParse(value.id);
   if (!id.success)
@@ -351,6 +357,7 @@ function createFactoryApi(
   settings: FactorySettings,
   models: ModelCatalog,
   wizard: WizardDeps,
+  slack: SlackChannels | null,
 ) {
   const store = registry.store;
   return (
@@ -682,6 +689,7 @@ function createFactoryApi(
               factory.definition?.automations ?? [],
               factory.definition?.label,
             ),
+            slackConnected: slack !== null,
           },
         );
         if (!dto)
@@ -764,6 +772,18 @@ function createFactoryApi(
           return c.json(apiError("not_found", "Factory not found"), 404);
         store.repos.factorySettings.saveLimits(id, c.req.valid("json"));
         return c.json(store.repos.factorySettings.settings(id), 200);
+      })
+      // The Slack channel "something needs you" goes to, and which events
+      // send it. A "#name" is saved as its channel ID when Slack resolves it.
+      .put("/settings/notifications", notificationsBody, async (c) => {
+        const id = c.var.factory.record?.id;
+        if (id === undefined)
+          return c.json(apiError("not_found", "Factory not found"), 404);
+        const edit = c.req.valid("json");
+        if (edit.slackChannel && slack)
+          edit.slackChannel = await slack.resolveChannel(edit.slackChannel);
+        store.repos.factorySettings.saveNotifications(id, edit);
+        return c.json(store.repos.factorySettings.notifications(id), 200);
       })
       // Pause: new Work Items wait in Intake and nothing new starts; running
       // work finishes. Resume starts the waiting work at once. Both idempotent.
@@ -867,6 +887,8 @@ export function createApi(
     claude: config.claudeBin,
     codex: config.codexBin,
   }),
+  /** The Slack bridge, when it runs: Settings resolves channels through it. */
+  slack: SlackChannels | null = null,
 ) {
   const store = registry.store;
   /** The description in a factory's applied factory.yaml. */
@@ -895,7 +917,7 @@ export function createApi(
   const api = new Hono()
     .route(
       "/f/:slug",
-      createFactoryApi(registry, fetchIssue, settings, models, wizard),
+      createFactoryApi(registry, fetchIssue, settings, models, wizard, slack),
     )
     .get("/status", (c) =>
       c.json(

@@ -8,6 +8,10 @@
 // - out: factory messages of a bound item are posted in its thread; a pending
 //   spec approval gets Approve / Request changes buttons that call the same
 //   path as the Inbox
+// - notify: when a Work Item needs the Operator (a Spec or Question waits, its
+//   Pull Request is ready to merge, it stops at its Budget or run limit), one
+//   top-level message goes to the channel its factory's Settings name, if
+//   that event's switch is on
 // Members are listed per factory in the `filter.members` of its slack/message
 // triggers; everyone else is ignored and logged. The bot and app tokens come
 // from the secret store, never from Nakara's environment.
@@ -15,7 +19,9 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 import type { Config } from "../config.ts";
+import type { NeedsYou } from "../db.ts";
 import type { Factory } from "../orchestrator/factory.ts";
+import type { SlackChannels } from "../web/factories.ts";
 import { itemView, stateLabel } from "../web/items.ts";
 import { routeRequest, shorten, type TelegramFactories } from "./telegram.ts";
 
@@ -155,7 +161,7 @@ export function slackBridge(
   return new SlackBridge(factories, slackApi(bot, app));
 }
 
-export class SlackBridge {
+export class SlackBridge implements SlackChannels {
   private stopped = false;
   private busy = false;
   private timer: NodeJS.Timeout | undefined;
@@ -190,13 +196,100 @@ export class SlackBridge {
     if (!store.getKv("slack:evidence"))
       store.setKv("slack:evidence", String(store.lastEvidenceId()));
     this.timer = setInterval(() => void this.flush(), 5_000);
+    store.attention.on("needsYou", this.onNeedsYou);
     void this.listen();
   }
 
   stop(): void {
     this.stopped = true;
     clearInterval(this.timer);
+    this.factory.store.attention.off("needsYou", this.onNeedsYou);
     this.socket?.close();
+  }
+
+  private readonly onNeedsYou = (e: NeedsYou) => void this.notify(e);
+
+  /**
+   * Tell the Operator that a Work Item needs them: one top-level message in
+   * the channel its factory's Settings name, when that event's switch is on.
+   * A failure is logged and counted; it never reaches the item or the scheduler.
+   */
+  async notify(e: NeedsYou): Promise<void> {
+    try {
+      const store = this.factory.store;
+      const item = store.item(e.itemId);
+      if (!item) return;
+      const { slackChannel, notify } =
+        store.repos.factorySettings.notifications(item.factory_id);
+      if (!slackChannel || !notify[e.event]) return;
+      const factory = store.repos.factories.factoryById(item.factory_id);
+      const publicUrl = this.factory.config.publicUrl;
+      const headline = `${factory ? `${slackEscape(factory.name)} · ` : ""}*#${item.id}* ${slackEscape(item.title)}`;
+      await this.api("chat.postMessage", {
+        channel: slackChannel,
+        // The notification line, then the message: what is needed and where.
+        text: slackEscape(
+          `${factory ? `${factory.name} · ` : ""}#${item.id} ${shorten(item.title, 150)}: ${shorten(e.what, 150)}`,
+        ),
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `${headline}\n${slackEscape(shorten(e.what, LIMIT - 500))}`,
+            },
+          },
+          ...(publicUrl
+            ? [
+                context(
+                  `<${publicUrl}/items/${item.id}|Open #${item.id} in Nakara>`,
+                ),
+              ]
+            : []),
+        ],
+      });
+    } catch (error) {
+      this.failed("slack.notify_failed", error);
+    }
+  }
+
+  /**
+   * The channel ID of a "#name" Settings saves, from conversations.list; the
+   * channel as given when it is already an ID, or the lookup fails or finds
+   * nothing (chat.postMessage takes a name too).
+   */
+  async resolveChannel(channel: string): Promise<string> {
+    const name = channel.trim();
+    if (!name.startsWith("#")) return name;
+    try {
+      let cursor = "";
+      // A workspace with more than 10 pages of channels keeps the name.
+      for (let page = 0; page < 10; page++) {
+        const res = (await this.api(
+          "conversations.list",
+          {
+            types: "public_channel,private_channel",
+            exclude_archived: "true",
+            limit: "1000",
+            ...(cursor ? { cursor } : {}),
+          },
+          "form",
+        )) as {
+          channels?: { id: string; name: string }[];
+          response_metadata?: { next_cursor?: string };
+        };
+        const found = res.channels?.find((c) => c.name === name.slice(1));
+        if (found) return found.id;
+        cursor = res.response_metadata?.next_cursor ?? "";
+        if (!cursor) break;
+      }
+    } catch (error) {
+      this.factory.telemetry.log.warn("slack.channel_unresolved", {
+        channel: name,
+        error,
+      });
+    }
+    return name;
   }
 
   /** Post factory messages written since the last flush in their item's thread. */

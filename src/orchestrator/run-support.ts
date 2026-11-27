@@ -245,3 +245,20 @@ export function reachedBudget(
 /** Why an item that used its runs is paused, for the operator. */
 export const runLimitPause = (item: WorkItem): string =>
   `${runLimitReached(policyState(item))} Press Raise run limit on the work item to continue, or cancel it.`;
+
+/**
+ * Tell the Operator that the item stopped at its run limit, once per limit.
+ * A message to the paused item wakes it and it pauses again at the same
+ * limit: that is no new stop. Raise run limit gives a new limit, so the
+ * next stop at it tells the Operator again.
+ */
+export function runLimitNeedsYou(store: Store, item: WorkItem): void {
+  const told = `run-limit-told:${item.id}`;
+  if (store.getKv(told) === String(item.max_runs)) return;
+  store.setKv(told, String(item.max_runs));
+  store.needsYou({
+    itemId: item.id,
+    event: "paused",
+    what: runLimitPause(item),
+  });
+}

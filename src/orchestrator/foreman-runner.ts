@@ -38,6 +38,7 @@ import {
   recordRunEnd,
   reportStopped,
   resolveMcp,
+  runLimitNeedsYou,
   runLimitPause,
   SHUT_DOWN,
   STOPPED,
@@ -181,6 +182,7 @@ export class ForemanRunner {
       this.store.markEventsProcessed(eventIds);
       itemLog.warn("item.run_limit", { runs: item.run_count });
       this.pause(item, runLimitPause(item));
+      runLimitNeedsYou(this.store, item);
       return;
     }
 
