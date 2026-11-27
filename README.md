@@ -40,21 +40,39 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   open work item: reviews that request changes or comment with a body, inline
   review comments, and plain PR comments, newer than a cursor kept per item
   (`pr-feedback:<item id>` in kv). The first read of an item only sets the
-  cursor, so feedback from before is not replayed. Only feedback from a login
-  with write, maintain or admin access to the repository counts; bots, the
-  logins of the factory's agent token and of `NAKARA_FOREMAN_GH_TOKEN`, and
-  Nakara's own comments (evidence) are ignored, so an agent's reply is not new
-  feedback. Without an own or shared agent token the agents act as your gh
-  login, so your own comments are ignored too: give the factory an agent token
-  to use this. New feedback becomes one `pr_feedback` event with each
-  author, review state, comment, file and line, and link. It wakes the
-  foreman, and an item at handoff becomes active again; a completed or
-  cancelled item is not reopened. The foreman sends it to the implementation
-  agent with `follow_up` and `human_feedback: true`, which Policy accepts
-  only while such an event is unanswered. It does not count toward the
-  revision cap, but it counts toward the budget and the run limit. The agent
-  replies on the PR where a comment is answered by a reply, and the normal
-  review and handoff rules apply again.
+  cursor, so feedback from before is not replayed. A review still pending
+  (started but not submitted) and its inline comments wait until it is
+  submitted. Only feedback from a login with write, maintain or admin access
+  to the repository counts; bots and Nakara's own comments (evidence) are
+  ignored. Who else counts depends on whether Nakara has its own identity:
+  - *Separate identities* (an own or shared agent token of another account, a
+    bot or GitHub App): every review and comment from a writer counts, and
+    the logins of the agent token and of `NAKARA_FOREMAN_GH_TOKEN` are
+    ignored, so an agent's reply is not new feedback.
+  - *Shared identity* (no own or shared agent token, so agents act as your gh
+    login, or a token of a writer's own account, such as your fine-grained
+    token): a review or comment from that login counts only when its body
+    starts with `/nakara` (any case, after leading whitespace). The text after
+    `/nakara` is the feedback. GitHub does not let you request changes on a
+    pull request opened under your own login, so here feedback arrives as
+    comments, inline comments or "Comment" reviews that start with `/nakara`.
+
+  `/nakara` works with separate identities too, so you can always use it.
+  Nakara and its agents never post a body that starts with `/nakara`: the `gh`
+  that agents and the foreman run is a guard that refuses such a comment,
+  review or API body, and Nakara escapes its own comments (`\/nakara`). New
+  feedback becomes one `pr_feedback` event with each author, review state,
+  comment, file and line, and link. It wakes the foreman, and an item at
+  handoff becomes active again; a completed or cancelled item is not reopened.
+  The foreman sends it to the implementation agent with `follow_up` and
+  `human_feedback: true`, which Policy accepts only while feedback is
+  unanswered. The follow-up answers it only when its run succeeds: a run that
+  fails or is stopped leaves the feedback unanswered, so the foreman can send
+  it again, and feedback that arrives while the revision runs waits for its
+  own follow-up. It does not count toward the revision cap, but it counts
+  toward the budget and the run limit. The agent replies on the PR where a
+  comment is answered by a reply, and the normal review and handoff rules
+  apply again.
 - **Durable state.** SQLite (`node:sqlite`) holds work items, events, runs,
   messages and approvals. After a restart, pending events and queued runs continue.
 - **Restarts do not fail work.** On SIGTERM Nakara drains: it starts no new
@@ -709,7 +727,15 @@ the agent's runner:
   permission. It reads the reviews and comments on the pull requests of a
   factory's work items, the login its tokens act as, and each commenter's
   repository permission with that factory's agent token: Pull requests and
-  Issues read and Metadata read, which the permissions above already grant. To hand agents your own `gh auth token`
+  Issues read and Metadata read, which the permissions above already grant.
+  The `gh` on an agent's and the foreman's PATH is Nakara's guard
+  (`run-<id>.gh` beside the run's log), which refuses a comment, review or API
+  body that starts with `/nakara` and runs the real `gh` otherwise; in a
+  container it runs with the image's `node`. It guards `gh` only: an agent
+  that posts through another client (`curl` with `GH_TOKEN`, the real `gh`
+  by its full path, or a GitHub MCP server in its definition) is not stopped,
+  which is one more reason to give agents a token of a separate account (see
+  [Human PR feedback](#how-it-works)). To hand agents your own `gh auth token`
   instead, which reaches every repo you can, set
   `NAKARA_ALLOW_PERSONAL_GH_TOKEN=1`; it applies to factories with neither
   their own nor the shared token, and the definition page and `/healthz` then

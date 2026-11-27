@@ -6,6 +6,7 @@ import {
   hasSpecAgent,
   hasVerifyAgent,
 } from "../definition/load.ts";
+import { escapeTrigger } from "../domain/nakara-trigger.ts";
 import { type Action, check, runsUsed } from "../domain/policy.ts";
 import { pushOnlyPrompt, short } from "../domain/pushed.ts";
 import type { RecordedAction } from "../mcp/types.ts";
@@ -55,10 +56,11 @@ export const ghIO = (
   ...GH_PULL_REQUESTS,
   markReady: (prUrl) =>
     run("gh", ["pr", "ready", prUrl], undefined, 60_000, agentGhEnv(slug, env)),
+  // A body never starts with /nakara, the Operator's trigger for PR feedback.
   comment: (issueUrl, body) =>
     run(
       "gh",
-      ["issue", "comment", issueUrl, "--body", body],
+      ["issue", "comment", issueUrl, "--body", escapeTrigger(body)],
       undefined,
       undefined,
       agentGhEnv(slug, env),
@@ -199,14 +201,7 @@ export class ActionApplier {
           action.type === "follow_up" && action.pushOnly
             ? this.gate.takePushOnly(item)
             : null;
-        // It answers the pr_feedback events the policy required.
-        if (
-          action.type === "follow_up" &&
-          action.humanFeedback &&
-          !pushOnlyBranch
-        )
-          answerPrFeedback(this.store, item.id);
-        this.store.createRun({
+        const run = this.store.createRun({
           item_id: item.id,
           role: "agent",
           agent: action.agent,
@@ -225,6 +220,13 @@ export class ActionApplier {
           // run gives it back if it ends without a verdict.
           counts_review: action.agentType === "REVIEW" ? 1 : 0,
         });
+        // It takes the PR feedback the policy required, until the run ends.
+        if (
+          action.type === "follow_up" &&
+          action.humanFeedback &&
+          !action.pushOnly
+        )
+          answerPrFeedback(this.store, item.id, run.id);
         return;
       }
       case "post_update":

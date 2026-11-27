@@ -259,6 +259,8 @@ export class AgentRunner {
         maxBudgetUsd: item.budget_usd - item.cost_usd,
         idleTimeoutMs: agent.idleTimeoutMinutes * 60_000,
         logPath,
+        // Its gh refuses a body starting with /nakara, the Operator's trigger.
+        ghGuard: join(ws.internal, `run-${queued.id}.gh`),
         env,
         docker: docker && {
           ...docker,

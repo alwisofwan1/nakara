@@ -62,6 +62,7 @@ How the change was verified: the tests added, the checks run, and the visual pro
 - Treat a follow-up as a revision of the delivered work, not as a new task. You keep the full context from the initial implementation. Do not collect it again.
 - Make the revision on the same branch and PR. For each review finding, make the change, or say in your report why you did not. Verify again if necessary. Update the PR description.
 - When a finding came from a review thread on the PR, reply in that thread rather than posting a separate summary comment recapping what was addressed - the per-thread replies are the complete record. Use `gh api` to reply in the thread, and keep replies short. Then report to the foreman again.
+- Never start a comment, reply, review or issue body with `/nakara`. That prefix marks the Operator's own feedback on the PR, and Nakara refuses a `gh` call that posts it.
 
 
 ## Communication

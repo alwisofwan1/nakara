@@ -6,6 +6,7 @@
 // Proof waits until the item has a PR; a sweep picks it up, so a restart or a
 // failed upload only delays it.
 import type { Evidence, Store } from "../db.ts";
+import { escapeTrigger } from "../domain/nakara-trigger.ts";
 import { run } from "../runner/workspace.ts";
 import type { Logger } from "../telemetry/log.ts";
 
@@ -196,7 +197,8 @@ export class EvidencePublisher {
       row.github_url = await this.gh.upload(repoId, row.file);
       this.store.setEvidenceUrl(row.id, row.github_url);
     }
-    const body = evidenceComment(rows);
+    // Never the Operator's /nakara trigger (it starts with MARKER anyway).
+    const body = escapeTrigger(evidenceComment(rows));
     const existing = await this.gh.findComment(slug, Number(num), MARKER);
     if (existing === null) await this.gh.createComment(slug, Number(num), body);
     else await this.gh.editComment(slug, existing, body);

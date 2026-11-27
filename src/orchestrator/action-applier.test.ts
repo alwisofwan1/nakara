@@ -851,33 +851,115 @@ test("a factory's added Handoff Gate checks hold the handoff; CI still fails it 
   assert.equal(store.item(item.id)?.stage, "handoff");
 });
 
-test("a human_feedback follow_up answers the PR feedback, queues the message and leaves the revision count", async (t) => {
-  const { store, item, apply } = setup(t);
-  store.updateItem(item.id, {
+/** An item handed off after review, every revision used, and a PR. */
+function handedOff(t: TestContext) {
+  const ctx = setup(t);
+  ctx.store.updateItem(ctx.item.id, {
     stage: "handoff",
     status: "waiting_human",
     review_count: 1,
     revision_count: maxRevisions,
     pr_url: PR,
   });
-  const answer = {
-    ...fixes,
-    message: "The operator asked to rename the flag.",
-    humanFeedback: true,
-  } as const;
+  const key = `pr-feedback:${ctx.item.id}`;
+  const cursor = { pr: PR, reviews: 1, inline: 0, comments: 0 };
+  /** The poller found feedback: it waits for a human_feedback follow_up. */
+  const feedback = () => {
+    const now = JSON.parse(ctx.store.getKv(key) ?? JSON.stringify(cursor));
+    ctx.store.setKv(key, JSON.stringify({ ...now, open: true }));
+  };
+  const ended = (runId: number, status: "succeeded" | "failed" | "cancelled") =>
+    ctx.store.finishRun(runId, {
+      status,
+      result: null,
+      error: status === "succeeded" ? null : "Stopped.",
+      cost_usd: 0,
+      num_turns: 1,
+      duration_ms: 1,
+      session_id: "s1",
+      log_path: null,
+    });
+  return { ...ctx, key, feedback, ended };
+}
+
+const answer = {
+  ...fixes,
+  message: "The operator asked to rename the flag.",
+  humanFeedback: true,
+} as const;
+
+test("a human_feedback follow_up answers the PR feedback, queues the message and leaves the revision count", async (t) => {
+  const { store, item, apply, key, feedback, ended } = handedOff(t);
   // No pr_feedback event waits for an answer.
   assert.deepEqual(await apply(answer), []);
-  const key = `pr-feedback:${item.id}`;
-  const cursor = { pr: PR, reviews: 1, inline: 0, comments: 0 };
-  store.setKv(key, JSON.stringify({ ...cursor, open: true }));
+  feedback();
   assert.deepEqual(await apply(answer), [answer]);
   assert.equal(store.item(item.id)?.revision_count, maxRevisions);
   assert.equal(store.item(item.id)?.stage, "building");
-  assert.equal(store.runs(item.id)[0]?.input, answer.message);
-  assert.deepEqual(JSON.parse(store.getKv(key) ?? ""), {
-    ...cursor,
-    open: false,
+  const [run] = store.runs(item.id);
+  assert.equal(run?.input, answer.message);
+  // In flight: taken, so no second exempt follow-up while it runs.
+  assert.deepEqual(JSON.parse(store.getKv(key) ?? "").answering, [run?.id]);
+  assert.deepEqual(await apply(answer), []);
+  // Answered once it succeeds.
+  ended(run?.id ?? 0, "succeeded");
+  assert.deepEqual(await apply(answer), []);
+});
+
+for (const status of ["failed", "cancelled"] as const)
+  test(`PR feedback whose human_feedback follow_up ${status === "cancelled" ? "is stopped" : "fails"} is unanswered again`, async (t) => {
+    const { store, item, apply, feedback, ended } = handedOff(t);
+    feedback();
+    assert.deepEqual(await apply(answer), [answer]);
+    const [first] = store.runs(item.id);
+    ended(first?.id ?? 0, status);
+    // The foreman can send the exempt follow-up again, still outside the cap.
+    assert.deepEqual(await apply(answer), [answer]);
+    assert.equal(store.item(item.id)?.revision_count, maxRevisions);
+    // That one took it: no third.
+    assert.deepEqual(await apply(answer), []);
   });
-  // Answered: the next one waits for new feedback.
+
+test("a human_feedback follow_up interrupted by a restart is in flight until the run resuming it ends", async (t) => {
+  const { store, item, apply, feedback, ended } = handedOff(t);
+  feedback();
+  assert.deepEqual(await apply(answer), [answer]);
+  const [run] = store.runs(item.id);
+  store.markRunStarted(run?.id ?? 0, "/tmp/log");
+  const resumed = store.transaction(() =>
+    store.interruptRun(
+      run?.id ?? 0,
+      {
+        result: null,
+        cost_usd: 0,
+        num_turns: 1,
+        duration_ms: 1,
+        session_id: "s1",
+      },
+      "Nakara restarted.",
+    ),
+  ).resume;
+  assert.ok(resumed);
+  assert.deepEqual(await apply(answer), []);
+  ended(resumed.id, "failed");
+  assert.deepEqual(await apply(answer), [answer]);
+});
+
+test("PR feedback that arrives while its revision runs waits for its own follow-up, and is kept when the run fails", async (t) => {
+  const { store, item, apply, feedback, ended } = handedOff(t);
+  feedback();
+  assert.deepEqual(await apply(answer), [answer]);
+  const [first] = store.runs(item.id);
+  // New feedback while the revision runs.
+  feedback();
+  assert.deepEqual(await apply(answer), [answer]);
+  const second = store.runs(item.id).find((r) => r.id !== first?.id);
+  // The second follow-up took the new feedback; the first still runs.
+  assert.deepEqual(await apply(answer), []);
+  // The first fails: its feedback is unanswered again.
+  ended(first?.id ?? 0, "failed");
+  assert.deepEqual(await apply(answer), [answer]);
+  // The second succeeds: it answers only its own.
+  ended(second?.id ?? 0, "succeeded");
   assert.deepEqual(await apply(answer), []);
 });

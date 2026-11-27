@@ -1,10 +1,14 @@
 // Human feedback on a Work Item's Pull Request (Roadmap #23, phase 3): reviews
 // that request changes or comment, inline review comments and plain PR
 // comments, from people with write access, become one pr_feedback event that
-// wakes the foreman. Its state lives in kv under `pr-feedback:<item>`: the
-// PR it was read from, the newest review and comment ids seen (feedback is
-// what is newer), and whether an event waits for a human_feedback follow_up.
+// wakes the foreman. A login Nakara itself acts as writes feedback only after
+// the /nakara trigger (domain/nakara-trigger.ts). Its state lives in kv under
+// `pr-feedback:<item>`: the PR it was read from, the newest review and comment
+// ids seen (feedback is what is newer) and those of reviews still pending,
+// whether an event waits for a human_feedback follow_up, and the runs of the
+// follow-ups that answer it until they end.
 import type { Store } from "../db.ts";
+import { afterTrigger } from "../domain/nakara-trigger.ts";
 import { agentGhEnv, agentTokenOf } from "../runner/agent-token.ts";
 import { run } from "../runner/workspace.ts";
 import { hasWriteAccess } from "../runner/write-access.ts";
@@ -22,9 +26,10 @@ export interface PrRemark {
   url: string;
   /** Reviews only: APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING. */
   state?: string;
-  /** Inline comments only: the file and line it is on. */
+  /** Inline comments only: the file and line it is on, and the review it belongs to. */
   path?: string | null;
   line?: number | null;
+  review?: number | null;
 }
 
 export interface PrFeedbackRead {
@@ -78,7 +83,7 @@ export const GH_PR_FEEDBACK: PrFeedbackPort = {
       ),
       list(
         `repos/${repo}/pulls/${number}/comments`,
-        `${REMARK}, body: (.body // ""), path, line: (.line // .original_line)`,
+        `${REMARK}, body: (.body // ""), path, line: (.line // .original_line), review: .pull_request_review_id`,
         env,
       ),
       list(
@@ -97,11 +102,19 @@ export const GH_PR_FEEDBACK: PrFeedbackPort = {
 interface Cursor {
   /** The PR the ids belong to; another PR is read from its start. */
   pr: string;
+  /** The newest id seen of each list: feedback is what is newer. */
   reviews: number;
   inline: number;
   comments: number;
+  /**
+   * Ids at or below their list's newest that were not feedback yet because
+   * their review was still pending (unsubmitted); read again until it is.
+   */
+  waiting?: { reviews: number[]; inline: number[] };
   /** A pr_feedback event waits for a human_feedback follow_up. */
   open: boolean;
+  /** The runs of the human_feedback follow-ups that answer it, until they end. */
+  answering?: number[];
 }
 
 const readCursor = (store: Store, itemId: number): Cursor | null => {
@@ -112,14 +125,63 @@ const readCursor = (store: Store, itemId: number): Cursor | null => {
 const writeCursor = (store: Store, itemId: number, cursor: Cursor) =>
   store.setKv(PR_FEEDBACK + itemId, JSON.stringify(cursor));
 
-/** Whether a pr_feedback event of the item waits for a human_feedback follow_up. */
-export const prFeedbackOpen = (store: Store, itemId: number): boolean =>
-  readCursor(store, itemId)?.open === true;
+/**
+ * How the follow-up run `runId` ended, following an interrupted run into the
+ * run that resumes it: still going, answered (succeeded), or not (failed,
+ * cancelled, stopped).
+ */
+function outcome(
+  store: Store,
+  runId: number,
+): "running" | "answered" | "unanswered" {
+  let run = store.runById(runId);
+  while (run?.status === "interrupted") {
+    // The interrupt records the run that resumes it (RunRepository.interruptRun).
+    const resume = /Run #(\d+) continues it/.exec(run.error ?? "")?.[1];
+    run = resume ? store.runById(Number(resume)) : undefined;
+  }
+  if (!run) return "unanswered";
+  if (run.status === "queued" || run.status === "running") return "running";
+  return run.status === "succeeded" ? "answered" : "unanswered";
+}
 
-/** A human_feedback follow_up answered the item's pr_feedback events. */
-export function answerPrFeedback(store: Store, itemId: number): void {
+/**
+ * Whether PR feedback of the item waits for a human_feedback follow_up: a
+ * pr_feedback event no follow-up took, or one whose follow-up ended without
+ * answering it (failed, cancelled or stopped).
+ */
+export function prFeedbackOpen(store: Store, itemId: number): boolean {
   const cursor = readCursor(store, itemId);
-  if (cursor?.open) writeCursor(store, itemId, { ...cursor, open: false });
+  return (
+    cursor?.open === true ||
+    (cursor?.answering ?? []).some((id) => outcome(store, id) === "unanswered")
+  );
+}
+
+/**
+ * The human_feedback follow-up run `runId` takes the item's unanswered
+ * feedback. It is in flight until the run ends: a run that does not succeed
+ * leaves the feedback unanswered again. Feedback that arrives meanwhile opens
+ * it again at once. Call inside the transaction that creates the run.
+ */
+export function answerPrFeedback(
+  store: Store,
+  itemId: number,
+  runId: number,
+): void {
+  const cursor = readCursor(store, itemId);
+  if (!cursor) return;
+  writeCursor(store, itemId, {
+    ...cursor,
+    open: false,
+    // This run answers what the ended ones did not; running ones stay tracked.
+    answering: [
+      ...(cursor.answering ?? []).filter(
+        (id) => outcome(store, id) === "running",
+      ),
+      runId,
+    ],
+  });
 }
 
 const PR = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/;
@@ -131,6 +193,7 @@ const NAKARA_COMMENT = /<!-- nakara[:-]/;
 const REVIEW_STATES = new Set(["CHANGES_REQUESTED", "COMMENTED"]);
 
 const KINDS = ["reviews", "inline", "comments"] as const;
+type Kind = (typeof KINDS)[number];
 
 const clip = (s: string, n: number) =>
   s.length > n ? `${s.slice(0, n)}\n…[truncated ${s.length - n} chars]` : s;
@@ -200,8 +263,9 @@ export class PrFeedbackPoller {
   }
 
   /**
-   * The identities whose writing is never feedback: the factory's agent token
-   * (its agents' replies, Nakara's own comments) and the foreman's token.
+   * The identities Nakara acts as on GitHub: the factory's agent token (its
+   * agents' replies, Nakara's own comments) and the foreman's token. Their
+   * writing is feedback only after the /nakara trigger.
    */
   private async ownLogins(slug: string | undefined): Promise<Set<string>> {
     const variable = agentTokenOf(slug, this.env).variable ?? "gh";
@@ -222,8 +286,9 @@ export class PrFeedbackPoller {
   /**
    * Read the item's PR and turn new feedback into one pr_feedback event. The
    * first poll of an item only sets the cursor, so feedback from before is
-   * not replayed. A write access GitHub cannot tell throws and moves nothing:
-   * the next poll reads the same feedback again.
+   * not replayed. A review still pending, and the inline comments of one,
+   * wait until it is submitted. A write access GitHub cannot tell throws and
+   * moves nothing: the next poll reads the same feedback again.
    */
   async poll(itemId: number, slug: string | undefined): Promise<void> {
     const store = this.store;
@@ -237,25 +302,43 @@ export class PrFeedbackPoller {
     const env = agentGhEnv(slug, this.env);
     const read = await this.io.read(repo, Number(pr[2]), env);
     const before = readCursor(store, itemId);
-    const since =
-      before?.pr === url ? before : { reviews: 0, inline: 0, comments: 0 };
-    const newest = (kind: (typeof KINDS)[number]) =>
+    const same = before?.pr === url;
+    const since = same ? before : { reviews: 0, inline: 0, comments: 0 };
+    const waited = {
+      reviews: new Set(same ? (before.waiting?.reviews ?? []) : []),
+      inline: new Set(same ? (before.waiting?.inline ?? []) : []),
+    };
+    const newest = (kind: Kind) =>
       Math.max(since[kind], ...read[kind].map((r) => r.id));
-    const cursor: Cursor = {
-      pr: url,
-      reviews: newest("reviews"),
-      inline: newest("inline"),
-      comments: newest("comments"),
-      open: before?.open ?? false,
+    // Not read yet: newer than the cursor, or waiting for its review.
+    const unread = (kind: Kind, r: PrRemark) =>
+      r.id > since[kind] || (kind !== "comments" && waited[kind].has(r.id));
+    const pendingReviews = new Set(
+      read.reviews.filter((r) => r.state === "PENDING").map((r) => r.id),
+    );
+    const pending = (kind: Kind, r: PrRemark) =>
+      kind === "reviews"
+        ? pendingReviews.has(r.id)
+        : kind === "inline" && r.review != null && pendingReviews.has(r.review);
+    const waiting = {
+      reviews: read.reviews
+        .filter(
+          (r) => (!before || unread("reviews", r)) && pending("reviews", r),
+        )
+        .map((r) => r.id),
+      inline: read.inline
+        .filter((r) => (!before || unread("inline", r)) && pending("inline", r))
+        .map((r) => r.id),
     };
     const fresh: PrFeedbackRead = { reviews: [], inline: [], comments: [] };
     if (before) {
       // What GitHub alone can rule out, before any identity or access is asked.
-      const candidates = (kind: (typeof KINDS)[number]) =>
+      const candidates = (kind: Kind) =>
         read[kind]
           .filter(
             (r) =>
-              r.id > since[kind] &&
+              unread(kind, r) &&
+              !pending(kind, r) &&
               r.login &&
               r.type !== "Bot" &&
               !r.login.endsWith("[bot]") &&
@@ -272,8 +355,7 @@ export class PrFeedbackPoller {
       if (KINDS.some((kind) => found[kind].length > 0)) {
         const own = await this.ownLogins(slug);
         const writers = new Map<string, boolean | null>();
-        const counts = async ({ login }: PrRemark) => {
-          if (!login || own.has(login)) return false;
+        const writes = async (login: string) => {
           if (!writers.has(login))
             writers.set(login, await this.io.writeAccess(repo, login, env));
           const writer = writers.get(login);
@@ -281,8 +363,21 @@ export class PrFeedbackPoller {
             throw new Error(`cannot read the write access of ${login}`);
           return writer === true;
         };
+        // The feedback a remark carries, or null. Nakara's own logins write
+        // feedback only after /nakara: with a shared identity, a writer's
+        // comment and an agent's reply come from the same login.
+        const feedback = async (r: PrRemark): Promise<string | null> => {
+          const login = r.login ?? "";
+          const triggered = afterTrigger(r.body);
+          if (own.has(login) && !triggered) return null;
+          if (!(await writes(login))) return null;
+          return triggered ?? r.body;
+        };
         for (const kind of KINDS)
-          for (const r of found[kind]) if (await counts(r)) fresh[kind].push(r);
+          for (const r of found[kind]) {
+            const body = await feedback(r);
+            if (body) fresh[kind].push({ ...r, body });
+          }
       }
     }
     const found = KINDS.some((kind) => fresh[kind].length > 0);
@@ -297,7 +392,17 @@ export class PrFeedbackPoller {
         now.stage === "cancelled"
       )
         return;
-      writeCursor(store, itemId, { ...cursor, open: cursor.open || found });
+      // A follow-up may have taken the feedback while GitHub was read.
+      const current = readCursor(store, itemId);
+      writeCursor(store, itemId, {
+        pr: url,
+        reviews: newest("reviews"),
+        inline: newest("inline"),
+        comments: newest("comments"),
+        waiting,
+        open: (current?.open ?? false) || found,
+        ...(current?.answering?.length && { answering: current.answering }),
+      });
       if (!found) return;
       const remark = (r: PrRemark) => ({
         author: r.login,

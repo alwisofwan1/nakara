@@ -18,6 +18,7 @@ interface Remark {
   state?: string;
   path?: string;
   line?: number;
+  review?: number;
 }
 
 interface GitHub {
@@ -27,6 +28,8 @@ interface GitHub {
   comments?: Remark[];
   /** Repository permission by login; a login missing here has none. */
   permissions?: Record<string, string>;
+  /** The login each token acts as, over the defaults (agent-secret: nakara-agent). */
+  users?: Record<string, string>;
 }
 
 /**
@@ -60,7 +63,7 @@ const out = (v) => { console.log(v); process.exit(0); };
 if (args[0] === "pr" && args[1] === "view") out(JSON.stringify({ state: gh.state ?? "OPEN" }));
 if (args[0] !== "api") process.exit(2);
 if (args[1] === "user")
-  out({ "agent-secret": "nakara-agent", "foreman-secret": "nakara-foreman" }[process.env.GH_TOKEN] ?? "operator");
+  out(({ "agent-secret": "nakara-agent", "foreman-secret": "nakara-foreman", ...gh.users })[process.env.GH_TOKEN] ?? "operator");
 if (args[1] === "--paginate") {
   const kind = args[2].includes("/reviews") ? "reviews" : args[2].includes("/pulls/") ? "inline" : "comments";
   if (process.env.GH_TOKEN !== "agent-secret") process.exit(3);
@@ -203,6 +206,7 @@ test("the first poll of an item with older feedback creates no event", async (t)
     reviews: 10,
     inline: 0,
     comments: 30,
+    waiting: { reviews: [], inline: [] },
     open: false,
   });
   // Only what is newer counts.
@@ -271,4 +275,132 @@ test("feedback on a PR that is no longer open is not read", async (t) => {
   });
   await poll();
   assert.deepEqual(feedback(), []);
+});
+
+test("a review pending when polled becomes feedback once it is submitted, with its inline comments", async (t) => {
+  const { github, poll, feedback } = await feedbackPoller(t);
+  const draft = { id: 10, login: "alice", state: "PENDING", body: "" };
+  const inline = {
+    id: 20,
+    login: "alice",
+    body: "Off by one here.",
+    path: "src/a.ts",
+    line: 12,
+    review: 10,
+  };
+  await github({ reviews: [draft], inline: [inline] });
+  // The first poll: the draft is not older feedback, it waits.
+  await poll();
+  // A later comment moves the cursor past the draft's ids.
+  await github({
+    reviews: [draft],
+    inline: [inline],
+    comments: [{ id: 30, login: "alice", body: "One more thing." }],
+    permissions: { alice: "write" },
+  });
+  await poll();
+  assert.equal(feedback().length, 1);
+  await poll();
+  assert.equal(feedback().length, 1);
+  // Submitted: the review and its inline comment are feedback now.
+  await github({
+    reviews: [{ ...draft, state: "CHANGES_REQUESTED", body: "See inline." }],
+    inline: [inline],
+    comments: [{ id: 30, login: "alice", body: "One more thing." }],
+    permissions: { alice: "write" },
+  });
+  await poll();
+  const events = feedback();
+  assert.equal(events.length, 2);
+  const payload = JSON.parse(events[1]?.payload ?? "{}");
+  assert.deepEqual(
+    payload.reviews.map((r: { state: string }) => r.state),
+    ["CHANGES_REQUESTED"],
+  );
+  assert.deepEqual(
+    payload.inline.map((r: { body: string }) => r.body),
+    ["Off by one here."],
+  );
+  assert.deepEqual(payload.comments, []);
+  // Once.
+  await poll();
+  assert.equal(feedback().length, 2);
+});
+
+test("with a shared identity, only a comment that starts with /nakara is feedback", async (t) => {
+  const { github, poll, feedback } = await feedbackPoller(t);
+  // The agent token acts as the Operator, a writer.
+  const shared = {
+    users: { "agent-secret": "operator" },
+    permissions: { operator: "admin" },
+  };
+  await github(shared);
+  await poll();
+  await github({
+    ...shared,
+    reviews: [
+      { id: 11, login: "operator", state: "COMMENTED", body: "Done, fixed." },
+    ],
+    comments: [{ id: 31, login: "operator", body: "Rename the flag." }],
+  });
+  await poll();
+  assert.deepEqual(feedback(), []);
+  await github({
+    ...shared,
+    reviews: [
+      { id: 11, login: "operator", state: "COMMENTED", body: "Done, fixed." },
+      {
+        id: 12,
+        login: "operator",
+        state: "COMMENTED",
+        body: "/nakara Split the module.",
+      },
+    ],
+    comments: [
+      { id: 31, login: "operator", body: "Rename the flag." },
+      { id: 32, login: "operator", body: "  /NAKARA rename the flag, please." },
+    ],
+  });
+  await poll();
+  const events = feedback();
+  assert.equal(events.length, 1);
+  const payload = JSON.parse(events[0]?.payload ?? "{}");
+  // The text after the trigger is the feedback.
+  assert.deepEqual(
+    payload.reviews.map((r: { body: string }) => r.body),
+    ["Split the module."],
+  );
+  assert.deepEqual(
+    payload.comments.map((r: { body: string }) => r.body),
+    ["rename the flag, please."],
+  );
+  // An agent's reply that slipped through with the trigger still needs write
+  // access: a shared login without it writes no feedback.
+  await github({
+    users: { "agent-secret": "operator" },
+    comments: [{ id: 33, login: "operator", body: "/nakara loop" }],
+  });
+  await poll();
+  assert.equal(feedback().length, 1);
+});
+
+test("with separate identities, a writer's comment counts with or without /nakara, and the agent's never without it", async (t) => {
+  const { github, poll, feedback } = await feedbackPoller(t);
+  await poll();
+  await github({
+    comments: [
+      { id: 31, login: "alice", body: "/nakara Rename the flag." },
+      { id: 32, login: "nakara-agent", body: "Fixed in abc123." },
+    ],
+    permissions: { alice: "write", "nakara-agent": "write" },
+  });
+  await poll();
+  const payload = JSON.parse(feedback()[0]?.payload ?? "{}");
+  assert.deepEqual(
+    payload.comments.map((r: { author: string; body: string }) => [
+      r.author,
+      r.body,
+    ]),
+    [["alice", "Rename the flag."]],
+  );
 });
