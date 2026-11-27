@@ -666,6 +666,12 @@ function createFactoryApi(
               ? hasSpecAgent(factory.definition)
               : null,
             factoryFile: await readFactoryFile(factory.config.definitionDir),
+            runners: [...(factory.definition?.runners ?? new Map())].map(
+              ([name, runner]) => ({
+                name,
+                sandbox: Boolean(runner.platform?.linux?.dockerImage),
+              }),
+            ),
           },
         );
         if (!dto)
@@ -679,13 +685,11 @@ function createFactoryApi(
         return c.json({ slug: c.req.param("slug") ?? "" }, 200);
       })
       // Writes factory.yaml only when the edited tree loads and the form is not
-      // stale, then reloads; an empty description removes the key.
+      // stale, then reloads; an empty description removes the key. A reload
+      // that widens reach (a Runner moved to the host) waits for approval.
       .put("/settings/definition", factoryFileBody, async (c) => {
-        const { revision, description } = c.req.valid("json");
-        const result = await c.var.factory.saveFactory(
-          { description },
-          revision,
-        );
+        const { revision, ...edit } = c.req.valid("json");
+        const result = await c.var.factory.saveFactory(edit, revision);
         if (!result.ok && result.code === "conflict")
           return c.json(apiError("conflict", result.message), 409);
         if (!result.ok)

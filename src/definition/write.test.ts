@@ -31,6 +31,7 @@ import { fileRevision, HARNESS_FALLBACK, loadDefinition } from "./load.ts";
 import {
   AGENT_NAME,
   AUTOMATION_NAME,
+  type AgentDefaultsEdit,
   type AgentEdit,
   type AutomationEdit,
   appendLearning,
@@ -1271,4 +1272,120 @@ test("factory.yaml: an edit the loader rejects writes nothing", async () => {
   assert.ok(!result.ok && result.code === "invalid");
   assert.ok(result.errors.some((e) => e.path === "factory.yaml"));
   assert.deepEqual(await snapshot(root), before);
+});
+
+/** factory.yaml with secrets, servers and an auth key under agentDefaults, as a team writes them. */
+const DEFAULTS = `schemaVersion: v1alpha1
+name: t
+repositories: [{ owner: o, name: r }]
+agentDefaults:
+  harness:
+    type: claude # the team harness
+    model: haiku
+    reasoningLevel: high
+  runner: std
+  secrets: [LINEAR_TOKEN] # read by the linear server
+  mcpServers:
+    linear: { url: "https://mcp.linear.app", headers: { Authorization: "Bearer {{LINEAR_TOKEN}}" }, tools: [get_issue] }
+`;
+
+test("factory.yaml agentDefaults: a model replaces the harness and back; secrets and mcpServers keep their text", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  await writeFile(path, DEFAULTS);
+  const save = async (agentDefaults: AgentDefaultsEdit) =>
+    writeFactoryFile(
+      root,
+      { agentDefaults },
+      fileRevision(await readFile(path)),
+      HARNESS_FALLBACK,
+    );
+  const kept = [
+    "  secrets: [LINEAR_TOKEN] # read by the linear server\n",
+    '    linear: { url: "https://mcp.linear.app", headers: { Authorization: "Bearer {{LINEAR_TOKEN}}" }, tools: [get_issue] }\n',
+  ];
+
+  // A model alone: harness goes, its comment with it; the rest is as written.
+  const toModel = await save({ harness: null, model: "opus" });
+  assert.ok(toModel.ok && toModel.changed);
+  let text = await readFile(path, "utf8");
+  assert.doesNotMatch(text, /harness/);
+  assert.match(text, /^agentDefaults:\n {2}runner: std\n/m);
+  assert.match(text, /^ {2}model: opus$/m);
+  for (const line of kept) assert.ok(text.includes(line), line);
+  let loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  assert.deepEqual(loaded.definition.agents.get("boss")?.harness, {
+    kind: "claude",
+    model: "opus",
+  });
+
+  // A harness again: the model shorthand goes.
+  const toHarness = await save({ harness: "claude", model: "haiku" });
+  assert.ok(toHarness.ok && toHarness.changed);
+  text = await readFile(path, "utf8");
+  assert.doesNotMatch(text, /^ {2}model:/m);
+  assert.match(text, /^ {2}harness:\n {4}type: claude\n {4}model: haiku\n/m);
+  for (const line of kept) assert.ok(text.includes(line), line);
+
+  // Runner and idle timeout alone leave the harness as it is; null removes them.
+  const runner = await save({ runner: "big", idleTimeoutMinutes: 15 });
+  assert.ok(runner.ok && runner.changed);
+  loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  const boss = loaded.definition.agents.get("boss");
+  assert.equal(boss?.runner, "big");
+  assert.equal(boss?.idleTimeoutMinutes, 15);
+  assert.equal(boss?.harness.kind, "claude");
+  assert.ok((await save({ idleTimeoutMinutes: 15 })).ok);
+  const same = await save({ idleTimeoutMinutes: 15 });
+  assert.ok(same.ok && !same.changed);
+  assert.ok((await save({ runner: null, idleTimeoutMinutes: null })).ok);
+  text = await readFile(path, "utf8");
+  assert.doesNotMatch(text, /runner|idleTimeoutMinutes/);
+  for (const line of kept) assert.ok(text.includes(line), line);
+});
+
+test("factory.yaml agentDefaults: an unknown harness, runner or timeout, or a lost key, writes nothing", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  await writeFile(path, DEFAULTS);
+  const before = await snapshot(root);
+  for (const [agentDefaults, message] of [
+    [{ harness: "gemini", model: null }, /agentDefaults\.harness\.type/],
+    [{ runner: "missing" }, /runner "missing" is not defined/],
+    [{ idleTimeoutMinutes: 0 }, /idleTimeoutMinutes/],
+    // Neither a harness nor a model breaks the schema's either/or.
+    [{ harness: null, model: null }, /exactly one of `model` or `harness`/],
+    [{ effort: "high" }, /saved with its harness and model/],
+  ] as const) {
+    const result = await writeFactoryFile(
+      root,
+      { agentDefaults },
+      fileRevision(await readFile(path)),
+      HARNESS_FALLBACK,
+    );
+    assert.ok(!result.ok && result.code === "invalid", String(message));
+    assert.match(
+      result.errors.map((e) => e.message).join("\n"),
+      message,
+      JSON.stringify(result.errors),
+    );
+  }
+  assert.deepEqual(await snapshot(root), before);
+
+  // The model shorthand cannot hold a key the form does not edit.
+  await writeFile(
+    path,
+    DEFAULTS.replace("    reasoningLevel: high\n", "    auth: { kind: key }\n"),
+  );
+  const auth = await writeFactoryFile(
+    root,
+    { agentDefaults: { harness: null, model: "opus" } },
+    fileRevision(await readFile(path)),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(!auth.ok && auth.code === "invalid");
+  assert.match(auth.errors[0]?.message ?? "", /would drop auth/);
+  assert.match(await readFile(path, "utf8"), /auth: \{ kind: key \}/);
 });

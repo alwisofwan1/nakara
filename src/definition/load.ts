@@ -655,7 +655,8 @@ export async function loadDefinition(
       mcpServers,
       secrets,
       spawnableBy: fm.spawnableBy,
-      idleTimeoutMinutes: fm.idleTimeoutMinutes ?? 60,
+      idleTimeoutMinutes:
+        fm.idleTimeoutMinutes ?? factory.agentDefaults.idleTimeoutMinutes ?? 60,
       skills: [...sharedSkills, ...localSkills],
     });
   }
