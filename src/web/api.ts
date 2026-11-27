@@ -8,6 +8,7 @@ import type { Config } from "../config.ts";
 import type { ChangeEvent } from "../db.ts";
 import {
   hasSpecAgent,
+  hasVerifyAgent,
   type LoadResult,
   type Problem,
 } from "../definition/load.ts";
@@ -676,6 +677,9 @@ function createFactoryApi(
             backupDir: registry.config.backup.dir,
             specAgent: factory.definition
               ? hasSpecAgent(factory.definition)
+              : null,
+            verifyAgent: factory.definition
+              ? hasVerifyAgent(factory.definition)
               : null,
             factoryFile: await readFactoryFile(factory.config.definitionDir),
             runners: [...(factory.definition?.runners ?? new Map())].map(

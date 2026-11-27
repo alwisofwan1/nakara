@@ -5,7 +5,9 @@ import type { AgentDef, Definition } from "../definition/load.ts";
 import type { ItemEvent, Run, WorkItem } from "../db.ts";
 import {
   GATE_CHECK_LABEL,
+  type GateCheck,
   gateCheckMet,
+  gateCheckUnreachable,
   gateEvidence,
   type Limits,
   parseGateChecks,
@@ -256,19 +258,43 @@ function specRuleLine(item: WorkItem): string {
     : "when asked (you decide whether this item needs a Spec)";
 }
 
-/** The item's Handoff Gate: the fixed part, and each check its factory added with whether it is met. */
-function handoffGateLine(item: WorkItem, runs: Run[]): string {
+/**
+ * The item's Handoff Gate: the fixed part, and each check its factory added
+ * with whether it is met, and why when it cannot be met with the item's limits
+ * or the definition's agents.
+ */
+function handoffGateLine(
+  item: WorkItem,
+  runs: Run[],
+  verifyAgent: boolean,
+): string {
   const checks = parseGateChecks(item.gate_checks);
   if (!checks.length) return "pushed to the PR and CI passes";
   const evidence = gateEvidence(runs);
+  const state = {
+    reviewCount: item.review_count,
+    maxReviews: item.max_reviews,
+    verifyAgent,
+  };
+  const status = (check: GateCheck) => {
+    if (gateCheckMet(evidence, check)) return "met";
+    if (!gateCheckUnreachable(state, check)) return "not met";
+    return check === "review"
+      ? `not met, and the review limit (${item.review_count} of ${item.max_reviews}) is used up so it cannot be met: ask_human`
+      : "not met, and the definition has no verify agent so it cannot be met: ask_human";
+  };
   const added = checks.map(
-    (check) =>
-      `${GATE_CHECK_LABEL[check]} (${gateCheckMet(evidence, check) ? "met" : "not met"})`,
+    (check) => `${GATE_CHECK_LABEL[check]} (${status(check)})`,
   );
   return `pushed to the PR and CI passes, plus ${added.join(", ")}`;
 }
 
-export function renderState(item: WorkItem, runs: Run[]): string {
+/** `verifyAgent`: whether the definition has a VERIFY agent the Foreman may dispatch. */
+export function renderState(
+  item: WorkItem,
+  runs: Run[],
+  verifyAgent = true,
+): string {
   const active = runs.filter(
     (r) =>
       r.role === "agent" && (r.status === "running" || r.status === "queued"),
@@ -278,7 +304,7 @@ export function renderState(item: WorkItem, runs: Run[]): string {
     `- stage: ${item.stage} · spec: ${item.spec_state} · reviews: ${item.review_count}/${item.max_reviews} · revisions: ${item.revision_count}/${item.max_revisions}`,
     `- issue: ${item.issue_url ?? "none"} · PR: ${item.pr_url ?? "none"}${item.pr_merged ? " (merged)" : ""}`,
     `- spec rule: ${specRuleLine(item)}`,
-    `- handoff gate: ${handoffGateLine(item, runs)}`,
+    `- handoff gate: ${handoffGateLine(item, runs, verifyAgent)}`,
     `- cost: $${item.cost_usd.toFixed(2)} of $${item.budget_usd.toFixed(2)} · runs: ${item.run_count + 1} of ${item.max_runs} (this turn included)`,
     `- agents in progress: ${active.length ? active.map((r) => `${r.agent} (#${r.id}, ${r.status})`).join(", ") : "none"}`,
   ].join("\n");

@@ -10,6 +10,7 @@ import {
   type Definition,
   factoryRepositories,
   hasSpecAgent,
+  hasVerifyAgent,
 } from "../definition/load.ts";
 import { runsUsed } from "../domain/policy.ts";
 import { runTurn } from "../harness/claude.ts";
@@ -254,6 +255,7 @@ export class ForemanRunner {
         ...policyFor(this.store, item),
         runCount: item.run_count + 1,
         specAgent: hasSpecAgent(def),
+        verifyAgent: hasVerifyAgent(def),
       },
       repositories: factoryRepositories(def),
       agents: [...def.agents.values()]
@@ -281,7 +283,7 @@ export class ForemanRunner {
 
     const prompt = [
       ...events.map((e) => renderEvent(e, item, def)),
-      renderState(item, runs),
+      renderState(item, runs, hasVerifyAgent(def)),
     ].join("\n\n");
     // Shutting down: the events stay pending for the turn after the restart.
     if (this.control.interrupting) return;

@@ -77,16 +77,35 @@ export const gateCheckMet = (
   check === "review" ? state.reviewAccepted : state.verificationPassed;
 
 /**
+ * Whether an unmet gate check can no longer be met with the item's own limits
+ * and the definition's agents: review cannot run again once the review limit
+ * is used up, and no Verification runs without a verify agent. Only a human
+ * moves such an item forward.
+ */
+export const gateCheckUnreachable = (
+  state: Pick<PolicyState, "reviewCount" | "maxReviews" | "verifyAgent">,
+  check: GateCheck,
+): boolean =>
+  check === "review"
+    ? state.reviewCount >= state.maxReviews
+    : state.verifyAgent === false;
+
+/**
  * Why the checks the item's factory added to its Handoff Gate are not met;
- * null when they are (or it added none).
+ * null when they are (or it added none). A check that cannot be met any more
+ * sends the Foreman to the human, not to an agent it may not dispatch: the
+ * gate never lifts the review limit the item copied at creation.
  */
 const gateCheckMissing = (state: PolicyState): string | null => {
   const missing = state.gateChecks.find((check) => !gateCheckMet(state, check));
-  if (missing === "review")
-    return "This factory's Handoff Gate also needs an accepted Review. Dispatch review first.";
-  if (missing === "verification")
-    return "This factory's Handoff Gate also needs a passed Verification. Dispatch verification first.";
-  return null;
+  if (!missing) return null;
+  if (gateCheckUnreachable(state, missing))
+    return missing === "review"
+      ? `This factory's Handoff Gate needs an accepted Review, but the latest review did not accept the change and the review limit (${state.reviewCount} of ${state.maxReviews}) is used up, so review cannot run again. Do not dispatch review: ask_human to review and merge the pull request themselves, or to cancel this Work Item. The item copied its review limit when it was created, so changing the factory's limit does not free it.`
+      : "This factory's Handoff Gate needs a passed Verification, but the definition has no verify agent, so no Verification can run. Do not dispatch one: ask_human to add a VERIFY agent to the definition, or to review and merge the pull request themselves. Changing the factory's Handoff Gate only affects new Work Items, not this one.";
+  return missing === "review"
+    ? "This factory's Handoff Gate also needs an accepted Review. Dispatch review first."
+    : "This factory's Handoff Gate also needs a passed Verification. Dispatch verification first.";
 };
 
 export const AGENT_TYPES = [
@@ -128,6 +147,11 @@ export interface PolicyState {
    * dispatch. Absent counts as present: only the loaded definition can tell.
    */
   specAgent?: boolean;
+  /**
+   * Whether the factory's definition has a VERIFY agent the Foreman may
+   * dispatch. Absent counts as present: only the loaded definition can tell.
+   */
+  verifyAgent?: boolean;
   /** The checks the work item's factory added to its Handoff Gate, snapshotted at creation. */
   gateChecks: readonly GateCheck[];
   /** Whether the item's latest REVIEW run reported the verdict accepted; filled by the caller. */
