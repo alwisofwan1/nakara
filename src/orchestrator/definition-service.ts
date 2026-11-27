@@ -4,7 +4,7 @@ import type { Config } from "../config.ts";
 import type { Store } from "../db.ts";
 import {
   type Definition,
-  HARNESS_FALLBACK,
+  HARNESS_DEFAULT,
   type LoadResult,
   loadDefinition,
   type Problem,
@@ -110,7 +110,7 @@ export class DefinitionService {
     try {
       const result = await loadDefinition(
         this.config.definitionDir,
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       );
       if (!result.ok) return result;
       const errors = new Map<string, Problem>();
@@ -155,7 +155,7 @@ export class DefinitionService {
         name,
         edit,
         revision,
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       ),
     );
   }
@@ -163,7 +163,7 @@ export class DefinitionService {
   /** Create agents/<name>/agent.md and reload; an invalid or taken agent writes nothing. */
   createAgent(agent: NewAgent): Promise<DefinitionWrite> {
     return this.writeDefinition(`Create agent ${agent.name}`, () =>
-      createAgent(this.config.definitionDir, agent, HARNESS_FALLBACK),
+      createAgent(this.config.definitionDir, agent, HARNESS_DEFAULT),
     );
   }
 
@@ -173,7 +173,7 @@ export class DefinitionService {
    */
   deleteAgent(name: string, revision: string): Promise<DefinitionWrite> {
     return this.writeDefinition(`Delete agent ${name}`, () =>
-      deleteAgent(this.config.definitionDir, name, revision, HARNESS_FALLBACK),
+      deleteAgent(this.config.definitionDir, name, revision, HARNESS_DEFAULT),
     );
   }
 
@@ -192,7 +192,7 @@ export class DefinitionService {
         name,
         edit,
         revision,
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       ),
     );
   }
@@ -224,7 +224,7 @@ export class DefinitionService {
         this.config.definitionDir,
         edit,
         revision,
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
         { models },
       );
     });
@@ -264,7 +264,7 @@ export class DefinitionService {
   /** Create automations/<name>/automation.md and reload; an invalid or taken automation writes nothing. */
   createAutomation(automation: NewAutomation): Promise<DefinitionWrite> {
     return this.writeDefinition(`Create automation ${automation.name}`, () =>
-      createAutomation(this.config.definitionDir, automation, HARNESS_FALLBACK),
+      createAutomation(this.config.definitionDir, automation, HARNESS_DEFAULT),
     );
   }
 
@@ -278,7 +278,7 @@ export class DefinitionService {
         this.config.definitionDir,
         name,
         revision,
-        HARNESS_FALLBACK,
+        HARNESS_DEFAULT,
       ),
     );
   }
@@ -286,7 +286,7 @@ export class DefinitionService {
   /** Append Operator-approved lessons to the shared learnings skill, then reload. */
   saveLearning(lines: string[]): Promise<DefinitionWrite> {
     return this.writeDefinition("Add learnings", () =>
-      appendLearning(this.config.definitionDir, lines, HARNESS_FALLBACK),
+      appendLearning(this.config.definitionDir, lines, HARNESS_DEFAULT),
     );
   }
 
@@ -374,10 +374,9 @@ export class DefinitionService {
     }
     // A restart lost the definition a held reload kept: run the last applied copy.
     if (loaded.ok && !result.ok && !this.definition && this.appliedDir) {
-      const copy = await loadDefinition(
-        this.appliedDir,
-        HARNESS_FALLBACK,
-      ).catch(() => undefined);
+      const copy = await loadDefinition(this.appliedDir, HARNESS_DEFAULT).catch(
+        () => undefined,
+      );
       if (copy?.ok) {
         this.definition = copy.definition;
         this.store.notify({ type: "status", id: "global" });

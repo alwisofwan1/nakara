@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "../definition/load.ts";
 
 const SCAFFOLD = join(import.meta.dirname, "scaffold.ts");
 
@@ -48,7 +48,7 @@ test("scaffold writes a factory directory from the choices", async (t) => {
     out.stdout,
     /Web Shop \(slug web-shop, label factory:Web Shop\)/,
   );
-  const loaded = await loadDefinition(dir, HARNESS_FALLBACK);
+  const loaded = await loadDefinition(dir, HARNESS_DEFAULT);
   assert.ok(loaded.ok, JSON.stringify(!loaded.ok && loaded.errors));
   const d = loaded.definition;
   assert.equal(d.label, "factory:Web Shop");

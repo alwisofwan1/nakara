@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Run, RunStatus, Store } from "../db.ts";
 import type { AgentType } from "../domain/policy.ts";
 import { checkFollowUp } from "../orchestrator/follow-up.ts";
+import { fallbackOf } from "../orchestrator/limit-wait.ts";
 
 export const runsQuery = z.object({
   status: z
@@ -124,6 +125,13 @@ export interface RunDetailDto extends RunSummaryDto {
   systemPrompt: string | null;
   report: string | null;
   error: string | null;
+  /** The run retries the brief of a run that hit a rate or usage limit, on a fallback harness. */
+  fallback: {
+    runId: number;
+    harness: string;
+    reason: string;
+    resetAt: string | null;
+  } | null;
   /** External MCP tools called, with counts; Nakara's own are not listed. */
   tools: { name: string; calls: number }[];
   followUp: {
@@ -188,6 +196,7 @@ export function readRun(
     systemPrompt: context.systemPrompt,
     report: run.result,
     error: run.error,
+    fallback: fallbackOf(store, run.id),
     tools: Object.entries(
       JSON.parse(run.tools ?? "{}") as Record<string, number>,
     ).map(([name, calls]) => ({ name, calls })),

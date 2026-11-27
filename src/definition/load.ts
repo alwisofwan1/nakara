@@ -24,6 +24,7 @@ import {
   scorerFrontmatterSchema,
   type AgentFrontmatter,
   type AutomationFrontmatter,
+  type FallbackSpec,
   type FactoryFile,
   type HarnessSpec,
   type McpServer,
@@ -40,8 +41,11 @@ export interface ResolvedHarness {
   effort?: string | undefined;
 }
 
-/** The harness an agent runs on when neither it nor agentDefaults names one. */
-export const HARNESS_FALLBACK: ResolvedHarness = {
+/**
+ * The harness an agent runs on when neither it nor agentDefaults names one.
+ * Not to be confused with an agent's `fallback` harnesses (AgentDef.fallback).
+ */
+export const HARNESS_DEFAULT: ResolvedHarness = {
   kind: "claude",
   model: undefined,
 };
@@ -115,6 +119,11 @@ export interface AgentDef {
   description: string;
   instructions: string;
   harness: ResolvedHarness;
+  /**
+   * The harnesses a fresh run moves to, in order, when its harness hits a
+   * rate or usage limit (`fallback` in its frontmatter or agentDefaults).
+   */
+  fallback: ResolvedHarness[];
   runner: string | undefined;
   mcpServers: Record<string, McpServer>;
   /** Secret names the agent may use: factory `secrets` plus its own or agentDefaults'. */
@@ -330,6 +339,48 @@ export function resolveHarness(
   };
 }
 
+/** The harness kinds a fallback may name: the ones that run locally. */
+const FALLBACK_KINDS = ["claude", "claude-code", "codex", "qwen"];
+
+/**
+ * A `fallback` list as harnesses, without the agent's own harness or a
+ * repeat; an entry of a kind that cannot run locally is an error.
+ */
+export function resolveFallback(
+  specs: FallbackSpec[],
+  own: ResolvedHarness,
+): {
+  fallback: ResolvedHarness[];
+  /** The index in `specs` of each harness in `fallback`. */
+  at: number[];
+  errors: { index: number; message: string }[];
+} {
+  const fallback: ResolvedHarness[] = [];
+  const at: number[] = [];
+  const errors: { index: number; message: string }[] = [];
+  const same = (a: ResolvedHarness, b: ResolvedHarness) =>
+    a.kind === b.kind && a.model === b.model;
+  for (const [index, spec] of specs.entries()) {
+    const harness = typeof spec === "string" ? { type: spec } : spec;
+    if (!FALLBACK_KINDS.includes(harness.type)) {
+      errors.push({
+        index,
+        message: `fallback: unknown harness "${harness.type}"; use claude, codex or qwen`,
+      });
+      continue;
+    }
+    const resolved = resolveHarness(
+      { harness: harness as HarnessSpec },
+      HARNESS_DEFAULT,
+    ).harness;
+    if (!same(resolved, own) && !fallback.some((f) => same(f, resolved))) {
+      fallback.push(resolved);
+      at.push(index);
+    }
+  }
+  return { fallback, at, errors };
+}
+
 const effort = (h: HarnessSpec) =>
   h.reasoningLevel ? { effort: h.reasoningLevel } : {};
 
@@ -457,6 +508,17 @@ export async function loadDefinition(
     warnings.push(
       problem(factoryPath, base.warning, factoryLine(["agentDefaults"])),
     );
+  for (const { index, message } of resolveFallback(
+    factory.agentDefaults.fallback ?? [],
+    base.harness,
+  ).errors)
+    errors.push(
+      problem(
+        factoryPath,
+        message,
+        factoryLine(["agentDefaults", "fallback", index]),
+      ),
+    );
   const sharedSkills = await skillsIn(join(root, "skills"));
 
   const runners = new Map<string, RunnerFile>();
@@ -511,6 +573,19 @@ export async function loadDefinition(
         : { harness: base.harness };
     if (resolved.warning)
       warnings.push(problem(path, resolved.warning, harnessLine));
+    // An agent's own list replaces agentDefaults'; the defaults' errors are reported once, above.
+    const fallbackSpec = fm.fallback ?? factory.agentDefaults.fallback ?? [];
+    const fallbacks = resolveFallback(fallbackSpec, resolved.harness);
+    if (fm.fallback)
+      for (const { index, message } of fallbacks.errors)
+        errors.push(problem(path, message, line(["fallback", index])));
+    const fallbackLine = (i: number) =>
+      fm.fallback
+        ? ([path, line(["fallback", i])] as const)
+        : ([
+            factoryPath,
+            factoryLine(["agentDefaults", "fallback", i]),
+          ] as const);
     const mcpServers = {
       ...factory.mcpServers,
       ...(fm.mcpServers ?? factory.agentDefaults.mcpServers ?? {}),
@@ -617,6 +692,29 @@ export async function loadDefinition(
       sandbox,
     );
     if (unreachable) warnings.push(problem(path, unreachable, harnessLine));
+    for (const [i, h] of fallbacks.fallback.entries()) {
+      const [file, at] = fallbackLine(fallbacks.at[i] ?? 0);
+      const why = harnessUnreachable(name, h.kind, runner, sandbox);
+      if (why) warnings.push(problem(file, `fallback: ${why}`, at));
+      if (h.kind !== "codex") continue;
+      // The rules of the codex harness hold for a fallback to it too.
+      if (fm.agentType === "FOREMAN")
+        errors.push(
+          problem(
+            file,
+            `fallback: the foreman cannot use the codex harness (it needs the nakara MCP tools)`,
+            at,
+          ),
+        );
+      else if (Object.keys(mcpServers).length)
+        errors.push(
+          problem(
+            file,
+            `fallback: codex agents cannot use mcpServers yet, so agent "${name}" cannot fall back to codex`,
+            at,
+          ),
+        );
+    }
     if (resolved.harness.kind === "codex" && fm.agentType === "FOREMAN")
       errors.push(
         problem(
@@ -660,6 +758,7 @@ export async function loadDefinition(
       description: fm.description ?? "",
       instructions: body,
       harness: resolved.harness,
+      fallback: fallbacks.fallback,
       runner,
       mcpServers,
       secrets,

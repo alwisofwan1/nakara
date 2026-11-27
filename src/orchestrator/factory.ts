@@ -16,6 +16,7 @@ import { AgentRunner } from "./agent-runner.ts";
 import { ForemanRunner } from "./foreman-runner.ts";
 import { appliedDir } from "./freed-ids.ts";
 import { HumanInput } from "./human-input.ts";
+import { waitForReset } from "./limit-wait.ts";
 import { migrateOldLayout } from "./migrate-layout.ts";
 import { failRun, RunControl, recoverOrphanedRuns } from "./run-support.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -505,10 +506,20 @@ export class Factory {
     const turn = await this.foreman.run(itemId);
     if (!turn) return;
     const accepted = await this.applyActions(itemId, turn.recorded);
-    this.store.markEventsProcessed(turn.eventIds);
+    // A turn a limit refused before it decided anything handles its events
+    // again once the limit resets; the foreman's session stays on its harness.
+    if (!turn.limit || turn.recorded.length)
+      this.store.markEventsProcessed(turn.eventIds);
 
     // biome-ignore lint/style/noNonNullAssertion: Preserve the existing required-record assumption instead of silently skipping missing data.
     const fresh = this.store.item(itemId)!;
+    if (turn.limit)
+      return waitForReset(this.store, this.telemetry.log, fresh, {
+        who: `The foreman (run #${turn.limit.runId})`,
+        harness: turn.limit.harness,
+        limit: turn.limit.limit,
+        foreman: true,
+      });
     if (turn.failure !== undefined)
       return this.actions.pause(
         fresh,

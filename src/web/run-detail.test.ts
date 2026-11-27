@@ -103,6 +103,7 @@ test("readRun projects metadata, attempts and the item's other runs", () => {
       systemPrompt: null,
       report: null,
       error: null,
+      fallback: null,
       tools: [],
       followUp: {
         allowed: true,

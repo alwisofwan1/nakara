@@ -8,7 +8,7 @@ import { type TestContext, test } from "node:test";
 
 import { loadConfig } from "../config.ts";
 import { type NeedsYou, Store } from "../db.ts";
-import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
+import { HARNESS_DEFAULT, loadDefinition } from "../definition/load.ts";
 import type { PrCheck } from "../domain/checks.ts";
 import type { Action } from "../domain/policy.ts";
 import type { PrIO } from "../domain/pushed.ts";
@@ -24,7 +24,7 @@ import { RunControl } from "./run-support.ts";
 const item0 = (s: Store) => s.items()[0]?.id ?? 0;
 
 // No harness, gh or timers: GitHub and the workspace are an in-memory fake.
-const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
+const loaded = await loadDefinition("factory", HARNESS_DEFAULT);
 assert.ok(loaded.ok);
 // The factory's repository: Policy refuses URLs anywhere else.
 const definition = {

@@ -41,9 +41,28 @@ const harness = z.looseObject({
   auth: z.unknown().optional(),
 });
 
+/**
+ * Nakara extension: the harnesses a fresh run moves to, in order, when its own
+ * hits a rate or usage limit. An entry is a kind (`codex`) or a harness
+ * (`{ type: codex, model: gpt-5 }`); the loader checks the kinds.
+ */
+const fallback = z
+  .array(
+    z.union([
+      z.string(),
+      z.looseObject({
+        type: z.string(),
+        model: z.string().optional(),
+        reasoningLevel: z.string().optional(),
+      }),
+    ]),
+  )
+  .optional();
+
 const execution = {
   model: z.string().optional(),
   harness: harness.optional(),
+  fallback,
   runner: z.string().optional(),
   secrets: z.array(z.string()).optional(),
   mcpServers: z.record(z.string(), mcpServer).optional(),
@@ -183,3 +202,4 @@ export type RunnerFile = z.infer<typeof runnerSchema>;
 export type ScorerFrontmatter = z.infer<typeof scorerFrontmatterSchema>;
 export type McpServer = z.infer<typeof mcpServer>;
 export type HarnessSpec = z.infer<typeof harness>;
+export type FallbackSpec = NonNullable<z.infer<typeof fallback>>[number];

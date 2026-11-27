@@ -14,6 +14,7 @@ import {
 } from "../definition/load.ts";
 import { runsUsed } from "../domain/policy.ts";
 import { runTurn } from "../harness/claude.ts";
+import type { RateLimit } from "../harness/limits.ts";
 import type { RecordedAction, TurnSnapshot } from "../mcp/types.ts";
 import {
   agentCredentials,
@@ -87,6 +88,8 @@ export interface ForemanTurn {
   recorded: RecordedAction[];
   /** Why the turn failed, unless it succeeded or was stopped. */
   failure: string | undefined;
+  /** The turn failed at a rate or usage limit; its run and harness. */
+  limit?: { runId: number; harness: string; limit: RateLimit } | undefined;
 }
 
 /** Runs one foreman turn: from building its prompt and state to the actions it recorded. */
@@ -426,6 +429,10 @@ export class ForemanRunner {
       failure:
         !outcome.ok && !controller.signal.aborted
           ? (outcome.error ?? "unknown error")
+          : undefined,
+      limit:
+        status === "failed" && !stopped && outcome.limit
+          ? { runId: run.id, harness: run.harness, limit: outcome.limit }
           : undefined,
     };
   }

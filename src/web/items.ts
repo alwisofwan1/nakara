@@ -1,3 +1,4 @@
+import { LIMIT_HIT } from "../harness/limits.ts";
 import type { Approval, Run, Store, WorkItem } from "../db.ts";
 import { uncheckedKey } from "../db/learnings.ts";
 import type { AgentType, Stage } from "../domain/policy.ts";
@@ -147,6 +148,9 @@ function sourceChip(item: WorkItem): ChipDto {
   }
 }
 
+/** The needs-you label of an item that waits for a rate or usage limit to reset. */
+export const LIMIT_WAITING = "Waiting for a usage limit";
+
 /** The needs-you label of an item that used its runs. */
 export const RUN_LIMIT_REACHED = "Run limit reached";
 
@@ -171,6 +175,10 @@ export function itemView(
   // Merging needs no run either.
   const runBlocked = runsExhausted && item.stage !== "handoff";
   const lastFailed = !active && agentRuns.at(-1)?.status === "failed";
+  // Paused by its last run's limit: it resumes on its own (limit-wait.ts).
+  const limited =
+    item.status === "paused" &&
+    Boolean(runs.at(-1)?.error?.includes(` ${LIMIT_HIT}: `));
 
   let needsYou: NeedsYouKind = "none";
   let failure: string | null = null;
@@ -183,9 +191,11 @@ export function itemView(
         ? "Budget exhausted"
         : runBlocked
           ? RUN_LIMIT_REACHED
-          : lastFailed
-            ? "Run failed"
-            : "Paused";
+          : limited
+            ? LIMIT_WAITING
+            : lastFailed
+              ? "Run failed"
+              : "Paused";
     } else if (item.stage === "handoff") needsYou = "pr";
   }
 

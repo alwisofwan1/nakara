@@ -108,9 +108,11 @@ function RunDetailView({ run }: { run: RunDetail }) {
           <p className="text-small text-muted">
             {run.role === "foreman"
               ? `Turn ${run.attempt}`
-              : run.attempt > 1
-                ? `Follow-up ${run.attempt - 1}`
-                : "First run"}
+              : run.fallback
+                ? `Fallback for run #${run.fallback.runId}`
+                : run.attempt > 1
+                  ? `Follow-up ${run.attempt - 1}`
+                  : "First run"}
             {run.sessionId ? ` · session ${shortId(run.sessionId)}` : ""}
           </p>
         </div>
@@ -140,6 +142,27 @@ function RunDetailView({ run }: { run: RunDetail }) {
         </Meta>
         <Meta label="Exit">{live(run.status) ? "—" : run.status}</Meta>
       </dl>
+      {run.fallback && (
+        <p
+          role="status"
+          className="rounded-control border border-attention bg-attention-soft px-md py-sm text-small"
+        >
+          Moved to the fallback harness {run.harness}:{" "}
+          <Link
+            to="/runs/$runId"
+            params={{ runId: String(run.fallback.runId) }}
+            className="font-semibold hover:underline"
+          >
+            run #{run.fallback.runId}
+          </Link>{" "}
+          hit the {run.fallback.harness} rate or usage limit (
+          {run.fallback.reason}
+          {run.fallback.resetAt
+            ? `; it resets ${new Date(run.fallback.resetAt).toLocaleString()}`
+            : ""}
+          ), so this run started the same brief on {run.harness}.
+        </p>
+      )}
       {run.error && (
         <p
           role="alert"
@@ -154,7 +177,9 @@ function RunDetailView({ run }: { run: RunDetail }) {
           {run.role === "agent" && (
             <Box
               title={
-                run.attempt > 1 ? "Follow-up message" : "Dispatched by foreman"
+                run.attempt > 1 && !run.fallback
+                  ? "Follow-up message"
+                  : "Dispatched by foreman"
               }
             >
               <p className="max-h-panel overflow-auto text-small whitespace-pre-wrap">
