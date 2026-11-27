@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { Store, WorkItem } from "../db.ts";
 import type { Definition } from "../definition/load.ts";
-import { type SpecRule, specRequestRefused } from "../domain/policy.ts";
+import {
+  SpecRequestRefused,
+  type SpecRule,
+  specRequestRefused,
+} from "../domain/policy.ts";
 import { run } from "../runner/workspace.ts";
 
 export const DEFAULT_REQUESTER = "operator";
@@ -245,6 +249,9 @@ export async function createNewWork(
       }),
     };
   } catch (error) {
+    // The factory's Spec rule may have changed while gh was running.
+    if (error instanceof SpecRequestRefused)
+      return refuse(400, "invalid", error.message);
     // source_ref is UNIQUE: a concurrent import won between the check and the insert.
     const raced = duplicate(canonicalUrl, issue.url);
     if (raced) return raced;

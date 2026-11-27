@@ -6,7 +6,7 @@ import {
   type SpecRule,
   type SpecState,
   type Stage,
-  specRequestRefused,
+  SpecRequestRefused,
 } from "../domain/policy.ts";
 import type { FactorySettingsRepository } from "./factory-settings.ts";
 import type { Notifier } from "./notifier.ts";
@@ -127,7 +127,7 @@ export class ItemRepository extends Repository {
     const limits = this.settings.settings(factoryId);
     // ADR-0006 rule 3: an item cannot opt out of `always` or into `never`.
     if (input.specRequested && limits.specRule !== "when_asked")
-      throw new Error(specRequestRefused(limits.specRule));
+      throw new SpecRequestRefused(limits.specRule);
     const id = this.run(
       `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, automation_instructions, automation_display_name, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, spec_rule, spec_requested, factory_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
