@@ -758,7 +758,8 @@ Settings page shows each repository's commands read-only; edit them in
 - **Without `verify`** nothing changes.
 
 The latest result is kept per item in the `kv` table (`verify:<item>`, with
-the PR head it ran on); recording another PR clears it.
+the PR head it ran on); recording another PR clears it, and so does the next
+implementation run on a repository that no longer lists `verify`.
 
 ### Giving the foreman tools
 

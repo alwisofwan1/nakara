@@ -112,8 +112,8 @@ export class PullRequestGate {
 
   /**
    * Record the item's PR. A different PR starts fresh: not merged, and no CI
-   * wait, CI failure or verify carried over from the previous PR. Re-recording the same
-   * PR changes nothing, so its merge is reported once.
+   * wait, CI failure or verify carried over from the previous PR.
+   * Re-recording the same PR changes nothing, so its merge is reported once.
    */
   record(itemId: number, prUrl: string): void {
     if (this.store.item(itemId)?.pr_url === prUrl) return;

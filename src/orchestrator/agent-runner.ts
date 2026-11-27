@@ -68,6 +68,8 @@ import {
   STOPPED,
 } from "./run-support.ts";
 import {
+  clearVerify,
+  latestVerify,
   recordVerify,
   type VerifyResult,
   verifyConfig,
@@ -669,7 +671,8 @@ export class AgentRunner {
 
   /**
    * Run the PR repository's verify commands on the PR head; null when it
-   * lists none. The full output goes beside the run's log.
+   * lists none, or when the run was stopped meanwhile. The full output goes
+   * beside the run's log.
    */
   private async verify(
     def: Definition,
@@ -682,7 +685,11 @@ export class AgentRunner {
     log: Telemetry["log"],
   ): Promise<VerifyResult | null> {
     const config = verifyConfig(def, onPr.prUrl);
-    if (!config) return null;
+    // Without verify, a result from when the repository had it holds nothing back.
+    if (!config) {
+      if (latestVerify(this.store, itemId)) clearVerify(this.store, itemId);
+      return null;
+    }
     const started = Date.now();
     const outcome = await this.verifier({
       def,

@@ -722,6 +722,51 @@ test("a verify that cannot run pauses the item and does not count as a failure",
   assert.ok(v.review().ok);
 });
 
+test("a repository that no longer lists verify drops the failed result of an earlier verify", async (t) => {
+  const v = await verifyFixture(t, undefined, {
+    status: "passed",
+    commands: [],
+  });
+  // Not the fixture's run: a second implementation run after verify was removed.
+  v.store.setKv(
+    `verify:${v.item.id}`,
+    JSON.stringify({ status: "failed", failed: "npm test", commands: [] }),
+  );
+  assert.equal(policyFor(v.store, v.item).verifyFailed, "npm test");
+  const again = v.store.createRun({
+    item_id: v.item.id,
+    role: "agent",
+    agent: "implement",
+    agent_type: "IMPLEMENT",
+    harness: "claude",
+    model: null,
+    input: "Fix it",
+    session_id: null,
+    status: "queued",
+  });
+  const pr: PrIO = {
+    readPrHead: async () => ({
+      sha: execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: v.worktree,
+        encoding: "utf8",
+      }).trim(),
+      branch: "main",
+    }),
+    onPr: async (_url, sha, head) => sha === head.sha,
+  };
+  await new AgentRunner(
+    v.store,
+    v.config,
+    new RunControl(),
+    () => v.def,
+    undefined,
+    async () => succeeded,
+    pr,
+  ).run(again);
+  assert.equal(policyFor(v.store, v.item).verifyFailed, null);
+  assert.ok(v.review().ok);
+});
+
 test("without verify, the report and the policy are unchanged", async (t) => {
   const v = await verifyFixture(t, undefined, {
     status: "failed",
