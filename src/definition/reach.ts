@@ -54,9 +54,14 @@ export function harnessReachWarnings(def: Definition): string[] {
 export const RUNNER_LINE =
   /^([^·]+ · runner host|runner [^·]+ · (container|egress) [^·]+)$/;
 
-/** One line per thing an agent can reach: where it runs and the hosts its container may reach, a server's command, URL, header, env or tool name, and each secret. */
+/** Repository lines, which reach recorded before they counted lacks. */
+export const REPO_LINE = /^repository [^ ·]+$/;
+
+/** One line per thing agents can reach: each factory repository they work in, where each runs and the hosts its container may reach, a server's command, URL, header, env or tool name, and each secret. */
 export function reachOf(def: Definition): string[] {
-  const lines = new Set<string>();
+  const lines = new Set<string>(
+    def.factory.repositories.map((r) => `repository ${r.owner}/${r.name}`),
+  );
   for (const agent of def.agents.values()) {
     const add = (what: string) => lines.add(`${agent.name} · ${what}`);
     const sandbox = sandboxOf(def.runners, agent.runner);

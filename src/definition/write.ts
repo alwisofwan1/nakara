@@ -21,6 +21,7 @@ import {
   isCollection,
   isMap,
   isScalar,
+  isSeq,
   parseDocument,
   stringify,
   type YAMLMap,
@@ -323,6 +324,66 @@ export interface FactoryEdit {
   description?: string | null | undefined;
   /** `secrets`, `mcpServers` and any other key of agentDefaults are kept. */
   agentDefaults?: AgentDefaultsEdit | undefined;
+  /** Repositories to add at the end of the list, and `owner/name`s to remove. */
+  repositories?: RepositoriesEdit | undefined;
+}
+
+/** A repository as an edit adds it to factory.yaml. */
+export interface RepoRef {
+  owner: string;
+  name: string;
+}
+
+/** Repositories to add, and to remove by `owner/name`; GitHub compares both case-insensitively. */
+export interface RepositoriesEdit {
+  add?: readonly RepoRef[] | undefined;
+  remove?: readonly string[] | undefined;
+}
+
+/** An `owner/name` as GitHub compares it. */
+const repoKey = (repo: string) => repo.toLowerCase();
+
+/**
+ * Remove and add repositories in the `repositories` list of `doc`, keeping the
+ * other entries and their comments; new ones go at the end. Adding one the
+ * list has, removing one it lacks, or leaving it empty is refused.
+ */
+function putRepositories(doc: Document, edit: RepositoriesEdit): boolean {
+  const list = doc.get("repositories", true);
+  if (!isSeq(list))
+    throw new Error("repositories: factory.yaml has no list of repositories");
+  const keyOf = (item: unknown) => {
+    const repo: unknown = isMap(item) ? item.toJSON() : null;
+    return isRecord(repo) &&
+      typeof repo.owner === "string" &&
+      typeof repo.name === "string"
+      ? repoKey(`${repo.owner}/${repo.name}`)
+      : null;
+  };
+  let changed = false;
+  for (const repo of edit.remove ?? []) {
+    const at = list.items.findIndex((item) => keyOf(item) === repoKey(repo));
+    if (at < 0)
+      throw new Error(
+        `repositories: ${repo} is not a repository of this factory`,
+      );
+    list.items.splice(at, 1);
+    changed = true;
+  }
+  for (const { owner, name } of edit.add ?? []) {
+    const repo = `${owner}/${name}`;
+    if (list.items.some((item) => keyOf(item) === repoKey(repo)))
+      throw new Error(
+        `repositories: ${repo} is already a repository of this factory`,
+      );
+    list.items.push(doc.createNode({ owner, name }));
+    changed = true;
+  }
+  if (list.items.length === 0)
+    throw new Error(
+      "repositories: a factory needs at least one repository; add another before removing the last one",
+    );
+  return changed;
 }
 
 /** A yaml value as the loader sees it; the document keeps integers as BigInt. */
@@ -399,6 +460,8 @@ export function serializeFactory(text: string, edit: FactoryEdit): string {
     if (defaults.idleTimeoutMinutes !== undefined)
       put([...at, "idleTimeoutMinutes"], defaults.idleTimeoutMinutes);
   }
+  if (edit.repositories && putRepositories(doc, edit.repositories))
+    changed = true;
   if (!changed) return text;
   // lineWidth 0: never fold long lines the team wrote on one line.
   const out = keepFlows(doc.toString({ lineWidth: 0 }));
@@ -479,12 +542,14 @@ export interface AgentDefaultsForm {
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 
 /**
- * The description, agentDefaults and revision of factory.yaml as it is on
+ * The description, agentDefaults, repositories and revision of factory.yaml as it is on
  * disk, for the Settings editor; null when the file cannot be read.
  */
 export async function readFactoryFile(root: string): Promise<{
   description: string | null;
   agentDefaults: AgentDefaultsForm;
+  /** The `owner/name` repositories the file lists, approved or not. */
+  repositories: string[];
   revision: string;
 } | null> {
   const bytes = await readFile(join(root, FACTORY_FILE)).catch(() => null);
@@ -503,6 +568,14 @@ export async function readFactoryFile(root: string): Promise<{
       runner: text(d.runner),
       idleTimeoutMinutes: typeof idle === "number" ? idle : null,
     },
+    repositories: (Array.isArray(data.repositories) ? data.repositories : [])
+      .filter(
+        (r: unknown): r is { owner: string; name: string } =>
+          isRecord(r) &&
+          typeof r.owner === "string" &&
+          typeof r.name === "string",
+      )
+      .map((r: { owner: string; name: string }) => `${r.owner}/${r.name}`),
     revision: fileRevision(bytes),
   };
 }

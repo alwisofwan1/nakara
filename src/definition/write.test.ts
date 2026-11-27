@@ -34,6 +34,8 @@ import {
   type AgentDefaultsEdit,
   type KnownModels,
   modelListOf,
+  readFactoryFile,
+  type RepositoriesEdit,
   type AgentEdit,
   type AutomationEdit,
   appendLearning,
@@ -1480,4 +1482,101 @@ test("factory.yaml agentDefaults: a model must be one its harness lists; nothing
   assert.equal(modelListOf({ model: "qwen3-coder" }), null);
   assert.equal(modelListOf({ harness: "codex", model: null }), null);
   assert.equal(modelListOf({ harness: "oz", model: "x" }), null);
+});
+
+const REPOS = `# The factory, as the team wrote it.
+schemaVersion: v1alpha1
+name: t
+repositories:
+  # The web app.
+  - owner: o
+    name: r # deployed daily
+  # The API, which ships with it.
+  - owner: o
+    name: api
+    deferred: true
+agentDefaults: { model: auto, runner: std } # shared
+`;
+
+test("factory.yaml repositories: added at the end and removed by owner/name, keeping comments", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  await writeFile(path, REPOS);
+  const save = async (repositories: RepositoriesEdit) =>
+    writeFactoryFile(
+      root,
+      { repositories },
+      fileRevision(await readFile(path)),
+      HARNESS_FALLBACK,
+    );
+
+  const added = await save({ add: [{ owner: "acme", name: "docs.site" }] });
+  assert.ok(added.ok && added.changed);
+  assert.equal(
+    await readFile(path, "utf8"),
+    REPOS.replace(
+      "    deferred: true\n",
+      "    deferred: true\n  - owner: acme\n    name: docs.site\n",
+    ),
+  );
+  const loaded = await loadDefinition(root, HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  assert.deepEqual(
+    loaded.definition.factory.repositories.map((r) => `${r.owner}/${r.name}`),
+    ["o/r", "o/api", "acme/docs.site"],
+  );
+  assert.deepEqual((await readFactoryFile(root))?.repositories, [
+    "o/r",
+    "o/api",
+    "acme/docs.site",
+  ]);
+
+  // GitHub's names are case-insensitive: the entry goes with its keys and its comment.
+  const removed = await save({ remove: ["O/API"] });
+  assert.ok(removed.ok && removed.changed);
+  assert.equal(
+    await readFile(path, "utf8"),
+    REPOS.replace(
+      "  # The API, which ships with it.\n  - owner: o\n    name: api\n    deferred: true\n",
+      "  - owner: acme\n    name: docs.site\n",
+    ),
+  );
+
+  // One edit can swap a repository for another.
+  const swapped = await save({
+    add: [{ owner: "o", name: "api" }],
+    remove: ["acme/docs.site"],
+  });
+  assert.ok(swapped.ok && swapped.changed);
+  assert.equal(
+    await readFile(path, "utf8"),
+    REPOS.replace(
+      "  # The API, which ships with it.\n  - owner: o\n    name: api\n    deferred: true\n",
+      "  - owner: o\n    name: api\n",
+    ),
+  );
+});
+
+test("factory.yaml repositories: a duplicate, an unknown or the last repository is refused and writes nothing", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  await writeFile(path, REPOS);
+  const before = await snapshot(root);
+  const revision = fileRevision(await readFile(path));
+  for (const [repositories, message] of [
+    [{ add: [{ owner: "O", name: "R" }] }, /O\/R is already a repository/],
+    [{ remove: ["o/missing"] }, /o\/missing is not a repository/],
+    [{ remove: ["o/r", "o/api"] }, /at least one repository/],
+  ] as const) {
+    const result = await writeFactoryFile(
+      root,
+      { repositories },
+      revision,
+      HARNESS_FALLBACK,
+    );
+    assert.ok(!result.ok && result.code === "invalid", String(message));
+    assert.match(result.errors[0]?.message ?? "", message);
+    assert.equal(result.errors[0]?.path, "factory.yaml");
+  }
+  assert.deepEqual(await snapshot(root), before);
 });

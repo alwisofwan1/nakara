@@ -104,10 +104,27 @@ export class FactoryRepository extends Repository {
   }
 
   /**
+   * The number of the factory's active items that target the `owner/name`
+   * repository, compared as GitHub does (case-insensitively). An item without
+   * a repository is not counted.
+   */
+  activeItemsFor(id: number, repo: string): number {
+    return (
+      this.get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM work_items WHERE factory_id = ? AND lower(repo) = lower(?) AND stage NOT IN ('complete','cancelled')",
+        id,
+        repo,
+      )?.n ?? 0
+    );
+  }
+
+  /**
    * Remove the factory with its closed items and their runs, events,
    * messages, approvals and per-item settings (Telegram links, and the kv
    * keys under `itemKeyPrefixes` that other modules own), its saved limits,
-   * and its repository status (`repo:<slug>`, see runner/repos.ts). The caller refuses a factory
+   * its repository status (`repo:<slug>`, see runner/repos.ts), and its
+   * approved and pending reach (`reach:<id>` and `reach:<id>:…`, see
+   * DefinitionService), which a factory reusing the id must not inherit. The caller refuses a factory
    * with active items; the foreign keys refuse what is left behind.
    */
   deleteFactory(id: number, itemKeyPrefixes: readonly string[] = []): void {
@@ -119,6 +136,12 @@ export class FactoryRepository extends Repository {
          UNION ALL SELECT 'repo:' || slug FROM factories WHERE id = ?)`,
         id,
         id,
+      );
+      this.run(
+        "DELETE FROM kv WHERE key = ? OR substr(key, 1, length(?)) = ?",
+        `reach:${id}`,
+        `reach:${id}:`,
+        `reach:${id}:`,
       );
       // Per-item state owned elsewhere: `<prefix><item>` or `<prefix><item>:…`.
       for (const prefix of itemKeyPrefixes)

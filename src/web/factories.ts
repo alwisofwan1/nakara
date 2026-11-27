@@ -8,7 +8,7 @@ import {
 } from "../definition/write.ts";
 import { SPEC_RULES } from "../domain/policy.ts";
 import type { IntakeDto } from "./automations.ts";
-import { FOLDER, REPO } from "./wizard.ts";
+import { FOLDER, OWNER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
 export function readFactories(
@@ -45,10 +45,11 @@ export function readFactorySettings(
     backupDir: string;
     /** Whether the applied definition has a SPEC agent; null when none is loaded. */
     specAgent: boolean | null;
-    /** factory.yaml on disk, as the Description and Agent defaults rows edit it; null when unreadable. */
+    /** factory.yaml on disk, as the Description, Agent defaults and Repositories rows edit it; null when unreadable. */
     factoryFile: {
       description: string | null;
       agentDefaults: AgentDefaultsForm;
+      repositories: string[];
       revision: string;
     } | null;
     /** The runners of the applied definition; a sandbox runs agents in a container. */
@@ -196,11 +197,38 @@ export const factoryFileInput = z
         idleTimeoutMinutes: z.number().int().nullable().optional(),
       })
       .optional(),
+    repositories: z
+      .strictObject({
+        add: z
+          .array(
+            z.strictObject({
+              owner: z
+                .string()
+                .regex(OWNER, "owner must be a GitHub user or organization"),
+              name: z
+                .string()
+                .max(100)
+                .regex(
+                  /^(?!\.\.?$)[A-Za-z0-9._-]+$/,
+                  "name must be a GitHub repository name",
+                ),
+            }),
+          )
+          .max(20)
+          .optional(),
+        remove: z
+          .array(z.string().max(200).regex(REPO, "remove takes owner/name"))
+          .max(20)
+          .optional(),
+      })
+      .optional(),
   })
   .refine(
     (edit) =>
-      edit.description !== undefined || edit.agentDefaults !== undefined,
-    "Send a description or agentDefaults",
+      edit.description !== undefined ||
+      edit.agentDefaults !== undefined ||
+      edit.repositories !== undefined,
+    "Send a description, agentDefaults or repositories",
   );
 
 export const moveInput = z.object({

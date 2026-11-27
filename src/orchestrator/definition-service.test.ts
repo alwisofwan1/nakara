@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 import { loadConfig } from "../config.ts";
 import { Store, stubFactorySeed } from "../db.ts";
-import { RUNNER_LINE } from "../definition/reach.ts";
+import { REPO_LINE, RUNNER_LINE } from "../definition/reach.ts";
 import { Factory } from "./factory.ts";
 
 // The smoke server replaces reloadDefinition to reapply its fixture overrides;
@@ -168,4 +168,36 @@ test("a reload that widens what agents reach waits for the operator; narrowing a
   );
   assert.ok((await factory.reloadDefinition()).ok);
   assert.equal(factory.pendingReach(), null);
+
+  // A repository added to factory.yaml waits too; removing one applies at once.
+  const yaml = join(root, "factory.yaml");
+  const factoryText = await readFile(yaml, "utf8");
+  const repos = () =>
+    factory.definition?.factory.repositories.map((r) => `${r.owner}/${r.name}`);
+  const listed = repos();
+  await writeFile(
+    yaml,
+    factoryText.replace(
+      "repositories:\n",
+      "repositories:\n  - owner: acme\n    name: docs\n",
+    ),
+  );
+  assert.equal((await factory.reloadDefinition()).ok, false);
+  assert.deepEqual(factory.pendingReach(), ["repository acme/docs"]);
+  assert.deepEqual(repos(), listed);
+  await writeFile(yaml, factoryText);
+  assert.ok((await factory.reloadDefinition()).ok);
+
+  // Reach approved before repositories counted takes the listed ones as approved, once.
+  const approvedNow: string[] = JSON.parse(store.getKv(key) ?? "[]");
+  store.setKv(
+    key,
+    JSON.stringify(approvedNow.filter((l) => !REPO_LINE.test(l))),
+  );
+  store.setKv(`${key}:repos`, "");
+  assert.ok((await factory.reloadDefinition()).ok);
+  assert.equal(factory.pendingReach(), null);
+  assert.ok(
+    JSON.parse(store.getKv(key) ?? "[]").some((l: string) => REPO_LINE.test(l)),
+  );
 });
