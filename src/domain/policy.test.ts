@@ -141,7 +141,7 @@ test("a Spec the rule asks for, once approved, lets implement start", () => {
 });
 
 const NO_SPEC_AGENT =
-  "This factory writes a Spec first, but its definition has no spec agent, so no Spec can be written. Do not dispatch one: ask_human to add a SPEC agent to the definition or to change the factory's Spec rule in Settings.";
+  "This factory writes a Spec first, but the definition has no spec agent, so no Spec can be written. Do not dispatch one: ask_human to add a SPEC agent to the definition, or to cancel this Work Item. Changing the factory's Spec rule only affects new Work Items, not this one.";
 
 test("under always without a spec agent, implement is refused with a reason that does not ask for the spec agent", () => {
   const state: PolicyState = { ...fresh, specRule: "always", specAgent: false };
@@ -160,6 +160,21 @@ test("under always without a spec agent, implement is refused with a reason that
       apply({ ...state, specRule }, dispatch("IMPLEMENT")).stage,
       "building",
     );
+  // An item that asked for a Spec is told it asked, not that the factory always does.
+  assert.deepEqual(
+    check(
+      { ...state, specRule: "when_asked", specRequested: true },
+      dispatch("IMPLEMENT"),
+      repos,
+    ),
+    {
+      ok: false,
+      reason: NO_SPEC_AGENT.replace(
+        "This factory writes a Spec first",
+        "This Work Item asked for a Spec first",
+      ),
+    },
+  );
 });
 
 test("handoff waits for the Spec the rule asks for", () => {

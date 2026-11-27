@@ -132,14 +132,21 @@ export const specRequired = (
   (state.specRule === "when_asked" && state.specRequested);
 
 /**
+ * The refusal when a Spec is required but the definition has no spec agent.
+ * The item copied its rule when it was created (ADR-0006), so changing the
+ * factory's rule in Settings does not free it.
+ */
+const noSpecAgent = (rule: SpecRule): string =>
+  `${rule === "always" ? "This factory writes a Spec first" : "This Work Item asked for a Spec first"}, but the definition has no spec agent, so no Spec can be written. Do not dispatch one: ask_human to add a SPEC agent to the definition, or to cancel this Work Item. Changing the factory's Spec rule only affects new Work Items, not this one.`;
+
+/**
  * Why code cannot be built or handed off yet for want of the approved Spec the
  * item or its factory asks for; null when nothing is missing. Without a spec
  * agent the Foreman cannot write one, so it is told so plainly.
  */
 const specMissing = (state: PolicyState): string | null => {
   if (!specRequired(state) || state.specState === "approved") return null;
-  if (state.specAgent === false)
-    return "This factory writes a Spec first, but its definition has no spec agent, so no Spec can be written. Do not dispatch one: ask_human to add a SPEC agent to the definition or to change the factory's Spec rule in Settings.";
+  if (state.specAgent === false) return noSpecAgent(state.specRule);
   return "This factory writes a Spec first. Dispatch the spec agent.";
 };
 
