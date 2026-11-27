@@ -1351,13 +1351,38 @@ test("migration 024 keeps every proof and starts new evidence ids after the Slac
   assert.equal(addProof(db), 3);
 });
 
-test("migration 024 ignores a malformed Slack cursor and starts after the rows", (t) => {
+test("migration 024 makes the Slack cursor canonical, so Slack posts the next proof whatever the cursor held", (t) => {
   const dir = tempDir(t);
-  for (const cursor of ["", "abc", "007", "99999999999999999999"]) {
-    const db = withFreedEvidence(join(dir, `nakara-${cursor}.db`), cursor);
-    t.after(() => db.close());
-    migrate(db, { defaultBudgetUsd: 15 });
-    assert.equal(addProof(db), 2, cursor);
+  // [stored cursor, what kv holds after the migration]; undefined: deleted.
+  const cases: [string, string | undefined][] = [
+    ["007", "7"],
+    [" 3 ", "3"],
+    ["1e1", "10"],
+    ["5.0", "5"],
+    ["", undefined],
+    ["abc", undefined],
+    ["-1", undefined],
+    ["2.5", undefined],
+    ["99999999999999999999", undefined],
+  ];
+  for (const [i, [cursor, canonical]] of cases.entries()) {
+    const path = join(dir, `nakara-${i}.db`);
+    withFreedEvidence(path, cursor).close();
+    const store = new Store(path, { defaultBudgetUsd: 15 });
+    t.after(() => store.close());
+    assert.equal(store.getKv("slack:evidence"), canonical, cursor);
+    // What Slack does: seed a missing cursor at start, then read it.
+    if (!store.getKv("slack:evidence"))
+      store.setKv("slack:evidence", String(store.lastEvidenceId()));
+    const read = Number(store.getKv("slack:evidence") ?? 0);
+    store.addEvidence(1, 1, [{ criterion: "c", file: "c.png" }]);
+    const added = store.lastEvidenceId();
+    assert.ok(added > Math.max(read, 1), cursor);
+    assert.deepEqual(
+      store.evidenceAfter(read).map((e) => e.id),
+      [added],
+      cursor,
+    );
   }
 });
 

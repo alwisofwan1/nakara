@@ -71,7 +71,7 @@ export const swap = (from: string, to: string) => (sql: string) => {
  * from 1 up to Number.MAX_SAFE_INTEGER; anything else is no id. Ids read from free-form text (kv keys and values)
  * must neither fail the read nor start the sequence near SQLite's limit.
  */
-export const parseId = (text: string | undefined): number | undefined => {
+const parseId = (text: string | undefined): number | undefined => {
   if (!text || !/^[1-9]\d{0,15}$/.test(text)) return undefined;
   const id = Number(text);
   return id >= 1 && id <= Number.MAX_SAFE_INTEGER ? id : undefined;
