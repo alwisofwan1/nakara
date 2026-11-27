@@ -28,7 +28,7 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   The MCP tool refuses a violation immediately, and the orchestrator checks the
   action again before applying it:
   - implementation waits for an approved spec (approval only via the inbox),
-  - review runs at most once (the factory's review limit), and only after a PR is recorded; only a review that ran counts: a review run that is stopped, cancelled or fails without a verdict gives its review back, and the foreman is told it can dispatch the review again,
+  - review runs at most as many times as the item's review limit (once by default), and only after a PR is recorded; a re-review uses one review, whether the foreman dispatches the review agent or sends it a follow-up; only a review that ran counts: a review run that is stopped, cancelled or fails without a verdict gives its review back, and the foreman is told it can run the review again,
   - review fixes go to the same implementation agent through `follow_up`, with a revision cap,
   - a budget cap per work item (set in New work; default from the factory's Settings, else `NAKARA_BUDGET_USD`) that includes failed runs; a claude run stopped before its final result is charged an estimate from the token usage it streamed,
   - a run limit per work item (default from the factory's Settings, else `NAKARA_MAX_RUNS`) that counts foreman turns and agent runs, failed and interrupted ones included, so items on harnesses without a per-token bill (codex, qwen) also stop; the item pauses until the operator presses Raise run limit,

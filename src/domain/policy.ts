@@ -433,13 +433,12 @@ function checkAgentWork(
       };
 
     case "REVIEW":
-      if (isFollowUp)
-        return { ok: true, next: { ...active, stage: "reviewing" } };
+      // A re-review uses one review, dispatched or sent as a follow_up.
       if (state.reviewCount >= state.maxReviews)
         return refuse(
-          `Review already ran ${state.reviewCount} time(s); the limit is ${state.maxReviews}. Hand the PR to the human.`,
+          `Review already ran ${state.reviewCount} time(s); the limit is ${state.maxReviews}. A re-review, dispatched or sent as a follow_up, uses one review. Hand the PR to the human.`,
         );
-      if (!state.prUrl)
+      if (!isFollowUp && !state.prUrl)
         return refuse(
           "Review needs a pull request. Record it with record_refs first.",
         );

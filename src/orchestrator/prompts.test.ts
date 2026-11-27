@@ -37,6 +37,26 @@ test("the foreman prompt names its configured MCP servers and tools, or says the
   assert.ok(!named.includes(NONE_LINE));
 });
 
+test("the foreman prompt says a re-review uses one review, dispatched or as a follow_up", async () => {
+  const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
+  assert.ok(loaded.ok);
+  const ws = { repos: [] } as unknown as Workspace;
+  const { limits } = loadConfig({});
+  assert.ok(
+    foremanSystemPrompt(loaded.definition, ws, limits).includes(
+      `- Review runs at most ${limits.maxReviews} time(s), and only after record_refs has a PR. A re-review uses one review, whether you dispatch the review agent or send it a follow_up. Only a review that ran counts: a review run that is stopped, cancelled or fails without a verdict gives its review back, so you can run the review again.`,
+    ),
+  );
+  // The shipped foreman instructions agree: re-review while the limit allows.
+  const { instructions } = loaded.definition.foreman;
+  assert.ok(
+    instructions.includes(
+      "After a revision that addressed review findings, run the review again on the revised PR while the item's review limit allows it (its current state shows the limit). A re-review uses one review, whether you dispatch the review subagent or send it a `follow_up`. When the limit is used up, hand off and say in the summary that the last revision was not re-reviewed.",
+    ),
+  );
+  assert.doesNotMatch(instructions, /review runs only once/);
+});
+
 test("a request stays data: its backticks cannot close the fence around it", async () => {
   const loaded = await loadDefinition("factory", HARNESS_FALLBACK);
   assert.ok(loaded.ok);

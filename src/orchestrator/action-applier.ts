@@ -213,11 +213,9 @@ export class ActionApplier {
               : pushOnlyBranch
                 ? pushOnlyPrompt(pushOnlyBranch)
                 : action.message,
-          // Policy counted this review; the run gives it back if it ends without a verdict.
-          counts_review:
-            action.type === "dispatch_agent" && action.agentType === "REVIEW"
-              ? 1
-              : 0,
+          // Policy counted this review, dispatched or sent as a follow_up; the
+          // run gives it back if it ends without a verdict.
+          counts_review: action.agentType === "REVIEW" ? 1 : 0,
         });
         return;
       }
