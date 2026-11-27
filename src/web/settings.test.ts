@@ -699,6 +699,25 @@ test("delete is refused while items are active and for the default factory", asy
   });
   store.updateItem(closed.id, { stage: "complete", status: "done" });
   store.addMessage(closed.id, "factory", "Done.");
+  // UI proof and an approved lesson keep the item's run referenced.
+  const run = store.createRun({
+    item_id: closed.id,
+    role: "agent",
+    agent: "implement",
+    agent_type: "IMPLEMENT",
+    harness: "claude",
+    model: null,
+    input: "Implement",
+    session_id: null,
+    status: "succeeded",
+  });
+  store.addEvidence(closed.id, run.id, [{ criterion: "c", file: "proof.png" }]);
+  const lesson = store.addLearning(closed.id, run.id, {
+    lines: ["Run the linter."],
+    mistake: "lint errors",
+    suggestCheck: false,
+  });
+  assert.ok(lesson && store.resolveLearning(lesson, "approved", {}));
   const removed: string[] = [];
   registry.onRemoved((f) => removed.push(f.record?.slug ?? ""));
   const backups = join(dataDir, "backups");
@@ -739,6 +758,13 @@ test("delete is refused while items are active and for the default factory", asy
   assert.equal(registry.get("harbor"), undefined);
   assert.equal(store.repos.factories.factory("harbor"), undefined);
   assert.equal(store.item(closed.id), undefined);
+  for (const table of ["evidence", "learnings"])
+    assert.equal(
+      store.db
+        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE item_id = ?`)
+        .get(closed.id)?.n,
+      0,
+    );
   assert.equal(await exists(harborDir), false);
   assert.equal((await call("GET", "f/harbor/settings")).status, 404);
 });
