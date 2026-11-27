@@ -33,6 +33,7 @@ import {
   type RevisionQueue,
   revisionQueue,
 } from "../features/settings/agent-defaults";
+import { HandoffGateRow } from "../features/settings/handoff-gate-row";
 import { WhereWorkComesFrom } from "../features/settings/intake-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
@@ -410,6 +411,10 @@ function Limits({ settings }: { settings: Settings }) {
         slug={settings.slug}
         rule={settings.limits.specRule}
         specAgent={settings.definition.specAgent}
+      />
+      <HandoffGateRow
+        slug={settings.slug}
+        checks={settings.limits.gateChecks}
       />
     </section>
   );

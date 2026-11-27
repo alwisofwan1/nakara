@@ -2,6 +2,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import {
   type ItemStatus,
+  parseGateChecks,
   type PolicyState,
   type SpecRule,
   type SpecState,
@@ -45,6 +46,8 @@ export interface WorkItem {
   spec_rule: SpecRule;
   /** 1 when the item asked for a Spec, which only the `when_asked` rule allows. */
   spec_requested: number;
+  /** JSON array of the Handoff Gate checks the item's factory added, copied when it was created; '[]' for items before migration 021. */
+  gate_checks: string;
   /** 1 when someone without write access edited the request after the Factory Label was applied. */
   request_edited: number;
   issue_url: string | null;
@@ -72,6 +75,11 @@ export function policyState(item: WorkItem): PolicyState {
     maxRevisions: item.max_revisions,
     specRule: item.spec_rule,
     specRequested: item.spec_requested === 1,
+    gateChecks: parseGateChecks(item.gate_checks),
+    // Only the item's runs tell; callers that judge a handoff fill them
+    // (policyFor). Unknown counts as not met, so nothing passes by omission.
+    reviewAccepted: false,
+    verificationPassed: false,
     prUrl: item.pr_url,
     prMerged: item.pr_merged === 1,
   };
@@ -129,8 +137,8 @@ export class ItemRepository extends Repository {
     if (input.specRequested && limits.specRule !== "when_asked")
       throw new SpecRequestRefused(limits.specRule);
     const id = this.run(
-      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, automation_instructions, automation_display_name, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, spec_rule, spec_requested, factory_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO work_items (title, request, requester, source, source_ref, source_url, repo, automation, automation_instructions, automation_display_name, issue_url, request_edited, budget_usd, max_runs, max_reviews, max_revisions, spec_rule, spec_requested, gate_checks, factory_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.title,
       input.request,
       input.requester ?? null,
@@ -149,6 +157,7 @@ export class ItemRepository extends Repository {
       limits.maxRevisions,
       limits.specRule,
       input.specRequested ? 1 : 0,
+      JSON.stringify(limits.gateChecks),
       factoryId,
       t,
       t,

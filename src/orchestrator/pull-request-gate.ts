@@ -14,7 +14,7 @@ import {
   type PrCheck,
   readPrChecks,
 } from "../domain/checks.ts";
-import type { PolicyState } from "../domain/policy.ts";
+import { gateEvidence, type PolicyState } from "../domain/policy.ts";
 import {
   findUnpushed,
   GH_PR,
@@ -60,11 +60,16 @@ export const GH_PULL_REQUESTS: PullRequestPort = {
 /** The kv key prefixes of an item's gate state, for deleting a factory's items. */
 export const ITEM_KEY_PREFIXES = [WAIT, FAILED, PUSH_ONLY, CLOSED] as const;
 
-/** An item's policy state with the gate's part: failed CI and the push-only follow_up. */
+/**
+ * An item's policy state with the gate's part: failed CI, the push-only
+ * follow_up, and the evidence for the checks its factory added to the Handoff
+ * Gate. Every handoff, the Foreman's tool and the applier alike, is judged on it.
+ */
 export function policyFor(store: Store, item: WorkItem): PolicyState {
   const pushOnly = store.getKv(PUSH_ONLY + item.id) ?? "";
   return {
     ...policyState(item),
+    ...gateEvidence(store.runs(item.id)),
     ciFailed: Boolean(store.getKv(FAILED + item.id)),
     pushOnlyBranch: pushOnly.startsWith(PUSH_ONLY_AVAILABLE)
       ? pushOnly.slice(PUSH_ONLY_AVAILABLE.length)

@@ -11,6 +11,7 @@ import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
 import type { PrCheck } from "../domain/checks.ts";
 import type { Action } from "../domain/policy.ts";
 import type { PrIO } from "../domain/pushed.ts";
+import { reviewVerdict } from "../domain/review.ts";
 import {
   ActionApplier,
   type ActionIO,
@@ -52,10 +53,17 @@ function setup(
     dataDir?: string;
     /** Runs while the gate reads the PR's checks, as a human acting meanwhile. */
     duringChecks?: (store: Store) => void;
+    /** The checks the factory adds to its Handoff Gate, saved before the item is created. */
+    gate?: { gateReview?: boolean; gateVerification?: boolean };
   } = {},
 ) {
   const store = new Store(":memory:", { defaultBudgetUsd: 15 });
   t.after(() => store.close());
+  if (io.gate)
+    store.repos.factorySettings.saveLimits(
+      store.repos.factories.defaultFactory().id,
+      io.gate,
+    );
   const calls: string[][] = [];
   const fake: ActionIO = {
     readPrHead: async () => ({ sha: HEAD_SHA, branch: "nakara/1-x" }),
@@ -745,4 +753,64 @@ test("only a review that ran counts toward the review limit: stopped, cancelled 
 
   // The review that ran still counts: the limit refuses another.
   assert.deepEqual(await apply(review), []);
+});
+
+test("a factory's added Handoff Gate checks hold the handoff; CI still fails it once they are met", async (t) => {
+  const ci: PrCheck[] = [{ name: "CI", bucket: "pass" }];
+  const { store, item, apply, calls } = setup(t, {
+    checks: ci,
+    gate: { gateReview: true, gateVerification: true },
+  });
+  assert.equal(store.item(item.id)?.gate_checks, '["review","verification"]');
+  const finished = (
+    agentType: "REVIEW" | "VERIFY",
+    status: "succeeded" | "failed",
+    result: string,
+  ) => {
+    const run = store.createRun({
+      item_id: item.id,
+      role: "agent",
+      agent: agentType.toLowerCase(),
+      agent_type: agentType,
+      harness: "none",
+      model: null,
+      session_id: null,
+      status: "queued",
+      input: "",
+    });
+    store.markRunStarted(run.id, "log");
+    store.finishRun(run.id, {
+      status,
+      result,
+      error: null,
+      cost_usd: 0,
+      num_turns: null,
+      duration_ms: 0,
+      session_id: null,
+      log_path: "log",
+      review_verdict: agentType === "REVIEW" ? reviewVerdict(result) : null,
+    });
+  };
+
+  // No accepted Review yet: refused before GitHub is read.
+  finished("REVIEW", "succeeded", "Verdict: revision needed");
+  assert.deepEqual(await apply(handoff), []);
+  assert.deepEqual(calls, []);
+  finished("REVIEW", "succeeded", "Verdict: accepted");
+  // No passed Verification yet.
+  finished("VERIFY", "failed", "");
+  assert.deepEqual(await apply(handoff), []);
+  assert.deepEqual(calls, []);
+  finished("VERIFY", "succeeded", "All checks pass.");
+
+  // Every added check is met, but CI fails: the fixed part still refuses.
+  ci[0] = { name: "CI", bucket: "fail" };
+  assert.deepEqual(await apply(handoff), []);
+  assert.equal(store.item(item.id)?.stage, "intake");
+  assert.equal(store.getKv(`ci-failed:${item.id}`), "1");
+
+  // CI passes too: handed off.
+  ci[0] = { name: "CI", bucket: "pass" };
+  assert.deepEqual(await apply(handoff), [handoff]);
+  assert.equal(store.item(item.id)?.stage, "handoff");
 });

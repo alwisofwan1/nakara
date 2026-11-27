@@ -1,5 +1,12 @@
 import type { Approval, Message, Run, Store, WorkItem } from "../db.ts";
-import type { Stage } from "../domain/policy.ts";
+import {
+  GATE_CHECK_LABEL,
+  type GateCheck,
+  gateCheckMet,
+  gateEvidence,
+  parseGateChecks,
+  type Stage,
+} from "../domain/policy.ts";
 import type { ReviewVerdict } from "../domain/review.ts";
 import {
   AGENT_LOOK,
@@ -79,6 +86,8 @@ export type ActionCardDto =
       prLabel: string;
       reviews: { used: number; max: number };
       revisions: { used: number; max: number };
+      /** The checks the factory added to the item's Handoff Gate; empty when it added none. */
+      gateChecks: GateCheckDto[];
     }
   | {
       kind: "failed";
@@ -103,6 +112,13 @@ export type ActionCardDto =
     }
   | { kind: "cancelled"; at: string }
   | { kind: "none" };
+
+/** One check the item's factory added to its Handoff Gate, and whether its runs meet it. */
+export interface GateCheckDto {
+  check: GateCheck;
+  label: string;
+  met: boolean;
+}
 
 export interface ItemRunDto {
   id: number;
@@ -129,6 +145,8 @@ export interface ItemDetailDto extends ItemViewDto {
   progress: ProgressStepDto[];
   conversation: ConversationEntryDto[];
   card: ActionCardDto;
+  /** The checks the factory added to the item's Handoff Gate, on top of pushed and CI passing. */
+  handoffGate: GateCheckDto[];
   details: {
     source: string;
     repo: string | null;
@@ -311,6 +329,7 @@ function actionCard(
         prLabel: `PR ${refLabel(item.pr_url)}`,
         reviews: { used: item.review_count, max: item.max_reviews },
         revisions: { used: item.revision_count, max: item.max_revisions },
+        gateChecks: handoffGate(item, runs),
       };
     case "failed": {
       const last = agentRuns.at(-1);
@@ -359,6 +378,16 @@ function actionCard(
     default:
       return { kind: "none" };
   }
+}
+
+/** The item's added Handoff Gate checks, met or not by its latest review and verify runs. */
+function handoffGate(item: WorkItem, runs: Run[]): GateCheckDto[] {
+  const evidence = gateEvidence(runs);
+  return parseGateChecks(item.gate_checks).map((check) => ({
+    check,
+    label: GATE_CHECK_LABEL[check],
+    met: gateCheckMet(evidence, check),
+  }));
 }
 
 function runRows(runs: Run[]): ItemRunDto[] {
@@ -464,6 +493,7 @@ export function itemDetail(
     progress: progress(item, view, approvals),
     conversation,
     card,
+    handoffGate: handoffGate(item, runs),
     details: {
       source: SOURCE_LABEL[item.source],
       repo: item.repo,

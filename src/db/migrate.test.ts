@@ -346,6 +346,7 @@ const contents = (db: DatabaseSync) =>
             spec_requested,
             automation_instructions,
             automation_display_name,
+            gate_checks,
             ...row
           }) => {
             assert.equal(instance_id ?? null, null);
@@ -364,6 +365,9 @@ const contents = (db: DatabaseSync) =>
             // Migration 020: items before it keep no copy of their Automation.
             assert.equal(automation_instructions ?? null, null);
             assert.equal(automation_display_name ?? null, null);
+            // Migration 021: items before it add no Handoff Gate checks.
+            if (t === "work_items" && gate_checks !== undefined)
+              assert.equal(gate_checks, "[]");
             if (t === "work_items" && factory_id !== undefined)
               assert.equal(typeof factory_id, "number");
             // Migration 015 gives existing items the default review and revision limits.
@@ -544,7 +548,7 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
       store.db
         .prepare("SELECT * FROM work_items ORDER BY id")
         .all()
-        // Migration 010, 012, 015, 019 and 020's columns are checked by contents().
+        // Migration 010, 012, 015, 019, 020 and 021's columns are checked by contents().
         .map(
           ({
             max_runs,
@@ -556,6 +560,7 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
             spec_requested,
             automation_instructions,
             automation_display_name,
+            gate_checks,
             ...row
           }) => row,
         ),
@@ -988,5 +993,52 @@ test("migration 020 adds the Automation copy, empty for existing items, and down
   assert.deepEqual(
     { ...db.prepare("SELECT title, automation FROM work_items").get() },
     { title: "T", automation: "nightly" },
+  );
+});
+
+test("migration 021 adds the Handoff Gate checks, off for existing factories and [] for existing items, and down restores version 20", (t) => {
+  const dir = tempDir(t);
+  const db = new DatabaseSync(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 20),
+  });
+  const version20 = schema(db);
+  db.exec(`
+    INSERT INTO factory_settings (factory_id, budget_usd, updated_at) VALUES (1, 5, 't');
+    INSERT INTO work_items (title, request, source, factory_id, budget_usd, created_at, updated_at)
+    VALUES ('T', 'R', 'manual', 1, 15, 't', 't');`);
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  assert.deepEqual(
+    {
+      ...db
+        .prepare(
+          "SELECT budget_usd, gate_review, gate_verification FROM factory_settings",
+        )
+        .get(),
+    },
+    { budget_usd: 5, gate_review: null, gate_verification: null },
+  );
+  // An item created before the change keeps the fixed gate alone.
+  assert.deepEqual(
+    { ...db.prepare("SELECT gate_checks FROM work_items").get() },
+    { gate_checks: "[]" },
+  );
+  db.exec(`UPDATE factory_settings SET gate_review = 1, gate_verification = 1;
+    UPDATE work_items SET gate_checks = '["review","verification"]';`);
+
+  assert.equal(migrateDown(db, 20), 20);
+  assert.deepEqual(schema(db), version20);
+  assert.deepEqual(
+    { ...db.prepare("SELECT budget_usd FROM factory_settings").get() },
+    { budget_usd: 5 },
+  );
+  assert.deepEqual(
+    { ...db.prepare("SELECT title FROM work_items").get() },
+    { title: "T" },
   );
 });

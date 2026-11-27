@@ -126,6 +126,10 @@ export const limitsInput = z.strictObject({
   maxRevisions: limit(0, 5, 1),
   maxRuns: limit(5, 200, 1),
   specRule: z.enum(SPEC_RULES).nullable().optional(),
+  // The checks a factory adds to its Handoff Gate. The fixed part (pushed,
+  // CI passes) has no field: no input can turn it off.
+  gateReview: z.boolean().nullable().optional(),
+  gateVerification: z.boolean().nullable().optional(),
 });
 
 /**

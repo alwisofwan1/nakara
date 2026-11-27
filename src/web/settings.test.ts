@@ -24,7 +24,7 @@ import { fileRevision } from "../definition/load.ts";
 import { GithubPoller } from "../intake/github.ts";
 import type { Factory } from "../orchestrator/factory.ts";
 import { FactoryRegistry } from "../orchestrator/registry.ts";
-import { readFactorySettings } from "./factories.ts";
+import { limitsInput, readFactorySettings } from "./factories.ts";
 import { createApp } from "./test-support.ts";
 
 const exec = promisify(execFile);
@@ -115,6 +115,7 @@ test("factory settings: the record, its definition and its active items", () => 
         maxRevisions: 2,
         maxRuns: 50,
         specRule: "when_asked",
+        gateChecks: [],
         defaults: {
           budgetUsd: 15,
           maxReviews: 1,
@@ -342,6 +343,7 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
   assert.deepEqual((await call("GET", "f/harbor/settings")).body.limits, {
     ...defaults,
     specRule: "when_asked",
+    gateChecks: [],
     defaults,
   });
 
@@ -359,6 +361,7 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
       maxRevisions: 0,
       maxRuns: 120,
       specRule: "when_asked",
+      gateChecks: [],
       defaults,
     },
   });
@@ -390,6 +393,7 @@ test("limits: a factory without settings uses the env defaults, a saved one its 
     maxRevisions: 4,
     maxRuns: 120,
     specRule: "when_asked",
+    gateChecks: [],
     defaults,
   });
   assert.deepEqual(limitsOf(create(harborId)), [15, 3, 4, 120]);
@@ -456,6 +460,70 @@ test("spec rule: saved with the limits, copied by new items, and items created b
     (await call("PUT", "f/harbor/settings/limits", { specRule: "sometimes" }))
       .status,
     400,
+  );
+});
+
+test("handoff gate: review and verification switch on per factory, new items copy them, and no input can turn CI off", async (t) => {
+  const { store, harbor, call } = await setup(t);
+  const harborId = harbor.record?.id;
+  const create = () =>
+    store.createItem({
+      title: "T",
+      request: "R",
+      source: "manual",
+      factoryId: harborId,
+    });
+  const checksOf = (item: { id: number }) => store.item(item.id)?.gate_checks;
+
+  const before = create();
+  assert.equal(checksOf(before), "[]");
+
+  const both = await call("PUT", "f/harbor/settings/limits", {
+    gateReview: true,
+    gateVerification: true,
+  });
+  assert.equal(both.status, 200);
+  assert.deepEqual(both.body.gateChecks, ["review", "verification"]);
+  // Only the gate changed; the limits keep their defaults.
+  assert.equal(both.body.budgetUsd, 15);
+  assert.deepEqual(
+    (await call("GET", "f/harbor/settings")).body.limits.gateChecks,
+    ["review", "verification"],
+  );
+  const strict = create();
+  assert.equal(checksOf(strict), '["review","verification"]');
+
+  // false and null both turn a check off; an omitted one stays.
+  assert.deepEqual(
+    (await call("PUT", "f/harbor/settings/limits", { gateReview: false })).body
+      .gateChecks,
+    ["verification"],
+  );
+  assert.equal(checksOf(create()), '["verification"]');
+  assert.deepEqual(
+    (await call("PUT", "f/harbor/settings/limits", { gateVerification: null }))
+      .body.gateChecks,
+    [],
+  );
+  // Items created before each change keep the checks they copied.
+  assert.equal(checksOf(before), "[]");
+  assert.equal(checksOf(strict), '["review","verification"]');
+
+  // The fixed part has no field: an input that tries to turn it off is refused.
+  for (const body of [
+    { gateCi: false },
+    { gateChecks: [] },
+    { gatePushed: false },
+    { gateReview: "yes" },
+  ])
+    assert.equal(
+      (await call("PUT", "f/harbor/settings/limits", body)).status,
+      400,
+      JSON.stringify(body),
+    );
+  assert.deepEqual(
+    Object.keys(limitsInput.shape).filter((key) => key.startsWith("gate")),
+    ["gateReview", "gateVerification"],
   );
 });
 

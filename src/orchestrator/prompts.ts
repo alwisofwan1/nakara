@@ -3,7 +3,13 @@
 import { relative } from "node:path";
 import type { AgentDef, Definition } from "../definition/load.ts";
 import type { ItemEvent, Run, WorkItem } from "../db.ts";
-import type { Limits } from "../domain/policy.ts";
+import {
+  GATE_CHECK_LABEL,
+  gateCheckMet,
+  gateEvidence,
+  type Limits,
+  parseGateChecks,
+} from "../domain/policy.ts";
 import type { Proof } from "../runner/evidence.ts";
 import type { Workspace } from "../runner/workspace.ts";
 
@@ -76,6 +82,7 @@ A tool call that violates these rules is refused with the reason:
 - Each work item has its own spec rule, shown in its current state: \`always\`, or \`when asked\` by the item, means implement waits for an approved spec; \`never\` refuses the spec agent.
 - Review runs at most ${limits.maxReviews} time(s), and only after record_refs has a PR. Only a review that ran counts: a review run that is stopped, cancelled or fails without a verdict gives its review back, so you can dispatch the review again.
 - After review, fixes go to the same implementation agent with follow_up, at most ${limits.maxRevisions} time(s).
+- A work item's factory may add checks to its handoff gate, shown in its current state: an accepted Review (the latest review run's verdict is accepted) and a passed Verification (the latest verify run succeeded). handoff is refused until they are met; they never replace the pushed and CI checks below.
 - Handoff is checked after your turn and requires the implementation worktree's HEAD to be on the PR (pushed: the PR head or an ancestor of it) and passing CI (absent checks pass only when the PR head has no files under .github/workflows/). When the work is not on the PR, follow_up the implementation agent with push_only: true; it does not count toward the revision cap and is offered once per refusal. If the work is still not on the PR after it, the item waits for a human. Failed checks return their names: use follow_up for implementation fixes, which count toward the revision cap even before review. Unreadable checks pause for a human to resolve gh Checks/Actions read access or connectivity; no automatic retry. Pending checks are polled and wake you on completion; end your turn. If the cap is reached, ask_human; never bypass CI.
 - Each work item has its own budget and run limit, shown in its current state. Failed runs count toward both, and each of your turns is a run.
 - complete_task needs a merged PR, unless the work produced no PR.
@@ -249,6 +256,18 @@ function specRuleLine(item: WorkItem): string {
     : "when asked (you decide whether this item needs a Spec)";
 }
 
+/** The item's Handoff Gate: the fixed part, and each check its factory added with whether it is met. */
+function handoffGateLine(item: WorkItem, runs: Run[]): string {
+  const checks = parseGateChecks(item.gate_checks);
+  if (!checks.length) return "pushed to the PR and CI passes";
+  const evidence = gateEvidence(runs);
+  const added = checks.map(
+    (check) =>
+      `${GATE_CHECK_LABEL[check]} (${gateCheckMet(evidence, check) ? "met" : "not met"})`,
+  );
+  return `pushed to the PR and CI passes, plus ${added.join(", ")}`;
+}
+
 export function renderState(item: WorkItem, runs: Run[]): string {
   const active = runs.filter(
     (r) =>
@@ -259,6 +278,7 @@ export function renderState(item: WorkItem, runs: Run[]): string {
     `- stage: ${item.stage} · spec: ${item.spec_state} · reviews: ${item.review_count}/${item.max_reviews} · revisions: ${item.revision_count}/${item.max_revisions}`,
     `- issue: ${item.issue_url ?? "none"} · PR: ${item.pr_url ?? "none"}${item.pr_merged ? " (merged)" : ""}`,
     `- spec rule: ${specRuleLine(item)}`,
+    `- handoff gate: ${handoffGateLine(item, runs)}`,
     `- cost: $${item.cost_usd.toFixed(2)} of $${item.budget_usd.toFixed(2)} · runs: ${item.run_count + 1} of ${item.max_runs} (this turn included)`,
     `- agents in progress: ${active.length ? active.map((r) => `${r.agent} (#${r.id}, ${r.status})`).join(", ") : "none"}`,
   ].join("\n");

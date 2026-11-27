@@ -458,6 +458,26 @@ const CHECKS_LABEL = {
   none: "no checks",
 } as const;
 
+/** The checks the factory added to an item's Handoff Gate, each met or not met. */
+export function GateChecks({ checks }: { checks: Item["handoffGate"] }) {
+  return (
+    <ul className="flex flex-col gap-xs" aria-label="Handoff Gate checks">
+      {checks.map((c) => (
+        <li key={c.check} className="flex items-center gap-sm text-small">
+          <Icon
+            name={c.met ? "circle-check" : "square"}
+            className={`h-md w-md ${c.met ? "text-handoff" : "text-muted"}`}
+          />
+          <span>{c.label}</span>
+          <span className={c.met ? "text-handoff" : "text-muted"}>
+            {c.met ? "met" : "not met"}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function PrCard({ item, card }: { item: Item; card: Card<"pr"> }) {
   const { data: pr, error } = useQuery(pullRequestQuery(item.id));
   const green = pr?.checks === "passing" || pr?.checks === "none";
@@ -489,6 +509,7 @@ function PrCard({ item, card }: { item: Item; card: Card<"pr"> }) {
           </p>
         )}
       </div>
+      {card.gateChecks.length > 0 && <GateChecks checks={card.gateChecks} />}
       <p className="text-small">
         Agents never merge. Merge here or on GitHub; the merge wakes the
         foreman, which completes the item.

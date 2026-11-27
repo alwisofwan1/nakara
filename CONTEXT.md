@@ -148,7 +148,7 @@ _Avoid_: Guardrail (as a noun for a single rule, use "policy rule")
 The **Stage** where the factory has marked the pull request ready and a human must merge or close it.
 
 **Handoff Gate**:
-The conditions a **Pull Request** must meet before **Handoff**: the work is pushed to it and its CI passes.
+The conditions a **Pull Request** must meet before **Handoff**: the work is pushed to it, its CI passes, and any checks its factory adds (Review accepted, Verification passed).
 _Avoid_: CI gate, merge gate
 
 ### Humans
