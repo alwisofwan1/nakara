@@ -46,6 +46,10 @@ _Avoid_: Orchestrator (that is the Nakara process that applies **Policy**), mana
 The coding CLI an **Agent** runs on (Claude Code, Qwen, Codex).
 _Avoid_: Runtime, backend, provider
 
+**Fallback**:
+The **Harnesses** a fresh **Run** moves to, in order, when its own **Harness** hits a rate or usage limit. Not the default **Harness** (`HARNESS_DEFAULT`), which an **Agent** uses when its definition names none.
+_Avoid_: Backup harness, failover
+
 **Runner**:
 Where an **Agent**'s **Runs** execute: a throwaway sandbox container, or the host as the **Operator** (no sandbox).
 _Avoid_: Executor, environment

@@ -595,10 +595,64 @@ What this version supports:
 | | Supported | Not yet |
 |---|---|---|
 | `factory.yaml` | `repositories`, `alias`, `agentDefaults`, `secrets`, `mcpServers` (`command`/`url`, `{{NAME}}` substitution of declared secrets, `tools` as a Nakara extension) | `integrations`, `cloudProviders`, `selfImprovement` |
-| `agents/*/agent.md` | all agent types, `harness` `claude`/`codex`/`qwen` (qwen is a Nakara extension), `model` shorthand (`opus`/`sonnet`/`haiku`, `auto`), `secrets`, `mcpServers`, `spawnableBy`, `idleTimeoutMinutes`, per-agent skills | codex for the foreman or with `mcpServers` |
+| `agents/*/agent.md` | all agent types, `harness` `claude`/`codex`/`qwen` (qwen is a Nakara extension), `fallback` (Nakara extension, also in `agentDefaults`; see [Harness fallback](#harness-fallback)), `model` shorthand (`opus`/`sonnet`/`haiku`, `auto`), `secrets`, `mcpServers`, `spawnableBy`, `idleTimeoutMinutes`, per-agent skills | codex for the foreman or with `mcpServers` |
 | `automations/*` | `github/issue_labeled` (polling), `nakara/manual`, `telegram/message` (long polling, one trusted chat), `slack/message` (Socket Mode, `filter.members` required), `schedule/cron_fired` (5-field UTC cron or `@hourly`, `@daily`/`@midnight`, `@weekly`, `@monthly`; no month/day names; missed minutes are not caught up) | Linear/Jira, other GitHub events |
 | `runners/*` | `setupCommands` once per clone; `linux.dockerImage` runs agents in a container (no image = host); `instanceShape` as container CPU/memory limits; `egress.allow` (Nakara extension) as the hosts containers may reach | macOS/Windows |
 | `scorers/*`, `benchmarks/*` | parsed and validated | execution |
+
+### Harness fallback
+
+A subscription's usage limit or a rate limit makes a harness refuse runs until
+it resets. Nakara recognises that in the CLI's own output (claude's
+`rate_limit_event`, its 429 `rate_limit`/`usage_limit_reached` errors and
+"You've hit your … limit" text; codex's "You've hit your usage limit … try
+again at …" and "exceeded retry limit, last status: 429"), and the run then
+ends as rate limited instead of failed. List the harnesses to move to, in
+order, under `fallback` in `agentDefaults` or in an agent's frontmatter (an
+agent's own list replaces the default one):
+
+```yaml
+# factory.yaml
+agentDefaults:
+  harness: { type: claude }
+  fallback: [codex, qwen]
+
+# agents/review/agent.md
+fallback:
+  - { type: codex, model: gpt-5 }
+```
+
+Each entry is a harness kind (`claude`, `codex`, `qwen`) or a kind with a
+`model` (and `reasoningLevel`). Other kinds are refused, and so are the cases
+the codex harness is refused for: a codex fallback for the foreman, or for an
+agent with `mcpServers`. A runner whose egress lacks a fallback's model hosts
+is a warning, as it is for `harness`.
+
+- **A fresh dispatch moves on.** When a run with no session to resume is
+  limited before it did any work, the same brief starts again on the next
+  harness in the list. Each attempt is its own run with its own harness, so
+  the budget and the run limit count it; the run page of the new run says
+  which run it replaced and why, the limited run's error names the new run,
+  and the item's timeline has a message for each move. The foreman hears only
+  the report of the run that finishes. Its state line names the harness of
+  each agent run in progress.
+- **A session never moves.** A follow-up, a resumed run, a run that did some
+  work before the limit, and the foreman's own turns stay on their harness: a
+  session cannot move between CLIs. They wait instead.
+- **Wait instead of failing.** With no harness left, the item pauses with an
+  Inbox notice ("Waiting for a usage limit") that names the harness and its
+  limit, every earlier harness the brief hit a limit on, and when it resumes.
+  Nakara holds its queued runs and foreman turns, and resumes it on its own
+  once the earliest reset time the CLIs gave has passed, or after a fixed
+  wait of 60 minutes (`LIMIT_WAIT_MS` in `src/orchestrator/limit-wait.ts`)
+  when one of them did not say. A fresh brief resumes on the agent's own
+  harness, and can move down the list again; a session continues where it
+  stopped. A message to the item, or Retry, resumes it at once.
+- **Without `fallback`** nothing changes except that a limited run pauses the
+  item and resumes it this way, instead of failing it.
+
+The wait is kept in the `kv` table (`limit-wait:<item>`, and
+`fallback-of:<run>` for a moved run), so it survives a restart.
 
 ### Giving the foreman tools
 
