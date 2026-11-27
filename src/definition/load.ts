@@ -557,6 +557,16 @@ export async function loadDefinition(
       ),
     );
 
+  for (const [i, repo] of factory.repositories.entries())
+    if (repo.runner && !runners.has(repo.runner))
+      errors.push(
+        problem(
+          factoryPath,
+          `runner "${repo.runner}" is not defined`,
+          factoryLine(["repositories", i, "runner"]),
+        ),
+      );
+
   const agents = new Map<string, AgentDef>();
   for (const name of await subdirs(join(root, "agents"))) {
     const path = join(root, "agents", name, "agent.md");

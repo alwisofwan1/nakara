@@ -43,6 +43,16 @@ const reposBlock = (ws: Workspace) =>
     )
     .join("\n");
 
+/** The verify rule, for a factory whose repositories list `verify` commands; empty otherwise. */
+const verifyPolicyLine = (def: Definition) => {
+  const repos = def.factory.repositories
+    .filter((r) => r.verify?.length)
+    .map((r) => `\`${r.owner}/${r.name}\``);
+  return repos.length
+    ? `- Nakara runs the \`verify\` commands of ${repos.join(", ")} itself on the PR head after an implementation run that reports success with its work on the PR, before you see the report ("Checked by Nakara"). While the latest verify failed, review and handoff are refused: send the implementation agent a follow_up with the failure; it counts toward the revision cap, like a CI failure. A verify that could not run is not a failure: the item waits for the Operator.\n`
+    : "";
+};
+
 export function foremanSystemPrompt(
   def: Definition,
   ws: Workspace,
@@ -86,7 +96,7 @@ A tool call that violates these rules is refused with the reason:
 - After review, fixes go to the same implementation agent with follow_up, at most ${limits.maxRevisions} time(s).
 - A work item's factory may add checks to its handoff gate, shown in its current state: an accepted Review (the latest review run's verdict is accepted) and a passed Verification (the latest verify run succeeded). handoff is refused until they are met; they never replace the pushed and CI checks below.
 - Handoff is checked after your turn and requires the implementation worktree's HEAD to be on the PR (pushed: the PR head or an ancestor of it) and passing CI (absent checks pass only when the PR head has no files under .github/workflows/). When the work is not on the PR, follow_up the implementation agent with push_only: true; it does not count toward the revision cap and is offered once per refusal. If the work is still not on the PR after it, the item waits for a human. Failed checks return their names: use follow_up for implementation fixes, which count toward the revision cap even before review. Unreadable checks pause for a human to resolve gh Checks/Actions read access or connectivity; no automatic retry. Pending checks are polled and wake you on completion; end your turn. If the cap is reached, ask_human; never bypass CI.
-- Each work item has its own budget and run limit, shown in its current state. Failed runs count toward both, and each of your turns is a run.
+${verifyPolicyLine(def)}- Each work item has its own budget and run limit, shown in its current state. Failed runs count toward both, and each of your turns is a run.
 - complete_task needs a merged PR, unless the work produced no PR.
 - Nobody in the factory merges. A human merges.
 
@@ -226,7 +236,7 @@ export function renderEvent(
         .join("\n");
     }
     case "agent_report":
-      return `## Report from \`${p.agent}\` (run #${p.runId}, ${p.status})\n${p.error ? `Error: ${p.error}\n` : ""}${p.status === "failed" && givenBack ? `${givenBack}\n` : ""}${clip(p.report ?? "(no report)", 30_000)}${p.notOnPr || p.proof ? `\n\n### Checked by Nakara\n${[p.notOnPr, p.proof].filter(Boolean).join("\n\n")}` : ""}`;
+      return `## Report from \`${p.agent}\` (run #${p.runId}, ${p.status})\n${p.error ? `Error: ${p.error}\n` : ""}${p.status === "failed" && givenBack ? `${givenBack}\n` : ""}${clip(p.report ?? "(no report)", 30_000)}${p.notOnPr || p.verify || p.proof ? `\n\n### Checked by Nakara\n${[p.notOnPr, p.verify, p.proof].filter(Boolean).join("\n\n")}` : ""}`;
     case "human_reply":
       if (p.kind === "spec")
         return `## Spec decision\nThe human ${p.approved === "true" ? "APPROVED" : "REQUESTED CHANGES to"} the spec ${p.refUrl ?? ""}.${p.answer ? `\nComment: ${p.answer}` : ""}`;

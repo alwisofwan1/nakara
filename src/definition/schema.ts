@@ -85,6 +85,28 @@ const repoRef = z.object({
   deferred: z.boolean().optional(),
 });
 
+/** At most this many `verify` commands per repository. */
+export const MAX_VERIFY_COMMANDS = 20;
+/** The total time a repository's `verify` commands may take when it names none. */
+export const DEFAULT_VERIFY_TIMEOUT_MINUTES = 20;
+
+/**
+ * Nakara extension: a factory repository may list the commands Nakara runs on
+ * the pushed PR head after an implementation run (`verify`), the runner they
+ * run on (default: the implement agent's), and their total timeout.
+ */
+const factoryRepo = repoRef.extend({
+  verify: z
+    .array(z.string().trim().min(1, "a verify command cannot be empty"))
+    .max(
+      MAX_VERIFY_COMMANDS,
+      `verify takes at most ${MAX_VERIFY_COMMANDS} commands`,
+    )
+    .optional(),
+  runner: z.string().optional(),
+  verifyTimeoutMinutes: z.number().int().min(1).max(240).optional(),
+});
+
 export const factorySchema = z.looseObject({
   schemaVersion: z.literal("v1alpha1"),
   name: z.string().min(1),
@@ -94,7 +116,7 @@ export const factorySchema = z.looseObject({
     .max(60)
     .regex(/^[A-Za-z0-9 ._-]+$/)
     .optional(),
-  repositories: z.array(repoRef),
+  repositories: z.array(factoryRepo),
   integrations: z.array(z.looseObject({ type: z.string() })).optional(),
   secrets: z.array(z.string()).optional(),
   mcpServers: z.record(z.string(), mcpServer).optional(),

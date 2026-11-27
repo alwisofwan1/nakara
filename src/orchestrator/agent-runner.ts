@@ -12,6 +12,7 @@ import { runsUsed } from "../domain/policy.ts";
 import {
   findUnpushed,
   GH_PR,
+  type PrHead,
   type PrIO,
   unpushedRefusal,
 } from "../domain/pushed.ts";
@@ -30,6 +31,7 @@ import {
   type Proof,
   stageEvidence,
 } from "../runner/evidence.ts";
+import { runVerify, type Verifier } from "../runner/verify.ts";
 import {
   endSnapshots,
   recordDiff,
@@ -65,6 +67,14 @@ import {
   SHUT_DOWN,
   STOPPED,
 } from "./run-support.ts";
+import {
+  recordVerify,
+  type VerifyResult,
+  verifyConfig,
+  verifyLogPath,
+  verifyPaused,
+  verifySummary,
+} from "./verify.ts";
 
 const READ_ONLY_EXTRA = [
   "Edit",
@@ -92,6 +102,8 @@ export class AgentRunner {
   private readonly pr: PrIO;
   /** The factory's slug, which picks its agent token; none when standalone. */
   private readonly slug: string | undefined;
+  /** Runs a repository's verify commands; tests replace it. */
+  private readonly verifier: Verifier;
 
   constructor(
     store: Store,
@@ -102,6 +114,7 @@ export class AgentRunner {
     turn: typeof runTurn = runTurn,
     pr: PrIO = GH_PR,
     slug?: string,
+    verifier: Verifier = runVerify,
   ) {
     this.store = store;
     this.config = config;
@@ -111,6 +124,7 @@ export class AgentRunner {
     this.turn = turn;
     this.pr = pr;
     this.slug = slug;
+    this.verifier = verifier;
   }
 
   async run(scheduled: ScheduledRun): Promise<void> {
@@ -295,9 +309,24 @@ export class AgentRunner {
       // Written before the run ends: the page of an ended run reads this file.
       await recordDiff(logPath, snapshots, ws.repos).catch(() => undefined);
     }
-    const notOnPr =
+    const pushed =
       outcome.ok && agent.type === "IMPLEMENT"
         ? await this.unpushed(item.id, log)
+        : null;
+    const notOnPr = pushed && "notOnPr" in pushed ? pushed.notOnPr : null;
+    // Only work Nakara saw on the PR is verified, before the foreman hears of it.
+    const verified =
+      pushed && "onPr" in pushed
+        ? await this.verify(
+            def,
+            item.id,
+            queued.id,
+            agent,
+            pushed.onPr,
+            logPath,
+            controller.signal,
+            log,
+          )
         : null;
     const proof =
       outcome.ok && agent.type === "IMPLEMENT"
@@ -376,6 +405,7 @@ export class AgentRunner {
       this.store.addCost(item.id, outcome.costUsd);
       if (proof?.proofs.length)
         this.store.addEvidence(item.id, queued.id, proof.proofs);
+      if (verified) recordVerify(this.store, item.id, verified);
       if (!reports) {
         if (status !== "succeeded") countUnchecked(this.store, item.factory_id);
         else {
@@ -400,8 +430,14 @@ export class AgentRunner {
           report: outcome.result ?? undefined,
           error: outcome.error ?? undefined,
           notOnPr: notOnPr ?? undefined,
+          verify: verified ? verifySummary(verified) : undefined,
           proof: proof?.summary,
         });
+      // A verify that could not run says nothing about the change: the Operator decides.
+      if (verified?.status === "error" && status === "succeeded") {
+        this.store.updateItem(item.id, { status: "paused" });
+        this.store.addMessage(item.id, "factory", verifyPaused(verified));
+      }
     });
 
     if (notOnPr) log.warn("run.unpushed", { message: notOnPr });
@@ -600,12 +636,15 @@ export class AgentRunner {
 
   /**
    * Whether an implement run's work reached the item's PR, checked by Nakara
-   * rather than taken from the report: null when it did, or with no PR yet.
+   * rather than taken from the report: why not, or the PR head it is on; null
+   * with no PR yet, or when GitHub could not tell.
    */
   private async unpushed(
     itemId: number,
     log: Telemetry["log"],
-  ): Promise<string | null> {
+  ): Promise<
+    { notOnPr: string } | { onPr: { prUrl: string; head: PrHead } } | null
+  > {
     // The foreman may have recorded the PR while the run was going.
     const prUrl = this.store.item(itemId)?.pr_url;
     if (!prUrl) return null;
@@ -619,10 +658,70 @@ export class AgentRunner {
         prUrl,
         head,
       );
-      return unpushed ? unpushedRefusal(unpushed, prUrl) : null;
+      return unpushed
+        ? { notOnPr: unpushedRefusal(unpushed, prUrl) }
+        : { onPr: { prUrl, head } };
     } catch (error) {
       log.warn("run.push_check_failed", { pr_url: prUrl, error });
       return null;
     }
+  }
+
+  /**
+   * Run the PR repository's verify commands on the PR head; null when it
+   * lists none. The full output goes beside the run's log.
+   */
+  private async verify(
+    def: Definition,
+    itemId: number,
+    runId: number,
+    agent: AgentDef,
+    onPr: { prUrl: string; head: PrHead },
+    logPath: string,
+    signal: AbortSignal,
+    log: Telemetry["log"],
+  ): Promise<VerifyResult | null> {
+    const config = verifyConfig(def, onPr.prUrl);
+    if (!config) return null;
+    const started = Date.now();
+    const outcome = await this.verifier({
+      def,
+      itemId,
+      runId,
+      owner: config.owner,
+      name: config.name,
+      head: onPr.head.sha,
+      commands: config.commands,
+      runner: config.runner ?? agent.runner,
+      timeoutMs: config.timeoutMs,
+      dirs: this.config,
+      claudeBin: this.config.claudeBin,
+      logPath: verifyLogPath(logPath),
+      signal,
+    }).catch(
+      (error: unknown): Awaited<ReturnType<Verifier>> => ({
+        status: "error",
+        commands: [],
+        reason: `Nakara error: ${String(error).slice(0, 1000)}`,
+      }),
+    );
+    // A stopped run or a shutdown cut the verify short: it decides nothing.
+    if (signal.aborted) {
+      log.info("verify.interrupted", {});
+      return null;
+    }
+    log.info("verify.done", {
+      status: outcome.status,
+      failed: outcome.failed,
+      reason: outcome.reason,
+      duration_ms: Date.now() - started,
+    });
+    return {
+      ...outcome,
+      prUrl: onPr.prUrl,
+      head: onPr.head.sha,
+      repo: `${config.owner}/${config.name}`,
+      runId,
+    };
   }
 }

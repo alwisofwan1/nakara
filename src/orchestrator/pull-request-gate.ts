@@ -29,6 +29,7 @@ import {
 import { run } from "../runner/workspace.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
 import { prFeedbackOpen } from "./pr-feedback.ts";
+import { clearVerify, verifyPolicy } from "./verify.ts";
 
 const WAIT = "ci-wait:";
 const FAILED = "ci-failed:";
@@ -73,6 +74,7 @@ export function policyFor(store: Store, item: WorkItem): PolicyState {
     ...policyState(item),
     ...gateEvidence(store.runs(item.id)),
     ciFailed: Boolean(store.getKv(FAILED + item.id)),
+    ...verifyPolicy(store, item.id),
     pushOnlyBranch: pushOnly.startsWith(PUSH_ONLY_AVAILABLE)
       ? pushOnly.slice(PUSH_ONLY_AVAILABLE.length)
       : null,
@@ -110,7 +112,7 @@ export class PullRequestGate {
 
   /**
    * Record the item's PR. A different PR starts fresh: not merged, and no CI
-   * wait or failure carried over from the previous PR. Re-recording the same
+   * wait, CI failure or verify carried over from the previous PR. Re-recording the same
    * PR changes nothing, so its merge is reported once.
    */
   record(itemId: number, prUrl: string): void {
@@ -120,6 +122,7 @@ export class PullRequestGate {
       this.store.setKv(WAIT + itemId, "");
       this.store.setKv(FAILED + itemId, "");
       this.store.setKv(PUSH_ONLY + itemId, "");
+      clearVerify(this.store, itemId);
     });
   }
 
