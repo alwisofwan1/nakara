@@ -762,7 +762,8 @@ test("only a review that ran counts toward the review limit: stopped, cancelled 
   store.cancelQueuedRuns(item.id);
   assert.equal(reviews(), 0);
 
-  // A follow-up never counted, so its failure gives nothing back.
+  // The review that ran counts: at the limit (1) a re-review is refused,
+  // dispatched or sent as a follow_up.
   assert.deepEqual(await apply(review), [review]);
   end("succeeded");
   assert.equal(reviews(), 1);
@@ -772,13 +773,22 @@ test("only a review that ran counts toward the review limit: stopped, cancelled 
     agentType: "REVIEW",
     message: "Look again.",
   } as const;
+  assert.deepEqual(await apply(review), []);
+  assert.deepEqual(await apply(followUp), []);
+
+  // A follow-up review counts like a dispatch, and one that fails without a
+  // verdict gives its review back too.
+  store.updateItem(item.id, { max_reviews: 2 });
   assert.deepEqual(await apply(followUp), [followUp]);
-  assert.equal(store.runs(item.id).at(-1)?.counts_review, 0);
+  assert.equal(store.runs(item.id).at(-1)?.counts_review, 1);
+  assert.equal(reviews(), 2);
   end("failed");
   assert.equal(reviews(), 1);
-
-  // The review that ran still counts: the limit refuses another.
+  assert.deepEqual(await apply(followUp), [followUp]);
+  end("succeeded");
+  assert.equal(reviews(), 2);
   assert.deepEqual(await apply(review), []);
+  assert.deepEqual(await apply(followUp), []);
 });
 
 test("a factory's added Handoff Gate checks hold the handoff; CI still fails it once they are met", async (t) => {

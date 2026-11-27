@@ -538,11 +538,11 @@ test("a review run that is stopped or fails gives its review back and tells the 
       review.def,
     );
     if (end === "succeeded")
-      assert.doesNotMatch(rendered, /dispatch the review again/);
+      assert.doesNotMatch(rendered, /run the review again/);
     else
       assert.match(
         rendered,
-        /does not count toward the review limit \(0 of 1 used\)\. You can dispatch the review again\./,
+        /does not count toward the review limit \(0 of 1 used\)\. You can run the review again, dispatched or as a follow_up\./,
       );
   }
 });

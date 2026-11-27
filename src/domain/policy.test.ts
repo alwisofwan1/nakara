@@ -353,8 +353,13 @@ test("a gate check the item's limits or agents cannot meet sends the Foreman to 
   assert.deepEqual(check(reviewed, dispatch("REVIEW"), repos), {
     ok: false,
     reason:
-      "Review already ran 1 time(s); the limit is 1. Hand the PR to the human.",
+      "Review already ran 1 time(s); the limit is 1. A re-review, dispatched or sent as a follow_up, uses one review. Hand the PR to the human.",
   });
+  // Nor does a follow-up to the review agent get around it.
+  assert.deepEqual(
+    check(reviewed, followUp("REVIEW"), repos),
+    check(reviewed, dispatch("REVIEW"), repos),
+  );
   // With a review left, the Foreman is still told to dispatch review.
   assert.match(
     (
@@ -442,6 +447,27 @@ test("the review cap is the item's own", () => {
   const third = check(reviewed, dispatch("REVIEW"), repos);
   assert.equal(third.ok, false);
   assert.match(third.ok ? "" : third.reason, /the limit is 2/);
+});
+
+test("a follow-up review counts toward the review cap like a dispatch", () => {
+  const reviewed = apply(
+    { ...fresh, maxReviews: 2 },
+    dispatch("IMPLEMENT"),
+    { type: "record_refs", prUrl: "https://github.com/o/r/pull/2" },
+    dispatch("REVIEW"),
+    followUp("IMPLEMENT"),
+    followUp("REVIEW"),
+  );
+  assert.equal(reviewed.reviewCount, 2);
+  assert.equal(reviewed.stage, "reviewing");
+  for (const third of [dispatch("REVIEW"), followUp("REVIEW")]) {
+    const verdict = check(reviewed, third, repos);
+    assert.equal(verdict.ok, false);
+    assert.match(
+      verdict.ok ? "" : verdict.reason,
+      /Review already ran 2 time\(s\); the limit is 2\. A re-review, dispatched or sent as a follow_up, uses one review\./,
+    );
+  }
 });
 
 test("the revision cap is the item's own", () => {
