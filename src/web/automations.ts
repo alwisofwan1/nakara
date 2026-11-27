@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../db.ts";
-import type { AutomationDef } from "../definition/load.ts";
+import { type AutomationDef, filterList } from "../definition/load.ts";
 import { AUTOMATION_NAME } from "../definition/write.ts";
 import { cronMatches, parseCron } from "../intake/schedule.ts";
 
@@ -201,4 +201,68 @@ export function readAutomations(
       })),
     };
   });
+}
+
+/** The trigger providers that bring work in from outside; see ADR-0006. */
+const INTAKE_PROVIDERS = new Set(["github", "telegram", "slack"]);
+
+export interface IntakeDto {
+  /** The automation whose switch this is; null for manual intake. */
+  automation: string | null;
+  displayName: string;
+  provider: string;
+  event: string;
+  enabled: boolean;
+  /** The GitHub label, "messages" for Telegram, the trusted Slack members. */
+  detail: string | null;
+  /** The automation.md revision its switch sends back; null for manual intake. */
+  revision: string | null;
+}
+
+/**
+ * Where work comes from: manual intake, always on, then one entry per GitHub,
+ * Telegram or Slack trigger of the definition's automations. Each switch is
+ * the automation's own `enabled`, so there is no second switch to disagree
+ * with it. A GitHub trigger without a labels filter polls the factory label.
+ */
+export function readIntake(
+  definitions: readonly AutomationDef[],
+  label?: string,
+): IntakeDto[] {
+  const manual: IntakeDto = {
+    automation: null,
+    displayName: "Manual",
+    provider: "nakara",
+    event: "manual",
+    enabled: true,
+    detail: null,
+    revision: null,
+  };
+  const detail = (provider: string, filter: Record<string, unknown>) => {
+    if (provider === "github")
+      return (
+        (
+          filterList(filter.labels) ?? (label === undefined ? [] : [label])
+        ).join(", ") || null
+      );
+    if (provider === "telegram") return "messages";
+    const members = filterList(filter.members)?.length ?? 0;
+    return `${members} trusted ${members === 1 ? "member" : "members"}`;
+  };
+  return [
+    manual,
+    ...definitions.flatMap(({ name, frontmatter: fm, revision }) =>
+      fm.triggers
+        .filter((trigger) => INTAKE_PROVIDERS.has(trigger.provider))
+        .map((trigger) => ({
+          automation: name,
+          displayName: fm.displayName ?? name,
+          provider: trigger.provider,
+          event: trigger.event,
+          enabled: fm.enabled,
+          detail: detail(trigger.provider, trigger.filter ?? {}),
+          revision: revision ?? null,
+        })),
+    ),
+  ];
 }
