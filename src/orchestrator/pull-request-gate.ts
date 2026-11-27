@@ -28,6 +28,7 @@ import {
 } from "../domain/pushed.ts";
 import { run } from "../runner/workspace.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
+import { prFeedbackOpen } from "./pr-feedback.ts";
 
 const WAIT = "ci-wait:";
 const FAILED = "ci-failed:";
@@ -62,8 +63,9 @@ export const ITEM_KEY_PREFIXES = [WAIT, FAILED, PUSH_ONLY, CLOSED] as const;
 
 /**
  * An item's policy state with the gate's part: failed CI, the push-only
- * follow_up, and the evidence for the checks its factory added to the Handoff
- * Gate. Every handoff, the Foreman's tool and the applier alike, is judged on it.
+ * follow_up, unanswered PR feedback, and the evidence for the checks its
+ * factory added to the Handoff Gate. Every handoff, the Foreman's tool and the
+ * applier alike, is judged on it.
  */
 export function policyFor(store: Store, item: WorkItem): PolicyState {
   const pushOnly = store.getKv(PUSH_ONLY + item.id) ?? "";
@@ -74,6 +76,7 @@ export function policyFor(store: Store, item: WorkItem): PolicyState {
     pushOnlyBranch: pushOnly.startsWith(PUSH_ONLY_AVAILABLE)
       ? pushOnly.slice(PUSH_ONLY_AVAILABLE.length)
       : null,
+    prFeedback: prFeedbackOpen(store, item.id),
   };
 }
 
@@ -230,9 +233,10 @@ export class PullRequestGate {
    * Poll the item's PR: finished pending checks, a merge or a close become
    * events. The foreman can record another PR while GitHub is read, so each
    * write first re-checks that the item still tracks the PR that was polled;
-   * nothing awaits between that check and the write.
+   * nothing awaits between that check and the write. Resolves to the state
+   * GitHub reported, undefined when the PR was not read.
    */
-  async poll(itemId: number): Promise<void> {
+  async poll(itemId: number): Promise<string | undefined> {
     const store = this.store;
     const url = store.item(itemId)?.pr_url;
     if (!url) return;
@@ -246,7 +250,7 @@ export class PullRequestGate {
       store.setKv(waitKey, "");
     if (!/\/pull\/\d+/.test(url)) return;
     const state = await this.io.readPrState(url);
-    if (!tracked()) return;
+    if (!tracked()) return state;
     if (state === "OPEN" && store.getKv(waitKey) === url) {
       try {
         const checks = await this.io.readPrChecks(url);
@@ -283,9 +287,10 @@ export class PullRequestGate {
       });
     } else if (state === "CLOSED") {
       const key = `${CLOSED}${itemId}:${url}`;
-      if (store.getKv(key)) return;
+      if (store.getKv(key)) return state;
       store.setKv(key, "1");
       store.addEvent(itemId, "pr_closed", { prUrl: url });
     }
+    return state;
   }
 }

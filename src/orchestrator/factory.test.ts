@@ -147,6 +147,8 @@ const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(calls)}, process.argv[3] + "\\n");
 const bucket = fs.readFileSync(${JSON.stringify(result)}, "utf8");
 if (process.argv[2] === "api") {
+  // No reviews or comments on the PR.
+  if (process.argv[3] === "--paginate") process.exit(0);
   if (process.argv[3].includes("/pulls/")) console.log(JSON.stringify({ head: { sha: "abc123", ref: "nakara/1-ci", repo: { full_name: "fork/r" } } }));
   else {
     if (process.argv[3] !== "repos/fork/r/git/trees/abc123?recursive=1") process.exit(2);

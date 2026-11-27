@@ -8,6 +8,7 @@ export type EventKind =
   | "pr_merged"
   | "pr_closed"
   | "checks_updated"
+  | "pr_feedback"
   | "run_stopped"
   | "budget_raised"
   | "run_limit_raised";

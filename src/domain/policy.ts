@@ -166,6 +166,11 @@ export interface PolicyState {
    * handoff was refused because the work is not on the PR.
    */
   pushOnlyBranch?: string | null;
+  /**
+   * Whether the poller turned human feedback on the PR into a pr_feedback
+   * event that no human_feedback follow_up has answered yet.
+   */
+  prFeedback?: boolean;
 }
 
 /** The review and revision caps a work item snapshotted from its factory. */
@@ -185,6 +190,8 @@ export type Action =
       message: string;
       /** Only push the committed work; exempt from the revision cap once. */
       pushOnly?: boolean;
+      /** Answers human feedback on the PR; exempt from the revision cap. */
+      humanFeedback?: boolean;
     }
   | { type: "post_update"; message: string }
   | { type: "ask_human"; question: string; options?: string[] }
@@ -411,6 +418,23 @@ function checkAgentWork(
     return {
       ok: true,
       next: { ...active, stage: "building", pushOnlyBranch: null },
+    };
+  }
+
+  // Human feedback on the PR is not the agent-review loop the revision cap
+  // limits; the budget and the run limit still apply (see check).
+  if (action.type === "follow_up" && action.humanFeedback) {
+    if (action.agentType !== "IMPLEMENT")
+      return refuse(
+        "A human_feedback follow_up goes to the implementation agent.",
+      );
+    if (!state.prFeedback)
+      return refuse(
+        "No pull request feedback is waiting for an answer: human_feedback is accepted only while a pr_feedback event is unanswered, and one human_feedback follow_up answers it. Use a regular follow_up (it counts toward the revision cap) or ask_human.",
+      );
+    return {
+      ok: true,
+      next: { ...active, stage: "building", prFeedback: false },
     };
   }
 

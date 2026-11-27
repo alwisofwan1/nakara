@@ -1048,6 +1048,7 @@ test("delete removes the closed items' runs, approvals, events, messages and key
     `run-limit-told:${item.id}`,
     `reflect:${item.id}:event`,
     `slack:item:${item.id}`,
+    `pr-feedback:${item.id}`,
     `tg:approval:${approvalId}`,
     `slack:approval:${approvalId}`,
     `slack:reject:${approvalId}`,

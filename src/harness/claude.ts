@@ -16,6 +16,7 @@ import {
   type DockerSpec,
 } from "../runner/docker.ts";
 import { hostEnv } from "../runner/env.ts";
+import { writeGhGuard } from "../runner/gh-guard.ts";
 import { openCodexHome } from "./codex-home.ts";
 import { EgressWatch } from "./egress-watch.ts";
 import { LIMIT_HIT, LimitWatch, type RateLimit } from "./limits.ts";
@@ -49,6 +50,12 @@ export interface TurnRequest {
   env?: NodeJS.ProcessEnv | undefined;
   /** Run inside a container instead of on the host; `env` then holds everything it gets. */
   docker?: DockerSpec | undefined;
+  /**
+   * An internal directory for the gh guard (runner/gh-guard.ts): written there
+   * and put first on the harness's PATH, so its gh refuses a body that starts
+   * with /nakara.
+   */
+  ghGuard?: string | undefined;
   signal?: AbortSignal | undefined;
   /** Called once when the harness reports its session, before the turn ends. */
   onSession?: ((sessionId: string) => void) | undefined;
@@ -187,6 +194,10 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
   if (req.signal?.aborted) return failed("Cancelled.", 0);
   const log = (await openInternal(req.logPath)).createWriteStream();
   const container = req.docker ? `nakara-${randomUUID()}` : undefined;
+  const guard = req.ghGuard;
+  if (guard) await writeGhGuard(guard, req.docker ? "node" : process.execPath);
+  const inner = [req.harness === "claude" ? "claude" : bin, ...args];
+  const host = { ...hostEnv(req.harness), ...req.env, ...env };
   const command = req.docker
     ? dockerize(
         {
@@ -197,6 +208,7 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
           // The run's own prompt and MCP config are the only internal files it sees, read-only.
           readOnly: [
             ...(req.docker.readOnly ?? []),
+            ...(guard ? [guard] : []),
             ...(codex ? [] : [req.systemPromptFile]),
             ...(!codex && req.mcpConfig && req.mcpConfigPath
               ? [req.mcpConfigPath]
@@ -210,10 +222,17 @@ async function turn(req: TurnRequest, bins: Binaries): Promise<TurnOutcome> {
         },
         bins.claude,
         req.cwd,
-        [req.harness === "claude" ? "claude" : bin, ...args],
+        // The image's own PATH, with the guard first.
+        guard
+          ? ["/bin/sh", "-c", 'PATH="$0:$PATH" exec "$@"', guard, ...inner]
+          : inner,
         { ...req.env, ...env } as Record<string, string>,
       )
-    : { cmd: bin, args, env: { ...hostEnv(req.harness), ...req.env, ...env } };
+    : {
+        cmd: bin,
+        args,
+        env: guard ? { ...host, PATH: `${guard}:${host.PATH ?? ""}` } : host,
+      };
   const child = spawn(command.cmd, command.args, {
     cwd: req.cwd,
     env: command.env,

@@ -4,10 +4,14 @@
 //   of the factory whose trigger matched (by default its repositories and
 //   its factory:<alias> label)
 // - pull_request_merged / pull_request_closed for every factory PR
+// - pr_feedback: reviews and comments on an open factory PR by people with
+//   write access (orchestrator/pr-feedback.ts)
 import { filterList } from "../definition/load.ts";
 import type { Factory } from "../orchestrator/factory.ts";
+import { PrFeedbackPoller } from "../orchestrator/pr-feedback.ts";
 import { PullRequestGate } from "../orchestrator/pull-request-gate.ts";
 import { run } from "../runner/workspace.ts";
+import { hasWriteAccess } from "../runner/write-access.ts";
 
 interface Issue {
   number: number;
@@ -108,35 +112,6 @@ async function editsAfter(
     .sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** Repository permissions that may start work. */
-const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
-
-/**
- * Whether a user has write access to a repository; null when GitHub cannot
- * tell (an API failure), so the caller neither trusts nor remembers a refusal.
- */
-async function hasWriteAccess(
-  repo: string,
-  login: string,
-): Promise<boolean | null> {
-  try {
-    const out = await run(
-      "gh",
-      [
-        "api",
-        `repos/${repo}/collaborators/${login}/permission`,
-        "--jq",
-        ".permission",
-      ],
-      undefined,
-      60_000,
-    );
-    return WRITE_PERMISSIONS.has(out.trim());
-  } catch {
-    return null;
-  }
-}
-
 /** The Message that shows a Requester what changed in the request after labelling. */
 function editNote(edits: BodyEdit[]): string {
   const shown = edits
@@ -166,11 +141,18 @@ export class GithubPoller {
   readonly factory: Factory;
   /** Polls every factory's PRs: polling needs no factory's definition. */
   private readonly prs: PullRequestGate;
+  /** Reads the human feedback on the same PRs, with each factory's agent token. */
+  private readonly feedback: PrFeedbackPoller;
   constructor(factories: Factory | readonly Factory[]) {
     this.factories = Array.isArray(factories) ? [...factories] : [factories];
     // biome-ignore lint/style/noNonNullAssertion: A registry has at least one factory.
     this.factory = this.factories[0]!;
     this.prs = new PullRequestGate(
+      this.factory.store,
+      undefined,
+      this.factory.telemetry.log,
+    );
+    this.feedback = new PrFeedbackPoller(
       this.factory.store,
       undefined,
       this.factory.telemetry.log,
@@ -412,13 +394,23 @@ export class GithubPoller {
     return allowed;
   }
 
+  /** The slug of an item's factory, for its agent token; undefined for the default token. */
+  private slugOf(factoryId: number): string | undefined {
+    return this.factories.find((f) => f.record?.id === factoryId)?.record?.slug;
+  }
+
   private async checkPullRequests(): Promise<void> {
     const failed: string[] = [];
     // One PR that cannot be read (a deleted repository, a gh error) must not
     // stop the check of the others.
-    for (const { id } of this.factory.store.itemsWithOpenPr())
+    for (const { id, factory_id } of this.factory.store.itemsWithOpenPr())
       await this.prs
         .poll(id)
+        .then((state) =>
+          state === "OPEN"
+            ? this.feedback.poll(id, this.slugOf(factory_id))
+            : undefined,
+        )
         .catch((error: unknown) => failed.push(`item ${id}: ${String(error)}`));
     void this.factory.pump();
     if (failed.length) throw new Error(failed.join("; "));

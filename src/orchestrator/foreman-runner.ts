@@ -355,6 +355,7 @@ export class ForemanRunner {
         maxBudgetUsd: item.budget_usd - item.cost_usd,
         idleTimeoutMs: FOREMAN_IDLE_MS,
         logPath,
+        ghGuard: `${base}.gh`,
         ...(sandbox && {
           env: sandbox.env,
           docker: {

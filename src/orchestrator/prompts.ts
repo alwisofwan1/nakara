@@ -201,6 +201,7 @@ export function renderEvent(
 ): string {
   const p = JSON.parse(e.payload) as Record<string, string | undefined>;
   const givenBack = reviewGivenBack(p.agent, item, def);
+  if (e.kind === "pr_feedback") return p.prompt ?? "";
   switch (e.kind) {
     case "work_received": {
       const automation = automationOf(p.automation, item, def);

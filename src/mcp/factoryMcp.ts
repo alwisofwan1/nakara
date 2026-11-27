@@ -90,14 +90,15 @@ server.registerTool(
   "follow_up",
   {
     description:
-      "Send a message to an agent's existing conversation (answers, review findings, CI failures, spec feedback). The agent keeps its context. Asynchronous like dispatch_agent. With push_only, Nakara sends the implementation agent its own push-only prompt instead of the message; available once after a handoff is refused because the work is not on the PR, and not counted toward the revision cap.",
+      "Send a message to an agent's existing conversation (answers, review findings, CI failures, spec feedback). The agent keeps its context. Asynchronous like dispatch_agent. With push_only, Nakara sends the implementation agent its own push-only prompt instead of the message; available once after a handoff is refused because the work is not on the PR, and not counted toward the revision cap. With human_feedback, the message answers human feedback on the pull request (a pr_feedback event): only for the implementation agent, accepted while such feedback is unanswered, and not counted toward the revision cap (the budget and the run limit still apply).",
     inputSchema: {
       agent: z.string(),
       message: z.string().min(1),
       push_only: z.boolean().optional(),
+      human_feedback: z.boolean().optional(),
     },
   },
-  async ({ agent, message, push_only }) => {
+  async ({ agent, message, push_only, human_feedback }) => {
     const found = agentFor(agent);
     if ("error" in found) return text(found.error ?? "", true);
     if (!snapshot.agentsWithSessions.includes(agent))
@@ -112,6 +113,7 @@ server.registerTool(
         agentType: found.agent.type,
         message,
         ...(push_only && { pushOnly: true }),
+        ...(human_feedback && { humanFeedback: true }),
       },
       `Sent to ${agent}. End your turn now; its report will wake you.`,
     );

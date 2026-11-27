@@ -44,6 +44,7 @@ test("the startup sweep reserves the ids folders show, and removes only the stat
     `run-limit-told:${item.id}`,
     `reflect:${item.id}:event`,
     `ci-wait:${item.id}`,
+    `pr-feedback:${item.id}`,
     "tg:cursor",
     "run-limit-told:99999999999999999999999",
     "ci-wait:9007199254740993",
@@ -59,6 +60,7 @@ test("the startup sweep reserves the ids folders show, and removes only the stat
     "pr-closed:30:https://github.com/acme/a/pull/1",
     "slack:item:30",
     "merge-submitted:31",
+    "pr-feedback:30",
   ];
   for (const key of [...kept, ...removed]) store.setKv(key, "1");
 
