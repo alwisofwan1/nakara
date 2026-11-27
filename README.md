@@ -48,7 +48,12 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   factory's agent token and `NAKARA_FOREMAN_GH_TOKEN`) is shared or distinct.
   The rule: a Nakara login is *shared* when it is your own login, the one
   `gh` acts as in Nakara's environment without those tokens (`gh api user`);
-  any other Nakara login is *distinct*.
+  any other Nakara login is *distinct*. To read your login Nakara empties
+  `GH_TOKEN` or `GITHUB_TOKEN` when it holds an agent or foreman token, so
+  exporting a bot's token there never makes the bot you; any other token in
+  them stays, so you can be logged in through `GH_TOKEN` alone. Do not put
+  another token of the agent or foreman account there: Nakara cannot tell it
+  is not yours.
   - *Distinct identity* (an own or shared agent token, or a foreman token, of
     another account, a bot or GitHub App): every review and comment from a
     writer counts, and that login is always ignored, even when its body starts

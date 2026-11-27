@@ -43,6 +43,7 @@ async function feedbackPoller(t: { after: (fn: () => unknown) => void }) {
   const oldAgent = process.env.NAKARA_AGENT_GH_TOKEN;
   const oldForeman = process.env.NAKARA_FOREMAN_GH_TOKEN;
   const oldGhToken = process.env.GH_TOKEN;
+  const oldGithubToken = process.env.GITHUB_TOKEN;
   t.after(async () => {
     process.env.PATH = oldPath;
     const restore = (name: string, value: string | undefined) => {
@@ -52,6 +53,7 @@ async function feedbackPoller(t: { after: (fn: () => unknown) => void }) {
     restore("NAKARA_AGENT_GH_TOKEN", oldAgent);
     restore("NAKARA_FOREMAN_GH_TOKEN", oldForeman);
     restore("GH_TOKEN", oldGhToken);
+    restore("GITHUB_TOKEN", oldGithubToken);
     await rm(dir, { recursive: true, force: true });
   });
   const file = join(dir, "github.json");
@@ -64,8 +66,11 @@ const args = process.argv.slice(2);
 const out = (v) => { console.log(v); process.exit(0); };
 if (args[0] === "pr" && args[1] === "view") out(JSON.stringify({ state: gh.state ?? "OPEN" }));
 if (args[0] !== "api") process.exit(2);
-if (args[1] === "user")
-  out(({ "agent-secret": "nakara-agent", "foreman-secret": "nakara-foreman", ...gh.users })[process.env.GH_TOKEN] ?? "operator");
+if (args[1] === "user") {
+  // As gh: GH_TOKEN over GITHUB_TOKEN over the stored login; empty is unset.
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "stored";
+  out(({ "agent-secret": "nakara-agent", "foreman-secret": "nakara-foreman", ...gh.users })[token] ?? "operator");
+}
 if (args[1] === "--paginate") {
   const kind = args[2].includes("/reviews") ? "reviews" : args[2].includes("/pulls/") ? "inline" : "comments";
   if (process.env.GH_TOKEN !== "agent-secret") process.exit(3);
@@ -80,8 +85,9 @@ process.exit(2);
   process.env.PATH = `${dir}:${oldPath}`;
   process.env.NAKARA_AGENT_GH_TOKEN = "agent-secret";
   process.env.NAKARA_FOREMAN_GH_TOKEN = "foreman-secret";
-  // gh's own login: no GH_TOKEN, as the fake gh sees it ("undefined" in users).
+  // gh's own stored login, "stored" in users: no ambient token.
   delete process.env.GH_TOKEN;
+  delete process.env.GITHUB_TOKEN;
   const github = (state: GitHub) => writeFile(file, JSON.stringify(state));
   await github({});
 
@@ -465,8 +471,8 @@ test("with distinct agent and foreman accounts, their /nakara is never feedback;
 test("a shared foreman token keeps the /nakara rule; an unreadable Operator login reads the remark again", async (t) => {
   const { github, poll, feedback } = await feedbackPoller(t);
   // The foreman token acts as the Operator; the agent's is distinct. gh's
-  // own login (no GH_TOKEN) cannot be read yet.
-  const users = { "foreman-secret": "operator", undefined: "" };
+  // own login cannot be read yet.
+  const users = { "foreman-secret": "operator", stored: "" };
   const permissions = { operator: "admin", "nakara-agent": "write" };
   await github({ users, permissions });
   await poll();
@@ -476,7 +482,7 @@ test("a shared foreman token keeps the /nakara rule; an unreadable Operator logi
     { id: 33, login: "nakara-agent", body: "/nakara loop" },
   ];
   await github({ users, permissions, comments });
-  await assert.rejects(poll(), /no GitHub login for gh/);
+  await assert.rejects(poll(), /no GitHub login for Operator/);
   assert.deepEqual(feedback(), []);
   // Once it reads, the same remarks are read again.
   await github({
@@ -495,6 +501,53 @@ test("a shared foreman token keeps the /nakara rule; an unreadable Operator logi
     ]),
     [["operator", "Rename the flag."]],
   );
+});
+
+test("an agent or foreman token exported as GH_TOKEN or GITHUB_TOKEN never answers for the Operator", async (t) => {
+  const { github, poll, feedback } = await feedbackPoller(t);
+  // The deployment exports the bot tokens too: neither may make its login
+  // the Operator's, so both stay distinct.
+  process.env.GH_TOKEN = "agent-secret";
+  process.env.GITHUB_TOKEN = "foreman-secret";
+  const permissions = {
+    alice: "write",
+    "nakara-agent": "write",
+    "nakara-foreman": "write",
+  };
+  await github({ permissions });
+  await poll();
+  await github({
+    permissions,
+    comments: [
+      { id: 31, login: "nakara-agent", body: "/nakara Fix it again." },
+      { id: 32, login: "nakara-foreman", body: "/nakara Redo it." },
+    ],
+  });
+  await poll();
+  assert.deepEqual(feedback(), []);
+});
+
+test("the Operator logged in through an ambient token of their own keeps a shared identity", async (t) => {
+  const { github, poll, feedback } = await feedbackPoller(t);
+  // No stored login: the Operator's own token in GH_TOKEN is their login,
+  // as with the personal opt-in; the foreman token is theirs too.
+  process.env.GH_TOKEN = "operator-secret";
+  const state = {
+    users: {
+      "operator-secret": "operator",
+      "foreman-secret": "operator",
+      stored: "",
+    },
+    permissions: { operator: "admin" },
+  };
+  await github(state);
+  await poll();
+  await github({
+    ...state,
+    comments: [{ id: 31, login: "operator", body: "/nakara Rename the flag." }],
+  });
+  await poll();
+  assert.equal(feedback().length, 1);
 });
 
 test("a bare /nakara, with nothing or only whitespace after it, is feedback too", async (t) => {

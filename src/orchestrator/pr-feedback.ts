@@ -10,7 +10,11 @@
 // follow-ups that answer it until they end.
 import type { Store } from "../db.ts";
 import { afterTrigger } from "../domain/nakara-trigger.ts";
-import { agentGhEnv, agentTokenOf } from "../runner/agent-token.ts";
+import {
+  agentGhEnv,
+  agentTokenOf,
+  operatorGhEnv,
+} from "../runner/agent-token.ts";
 import { run } from "../runner/workspace.ts";
 import { hasWriteAccess } from "../runner/write-access.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
@@ -286,12 +290,13 @@ export class PrFeedbackPoller {
   }
 
   /**
-   * The Operator's login: the one gh acts as in Nakara's own environment,
-   * with no agent or foreman token. The personal and none agent token
-   * sources act as it too, so it shares their cache entry.
+   * The Operator's login: the one gh acts as in Nakara's own environment
+   * once every agent and foreman token is out of it (operatorGhEnv), so a
+   * Nakara credential exported as GH_TOKEN or GITHUB_TOKEN never answers
+   * for the Operator.
    */
   private operatorLogin(): Promise<string> {
-    return this.loginOf("gh", undefined);
+    return this.loginOf("Operator", operatorGhEnv(this.env));
   }
 
   /**

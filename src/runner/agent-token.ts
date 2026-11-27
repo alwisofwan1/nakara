@@ -71,6 +71,36 @@ export function agentGhEnv(
   return token ? { GH_TOKEN: token, GITHUB_TOKEN: "" } : undefined;
 }
 
+/**
+ * The environment a `gh` call that asks for the Operator's own login runs
+ * with: Nakara's GH_TOKEN and GITHUB_TOKEN as they are, except one that
+ * holds an agent token (any factory's own or the shared one) or the
+ * foreman's, which is emptied so gh falls back to the next token or to its
+ * stored login. An agent or foreman credential exported as GH_TOKEN would
+ * otherwise answer for the Operator. An ambient token of anyone else stays:
+ * the Operator may be logged in through it alone (as with the personal
+ * opt-in), and dropping it would leave no login to read. Both variables are
+ * always set, so the result depends on `env` only.
+ */
+export function operatorGhEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const nakara = new Set(
+    Object.entries(env)
+      .filter(
+        ([name, value]) =>
+          value &&
+          (name === SHARED_AGENT_TOKEN ||
+            name.startsWith(`${SHARED_AGENT_TOKEN}__`) ||
+            name === "NAKARA_FOREMAN_GH_TOKEN"),
+      )
+      .map(([, value]) => value),
+  );
+  const keep = (value: string | undefined) =>
+    value && !nakara.has(value) ? value : "";
+  return { GH_TOKEN: keep(env.GH_TOKEN), GITHUB_TOKEN: keep(env.GITHUB_TOKEN) };
+}
+
 /** How the UI and /healthz name a source. */
 export const agentTokenLabel = ({ source, variable }: AgentToken): string =>
   source === "own"
