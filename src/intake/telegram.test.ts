@@ -342,3 +342,28 @@ test("a completed Telegram poll stamps the last poll time", async (t) => {
   assert.ok((metrics.lastPoll.get({ source: "telegram" }) ?? 0) >= before);
   assert.equal(metrics.pollErrors.get({ source: "telegram" }), 0);
 });
+
+test("a message after deleting the factory with the newest messages is still sent (#52)", async () => {
+  const { store, calls, bridge, item } = setup({}, { docs: true });
+  const docs = store.repos.factories.factories()[1];
+  assert.ok(docs);
+  const gone = store.createItem({
+    title: "Docs page",
+    request: "r",
+    source: "manual",
+    factoryId: docs.id,
+  });
+  store.addMessage(gone.id, "factory", "one");
+  store.addMessage(gone.id, "factory", "two");
+  await bridge.flush();
+  assert.equal(calls.length, 2);
+  store.updateItem(gone.id, { stage: "complete" });
+  store.repos.factories.deleteFactory(docs.id);
+
+  // Without AUTOINCREMENT the new message took a freed id, at or below tg:cursor.
+  store.addMessage(item.id, "factory", "after the delete");
+  assert.ok(store.lastMessageId() > Number(store.getKv("tg:cursor")));
+  await bridge.flush();
+  assert.equal(calls.length, 3);
+  assert.match(String(calls[2]?.[1].text), /after the delete$/);
+});

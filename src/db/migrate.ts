@@ -28,6 +28,7 @@ import { automationSnapshot } from "./migrations/020-automation-snapshot.ts";
 import { handoffGateChecks } from "./migrations/021-handoff-gate-checks.ts";
 import { slackNotifications } from "./migrations/022-slack-notifications.ts";
 import { noIdReuse } from "./migrations/023-no-id-reuse.ts";
+import { noRowIdReuse } from "./migrations/024-no-row-id-reuse.ts";
 
 export interface MigrationContext {
   /** The budget of items that predate per-item budgets. */
@@ -79,6 +80,7 @@ export const MIGRATIONS: readonly Migration[] = [
   handoffGateChecks,
   slackNotifications,
   noIdReuse,
+  noRowIdReuse,
 ];
 
 export const schemaVersion = (db: DatabaseSync): number =>

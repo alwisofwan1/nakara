@@ -730,3 +730,32 @@ test("resolveChannel: a #name becomes its channel ID across pages; an ID, an unk
     "slack.channel_unresolved",
   );
 });
+
+test("a message after deleting the factory with the newest messages is still posted (#52)", async (t) => {
+  const { store, bridge, posts } = setup(t, { docs: true });
+  const request = mention("Fix the footer");
+  await bridge.handleEvent(request);
+  // biome-ignore lint/style/noNonNullAssertion: Created above.
+  const item = store.itemBySourceRef(`slack:C1:${request.ts}`)!;
+  const docs = store.repos.factories.factories()[1];
+  assert.ok(docs);
+  const gone = store.createItem({
+    title: "Docs page",
+    request: "r",
+    source: "manual",
+    factoryId: docs.id,
+  });
+  store.addMessage(gone.id, "factory", "one");
+  store.addMessage(gone.id, "factory", "two");
+  await bridge.flush();
+  store.updateItem(gone.id, { stage: "complete" });
+  store.repos.factories.deleteFactory(docs.id);
+  posts.length = 0;
+
+  // Without AUTOINCREMENT the new message took a freed id, at or below slack:cursor.
+  store.addMessage(item.id, "factory", "after the delete");
+  await bridge.flush();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0]?.thread_ts, request.ts);
+  assert.match(String(posts[0]?.text), /after the delete/);
+});
