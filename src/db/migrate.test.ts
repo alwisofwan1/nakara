@@ -20,10 +20,12 @@ function tempDir(t: { after: (fn: () => void) => void }) {
   return dir;
 }
 
+// sqlite_sequence is left out: SQLite never drops it, so a downgrade past
+// migration 023 keeps it, empty, where the older schema had none.
 const schema = (db: DatabaseSync) =>
   db
     .prepare(
-      "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name",
+      "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name <> 'sqlite_sequence' ORDER BY type, name",
     )
     .all();
 
@@ -583,18 +585,19 @@ test("migration 005 assigns every item to the first factory, once, and leaves or
     ["pre-migration-005"],
   );
 
-  // Item ids stay global, and an unknown factory is refused.
+  // Item ids stay global, and an unknown factory is refused. Migration 023
+  // counts the orphan event's item 999 as used, so 999 is not handed out.
   const store = open();
   const item = store.createItem({
     title: "New",
     request: "R",
     source: "manual",
   });
-  assert.equal(item.id, 10);
+  assert.equal(item.id, 1000);
   assert.equal(item.factory_id, store.repos.factories.defaultFactory().id);
   assert.throws(() =>
     store.db
-      .prepare("UPDATE work_items SET factory_id = 99 WHERE id = 10")
+      .prepare("UPDATE work_items SET factory_id = 99 WHERE id = 1000")
       .run(),
   );
   store.close();
