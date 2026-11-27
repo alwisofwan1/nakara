@@ -528,3 +528,205 @@ test("rule 8: a leading @handle picks the factory, no handle the first", async (
   await bridge.handleEvent(outsider);
   assert.equal(store.itemBySourceRef(`slack:C1:${outsider.ts}`), undefined);
 });
+
+/** A started bridge whose Slack fake records posts and can fail them. */
+function started(t: TestContext) {
+  const env = setup(t, {
+    docs: true,
+    env: { NAKARA_PUBLIC_URL: "https://nakara.example" },
+  });
+  const socket: SlackSocket = {
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+    send: () => {},
+    close: () => socket.onclose?.(),
+  };
+  const posts: Record<string, unknown>[] = [];
+  const slack = { fail: false };
+  const api: SlackApi = async (method, body) => {
+    if (method === "apps.connections.open")
+      return { ok: true, url: "wss://example.test/link" };
+    if (slack.fail) throw new Error(`slack ${method}: channel_not_found`);
+    if (method === "chat.postMessage") posts.push(body);
+    return { ok: true };
+  };
+  const bridge = new SlackBridge(env.registry, api, () => socket);
+  bridge.start();
+  t.after(() => bridge.stop());
+  const settings = env.store.repos.factorySettings;
+  const [main, docs] = env.store.repos.factories.factories();
+  assert.ok(main && docs);
+  settings.saveNotifications(main.id, { slackChannel: "C0NEEDS" });
+  const item = env.store.createItem({
+    title: "Fix the footer",
+    request: "R",
+    source: "manual",
+    factoryId: main.id,
+  });
+  /** Let the notification and its post finish. */
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  };
+  return { ...env, bridge, posts, slack, settings, main, docs, item, settle };
+}
+
+test("notify: a waiting Spec or Question, a ready Pull Request and a pause each post once to the factory's channel", async (t) => {
+  const { store, posts, item, main, settle } = started(t);
+  store.addApproval(item.id, "spec", "Spec", "https://github.com/o/r/pull/9");
+  await settle();
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0], {
+    channel: "C0NEEDS",
+    text: `${main.name} · #${item.id} Fix the footer: A Spec waits for your approval: https://github.com/o/r/pull/9`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${main.name} · *#${item.id}* Fix the footer\nA Spec waits for your approval: https://github.com/o/r/pull/9`,
+        },
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `<https://nakara.example/items/${item.id}|Open #${item.id} in Nakara>`,
+          },
+        ],
+      },
+    ],
+  });
+
+  store.addApproval(item.id, "question", "Which repo?", null);
+  await settle();
+  assert.equal(posts.length, 2);
+  assert.match(
+    String(posts[1]?.text),
+    /A Question waits for your answer: Which repo\?$/,
+  );
+
+  store.needsYou({
+    itemId: item.id,
+    event: "handoff",
+    what: "The Pull Request is ready to merge: https://github.com/o/r/pull/9",
+  });
+  await settle();
+  assert.equal(posts.length, 3);
+  assert.match(String(posts[2]?.text), /ready to merge/);
+
+  // The spend that reaches the Budget tells once; more spend does not.
+  store.addCost(item.id, 10);
+  store.addCost(item.id, 6);
+  store.addCost(item.id, 3);
+  await settle();
+  assert.equal(posts.length, 4);
+  assert.match(
+    String(posts[3]?.text),
+    /It reached its Budget \(\$16\.00 of \$15\.00\)/,
+  );
+  assert.ok(posts.every((p) => p.channel === "C0NEEDS"));
+});
+
+test("notify: a switched-off event, or a factory without a channel, posts nothing", async (t) => {
+  const { store, posts, settings, main, docs, item, settle } = started(t);
+  settings.saveNotifications(main.id, {
+    approvals: false,
+    handoff: false,
+    paused: false,
+  });
+  store.addApproval(item.id, "question", "Which repo?", null);
+  store.needsYou({ itemId: item.id, event: "handoff", what: "Ready" });
+  store.needsYou({ itemId: item.id, event: "paused", what: "Run limit" });
+  await settle();
+  assert.deepEqual(posts, []);
+
+  // Docs saved its switches on but no channel.
+  settings.saveNotifications(docs.id, { approvals: true });
+  const other = store.createItem({
+    title: "Docs",
+    request: "R",
+    source: "manual",
+    factoryId: docs.id,
+  });
+  store.addApproval(other.id, "question", "Which page?", null);
+  await settle();
+  assert.deepEqual(posts, []);
+
+  // Switched back on, the main factory posts again.
+  settings.saveNotifications(main.id, { approvals: null });
+  store.addApproval(item.id, "question", "Which branch?", null);
+  await settle();
+  assert.equal(posts.length, 1);
+});
+
+test("notify: a title with <!channel> is escaped", async (t) => {
+  const { store, posts, main, settle } = started(t);
+  const item = store.createItem({
+    title: "Ping <!channel> & <@U1>",
+    request: "R",
+    source: "manual",
+    factoryId: main.id,
+  });
+  store.addApproval(item.id, "question", "Really <!here>?", null);
+  await settle();
+  const all = JSON.stringify(posts);
+  assert.ok(!all.includes("<!channel>") && !all.includes("<!here>"), all);
+  assert.match(
+    String(posts[0]?.text),
+    /Ping &lt;!channel&gt; &amp; &lt;@U1&gt;/,
+  );
+});
+
+test("notify: a Slack API error is logged and counted, and never reaches the writer", async (t) => {
+  const { store, registry, posts, slack, item, lines, settle } = started(t);
+  slack.fail = true;
+  assert.doesNotThrow(() => {
+    store.addApproval(item.id, "question", "Which repo?", null);
+    store.needsYou({ itemId: item.id, event: "handoff", what: "Ready" });
+  });
+  await settle();
+  assert.deepEqual(posts, []);
+  const failed = lines
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.event === "slack.notify_failed");
+  assert.equal(failed.length, 2);
+  assert.equal(
+    registry.default.telemetry.metrics.pollErrors.get({ source: "slack" }),
+    2,
+  );
+});
+
+test("resolveChannel: a #name becomes its channel ID across pages; an ID, an unknown name or a failed lookup stays as given", async (t) => {
+  const { registry, lines } = setup(t);
+  const calls: Record<string, unknown>[] = [];
+  let fail = false;
+  const api: SlackApi = async (method, body, mode) => {
+    assert.equal(method, "conversations.list");
+    assert.equal(mode, "form");
+    calls.push(body);
+    if (fail) throw new Error("slack conversations.list: missing_scope");
+    return body.cursor
+      ? { ok: true, channels: [{ id: "C0REL", name: "releases" }] }
+      : {
+          ok: true,
+          channels: [{ id: "C0GEN", name: "general" }],
+          response_metadata: { next_cursor: "page2" },
+        };
+  };
+  const bridge = new SlackBridge(registry, api);
+  assert.equal(await bridge.resolveChannel(" #releases "), "C0REL");
+  assert.equal(calls.length, 2);
+  assert.equal(await bridge.resolveChannel("#general"), "C0GEN");
+  assert.equal(await bridge.resolveChannel("#nowhere"), "#nowhere");
+  calls.length = 0;
+  assert.equal(await bridge.resolveChannel("C0ID"), "C0ID");
+  assert.deepEqual(calls, []);
+  fail = true;
+  assert.equal(await bridge.resolveChannel("#releases"), "#releases");
+  assert.equal(
+    JSON.parse(lines.at(-1) ?? "{}").event,
+    "slack.channel_unresolved",
+  );
+});

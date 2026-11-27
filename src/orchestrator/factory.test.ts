@@ -6,8 +6,13 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 
 import { loadConfig } from "../config.ts";
-import { type ItemEvent, RESUME_INPUT, Store } from "../db.ts";
+import { type ItemEvent, type NeedsYou, RESUME_INPUT, Store } from "../db.ts";
 import { GithubPoller } from "../intake/github.ts";
+import {
+  type SlackApi,
+  SlackBridge,
+  type SlackSocket,
+} from "../intake/slack.ts";
 import { Logger } from "../telemetry/log.ts";
 import { Metrics } from "../telemetry/metrics.ts";
 import { Factory } from "./factory.ts";
@@ -1643,7 +1648,18 @@ for (const harness of ["qwen", "codex"] as const) {
     assert.equal(store.item(id)?.cost_usd, 0);
 
     // The limit holds: the next turn does not start and the item pauses.
+    const needsYou: NeedsYou[] = [];
+    store.attention.on("needsYou", (e) => needsYou.push(e));
     await factory.foremanTurn(id);
+    await new Promise((r) => setImmediate(r));
+    // The Operator is told once, with the reason.
+    assert.deepEqual(needsYou, [
+      {
+        itemId: id,
+        event: "paused",
+        what: "Run limit reached (2 of 2 runs, foreman turns and failed runs included). Press Raise run limit on the work item to continue, or cancel it.",
+      },
+    ]);
     assert.equal((await readFile(join(dir, "turns"), "utf8")).trim(), "turn");
     const paused = store.item(id);
     assert.equal(paused?.status, "paused");
@@ -1678,3 +1694,93 @@ for (const harness of ["qwen", "codex"] as const) {
     );
   });
 }
+
+test("an item paused at its run limit tells Slack once; a message that pauses it again at the same limit posts nothing", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "nakara-run-limit-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new Store(":memory:", {
+    defaultBudgetUsd: 15,
+    defaultMaxRuns: 5,
+  });
+  t.after(() => store.db.isOpen && store.close());
+  const factory = new Factory(
+    store,
+    loadConfig({ NAKARA_GITHUB_MIRROR: "false", NAKARA_DATA_DIR: dir }),
+  );
+  factory.pump = async () => {};
+  assert.ok((await factory.reloadDefinition()).ok);
+  const posts: Record<string, unknown>[] = [];
+  const api: SlackApi = async (method, body) => {
+    if (method === "apps.connections.open") return { ok: true, url: "wss://x" };
+    if (method === "chat.postMessage") posts.push(body);
+    return { ok: true };
+  };
+  const socket: SlackSocket = {
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+    send: () => {},
+    close: () => socket.onclose?.(),
+  };
+  const bridge = new SlackBridge(
+    {
+      default: factory,
+      factories: [factory],
+      forItem: () => factory,
+      byHandle: () => undefined,
+    },
+    api,
+    () => socket,
+  );
+  bridge.start();
+  t.after(() => bridge.stop());
+  store.repos.factorySettings.saveNotifications(
+    store.repos.factories.defaultFactory().id,
+    { slackChannel: "C0NEEDS" },
+  );
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  };
+  const item = store.createItem({ title: "T", request: "R", source: "manual" });
+  // The foreman's last turn used the last run.
+  store.updateItem(item.id, { stage: "building", run_count: 5 });
+  const fresh = () => {
+    const current = store.item(item.id);
+    assert.ok(current);
+    return current;
+  };
+  /** The foreman's turn is over: nothing pending, so checkStalled judges the item. */
+  const stalled = () => {
+    store.markEventsProcessed(store.pendingEvents(item.id).map((e) => e.id));
+    factory["checkStalled"](fresh(), []);
+  };
+
+  // Moving into the run-limit pause tells the Operator once.
+  stalled();
+  await settle();
+  assert.equal(fresh().status, "paused");
+  assert.equal(posts.length, 1);
+  assert.match(String(posts[0]?.text), /Run limit reached \(5 of 5 runs/);
+
+  // A message wakes the paused item; the foreman's turn stops at the same limit.
+  factory.sendMessage(item.id, "please continue");
+  assert.equal(fresh().status, "active");
+  await factory.foremanTurn(item.id);
+  await settle();
+  assert.equal(fresh().status, "paused");
+  // checkStalled at the same limit, after another message, says nothing new either.
+  factory.sendMessage(item.id, "still there?");
+  stalled();
+  await settle();
+  assert.equal(fresh().status, "paused");
+  assert.equal(posts.length, 1);
+
+  // Raise run limit gives a new limit: stopping at it is a new pause.
+  assert.ok(factory.raiseRunLimit(item.id).ok);
+  const raised = fresh().max_runs;
+  assert.ok(raised > 5);
+  store.updateItem(item.id, { status: "active", run_count: raised });
+  stalled();
+  await settle();
+  assert.equal(posts.length, 2);
+});

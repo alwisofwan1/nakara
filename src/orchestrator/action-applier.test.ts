@@ -3,10 +3,11 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate as tick } from "node:timers/promises";
 import { type TestContext, test } from "node:test";
 
 import { loadConfig } from "../config.ts";
-import { Store } from "../db.ts";
+import { type NeedsYou, Store } from "../db.ts";
 import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
 import type { PrCheck } from "../domain/checks.ts";
 import type { Action } from "../domain/policy.ts";
@@ -152,7 +153,18 @@ test("accepted actions move the policy state and record their effects", async (t
     type: "record_refs",
     issueUrl: "https://github.com/o/r/issues/9",
   } as const;
+  const needsYou: NeedsYou[] = [];
+  store.attention.on("needsYou", (e) => needsYou.push(e));
   assert.deepEqual(await apply(dispatch, ask, refs), [dispatch, ask, refs]);
+  // Only the question needs the Operator.
+  await tick();
+  assert.deepEqual(needsYou, [
+    {
+      itemId: item.id,
+      event: "approvals",
+      what: "A Question waits for your answer: Which one?",
+    },
+  ]);
   const after = store.item(item.id);
   assert.equal(after?.stage, "triage");
   assert.equal(after?.status, "waiting_human");
@@ -229,7 +241,21 @@ test("a handoff the policy refuses after the gate's GitHub calls is not applied"
 
 test("a handoff with passing checks marks the PR ready, then announces and mirrors it", async (t) => {
   const { store, item, apply, calls } = setup(t, { mirror: true });
+  const needsYou: NeedsYou[] = [];
+  store.attention.on("needsYou", (e) => needsYou.push(e));
+  // A notifier that fails never fails the handoff.
+  store.attention.on("needsYou", () => {
+    throw new Error("slack chat.postMessage: channel_not_found");
+  });
   assert.deepEqual(await apply(handoff), [handoff]);
+  await tick();
+  assert.deepEqual(needsYou, [
+    {
+      itemId: item.id,
+      event: "handoff",
+      what: `The Pull Request is ready to merge: ${PR}`,
+    },
+  ]);
   const after = store.item(item.id);
   assert.equal(after?.stage, "handoff");
   assert.equal(after?.pr_url, PR);

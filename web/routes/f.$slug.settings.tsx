@@ -34,6 +34,7 @@ import {
   revisionQueue,
 } from "../features/settings/agent-defaults";
 import { HandoffGateRow } from "../features/settings/handoff-gate-row";
+import { NotificationsSection } from "../features/settings/notifications-section";
 import { WhereWorkComesFrom } from "../features/settings/intake-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
@@ -78,6 +79,10 @@ function SettingsPage() {
       <General settings={data} queue={factoryFile} />
       <WhereWorkComesFrom slug={data.slug} intake={data.intake} />
       <Limits settings={data} />
+      <NotificationsSection
+        slug={data.slug}
+        notifications={data.notifications}
+      />
       {data.factoryFile && (
         <AgentDefaultsSection
           slug={slug}

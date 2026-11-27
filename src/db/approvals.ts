@@ -39,6 +39,14 @@ export class ApprovalRepository extends Repository {
       now(),
     );
     this.changed();
+    this.notifier.needsYou({
+      itemId,
+      event: "approvals",
+      what:
+        kind === "spec"
+          ? `A Spec waits for your approval${refUrl ? `: ${refUrl}` : "."}`
+          : `A Question waits for your answer: ${prompt}`,
+    });
     return id;
   }
 

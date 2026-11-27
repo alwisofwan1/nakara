@@ -1042,3 +1042,47 @@ test("migration 021 adds the Handoff Gate checks, off for existing factories and
     { title: "T" },
   );
 });
+
+test("migration 022 adds the Slack channel, unset, and the notification switches, NULL (on), and down restores version 21", (t) => {
+  const dir = tempDir(t);
+  const db = new DatabaseSync(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  migrate(db, {
+    defaultBudgetUsd: 15,
+    factory: stubFactorySeed,
+    migrations: MIGRATIONS.slice(0, 21),
+  });
+  const version21 = schema(db);
+  db.exec(
+    "INSERT INTO factory_settings (factory_id, budget_usd, updated_at) VALUES (1, 5, 't')",
+  );
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  assert.deepEqual(
+    {
+      ...db
+        .prepare(
+          "SELECT budget_usd, slack_channel, notify_approvals, notify_handoff, notify_paused FROM factory_settings",
+        )
+        .get(),
+    },
+    {
+      budget_usd: 5,
+      slack_channel: null,
+      notify_approvals: null,
+      notify_handoff: null,
+      notify_paused: null,
+    },
+  );
+  db.exec(
+    "UPDATE factory_settings SET slack_channel = 'C1', notify_approvals = 0, notify_handoff = 1, notify_paused = 0",
+  );
+
+  assert.equal(migrateDown(db, 21), 21);
+  assert.deepEqual(schema(db), version21);
+  assert.deepEqual(
+    { ...db.prepare("SELECT budget_usd FROM factory_settings").get() },
+    { budget_usd: 5 },
+  );
+});

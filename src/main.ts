@@ -117,7 +117,15 @@ slack?.start();
 const evidence = new EvidencePublisher(store, log);
 evidence.start();
 
-const app = createApp(registry, poller, config, token);
+const app = createApp(
+  registry,
+  poller,
+  config,
+  token,
+  undefined,
+  undefined,
+  slack,
+);
 const server = serve(
   { fetch: app.fetch, hostname: config.host, port: config.port },
   (info) => {

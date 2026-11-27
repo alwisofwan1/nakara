@@ -581,6 +581,16 @@ export const saveLimits = (slug: string, json: LimitsEdit) =>
     "Unable to save the limits",
   );
 
+export type NotificationsEdit = InferRequestType<
+  typeof factoryApi.settings.notifications.$put
+>["json"];
+/** Saves the factory's Slack channel or notification switches; a "#name" comes back as its channel ID. */
+export const saveNotifications = (slug: string, json: NotificationsEdit) =>
+  body(
+    factoryApi.settings.notifications.$put({ param: { slug }, json }),
+    "Unable to save the notifications",
+  );
+
 /** Pauses the factory: new Work Items wait in Intake; running work finishes. */
 export const pauseFactory = (slug: string) =>
   body(

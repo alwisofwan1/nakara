@@ -21,7 +21,7 @@ import {
 import { createApi } from "./api.ts";
 import { accessVerifier } from "./cf-access.ts";
 import { securityWarnings } from "./definition.ts";
-import { readFactories } from "./factories.ts";
+import { readFactories, type SlackChannels } from "./factories.ts";
 import type { FetchPullRequest } from "./pull-request.ts";
 import type { WizardDeps } from "./wizard.ts";
 
@@ -68,6 +68,8 @@ export function createApp(
   token: string,
   fetchPullRequest?: FetchPullRequest,
   wizard?: WizardDeps,
+  /** The Slack bridge, when it runs. */
+  slack: SlackChannels | null = null,
 ) {
   const app = new Hono<Env>({
     // Accept both direct prefixed URLs and paths stripped by code-server.
@@ -188,7 +190,15 @@ export function createApp(
 
   app.route(
     "/api",
-    createApi(registry, config, undefined, fetchPullRequest, wizard),
+    createApi(
+      registry,
+      config,
+      undefined,
+      fetchPullRequest,
+      wizard,
+      undefined,
+      slack,
+    ),
   );
   app.all("/api/*", (c) =>
     c.json(

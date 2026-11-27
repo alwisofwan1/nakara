@@ -57,6 +57,8 @@ export function readFactorySettings(
     pendingReach: string[] | null;
     /** Where work comes from: manual intake, then the intake automations. */
     intake: IntakeDto[];
+    /** Whether the Slack bridge runs, so a channel can be notified. */
+    slackConnected: boolean;
   },
 ) {
   const { factories, factorySettings } = repos;
@@ -79,6 +81,11 @@ export function readFactorySettings(
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
     ...pauseState(factorySettings.pausedAt(record.id)),
+    // Where "something needs you" goes, and which events send it.
+    notifications: {
+      ...factorySettings.notifications(record.id),
+      slackConnected: running.slackConnected,
+    },
     definition: {
       mode: record.definition_mode,
       dir: record.definition_dir,
@@ -130,6 +137,33 @@ export const limitsInput = z.strictObject({
   // CI passes) has no field: no input can turn it off.
   gateReview: z.boolean().nullable().optional(),
   gateVerification: z.boolean().nullable().optional(),
+});
+
+/** What Settings needs of the Slack bridge: a channel name as Slack's channel ID. */
+export interface SlackChannels {
+  resolveChannel(channel: string): Promise<string>;
+}
+
+/** A Slack channel as the Operator types it: "#name", or a channel ID. */
+const SLACK_CHANNEL = /^#?[A-Za-z0-9._-]{1,80}$/;
+
+/**
+ * A notifications edit: each key optional. An empty or null channel sends
+ * nothing; a null switch turns the event back on (the default).
+ */
+export const notificationsInput = z.strictObject({
+  slackChannel: z
+    .string()
+    .trim()
+    .refine(
+      (v) => v === "" || SLACK_CHANNEL.test(v),
+      "Enter a Slack channel such as #releases",
+    )
+    .nullable()
+    .optional(),
+  approvals: z.boolean().nullable().optional(),
+  handoff: z.boolean().nullable().optional(),
+  paused: z.boolean().nullable().optional(),
 });
 
 /**
