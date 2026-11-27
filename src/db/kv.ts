@@ -18,6 +18,15 @@ export class KvRepository extends Repository {
     ).map((row) => row.value);
   }
 
+  /** The keys that start with `prefix`. */
+  kvKeys(prefix: string): string[] {
+    return this.all<{ key: string }>(
+      "SELECT key FROM kv WHERE substr(key, 1, ?) = ?",
+      prefix.length,
+      prefix,
+    ).map((row) => row.key);
+  }
+
   deleteKv(key: string): void {
     this.run("DELETE FROM kv WHERE key = ?", key);
   }

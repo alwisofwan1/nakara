@@ -68,8 +68,8 @@ const swap = (from: string, to: string) => (sql: string) => {
 
 const highest = (db: DatabaseSync, query: string): number =>
   Number(
-    (db.prepare(query).get() as { n: number | bigint | null } | undefined)
-      ?.n ?? 0,
+    (db.prepare(query).get() as { n: number | bigint | null } | undefined)?.n ??
+      0,
   );
 
 /** The highest id in the kv keys under `prefixes`; other keys are ignored. */
@@ -86,11 +86,7 @@ function highestInKeys(db: DatabaseSync, prefixes: string[]): number {
 }
 
 /** Start `table`'s ids after `used`, unless they already start later. */
-function seedSequence(
-  db: DatabaseSync,
-  table: string,
-  used: number,
-): void {
+function seedSequence(db: DatabaseSync, table: string, used: number): void {
   const seq = highest(
     db,
     `SELECT seq AS n FROM sqlite_sequence WHERE name = '${table}'`,
@@ -122,7 +118,15 @@ export const noIdReuse: Migration = {
         db,
         `SELECT max(n) AS n FROM (
           SELECT max(id) AS n FROM work_items
-          ${["runs", "approvals", "messages", "events", "stage_transitions", "evidence", "learnings"]
+          ${[
+            "runs",
+            "approvals",
+            "messages",
+            "events",
+            "stage_transitions",
+            "evidence",
+            "learnings",
+          ]
             .map((t) => `UNION ALL SELECT max(item_id) FROM ${t}`)
             .join("\n")}
           UNION ALL SELECT max(CAST(value AS INTEGER)) FROM kv

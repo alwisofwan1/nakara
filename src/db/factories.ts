@@ -1,3 +1,4 @@
+import { uncheckedKey } from "./learnings.ts";
 import { now, Repository, transaction } from "./repository.ts";
 
 /** Where a factory's definition lives: under the data directory, or a folder in a repository. */
@@ -120,22 +121,28 @@ export class FactoryRepository extends Repository {
 
   /**
    * Remove the factory with its closed items and their runs, events,
-   * messages, approvals and per-item settings (Telegram links, and the kv
-   * keys under `itemKeyPrefixes` that other modules own), its saved limits,
-   * its repository status (`repo:<slug>`, see runner/repos.ts), and its
-   * approved and pending reach (`reach:<id>` and `reach:<id>:…`, see
-   * DefinitionService), which a factory reusing the id must not inherit. The caller refuses a factory
-   * with active items; the foreign keys refuse what is left behind.
+   * messages, approvals and per-item settings (the Telegram and Slack marks
+   * of its approvals, and the kv keys under `itemKeyPrefixes` that other
+   * modules own), its saved limits, its repository status (`repo:<slug>`,
+   * see runner/repos.ts), its approved and pending reach (`reach:<id>` and
+   * `reach:<id>:…`, see DefinitionService) and its unchecked corrections.
+   * Ids are not reused (migration 023), but nothing keyed by them outlives
+   * them. The caller refuses a factory with active items; the foreign keys
+   * refuse what is left behind.
    */
   deleteFactory(id: number, itemKeyPrefixes: readonly string[] = []): void {
     const items = "SELECT id FROM work_items WHERE factory_id = ?";
     transaction(this.db, () => {
       this.run(
         `DELETE FROM kv WHERE key IN (
-         SELECT 'tg:approval:' || id FROM approvals WHERE item_id IN (${items})
-         UNION ALL SELECT 'repo:' || slug FROM factories WHERE id = ?)`,
+         SELECT p.prefix || a.id FROM approvals a,
+           (SELECT 'tg:approval:' AS prefix UNION ALL SELECT 'slack:approval:' UNION ALL SELECT 'slack:reject:') p
+           WHERE a.item_id IN (${items})
+         UNION ALL SELECT 'repo:' || slug FROM factories WHERE id = ?
+         UNION ALL SELECT ?)`,
         id,
         id,
+        uncheckedKey(id),
       );
       this.run(
         "DELETE FROM kv WHERE key = ? OR substr(key, 1, length(?)) = ?",
@@ -168,6 +175,28 @@ export class FactoryRepository extends Repository {
     });
     for (const type of ["factories", "items", "runs", "status"] as const)
       this.notifier.notify({ type, id: "global" });
+  }
+
+  /**
+   * Hand out factory or item ids above `used` from now on, so an id that
+   * only a folder on disk still shows (applied/<id>, work/item-<id>) is not
+   * reused either. Ids already above it stay as they are.
+   */
+  reserveIds(table: "factories" | "work_items", used: number): void {
+    const seq =
+      this.get<{ seq: number }>(
+        "SELECT seq FROM sqlite_sequence WHERE name = ?",
+        table,
+      )?.seq ?? 0;
+    if (used <= seq) return;
+    transaction(this.db, () => {
+      this.run("DELETE FROM sqlite_sequence WHERE name = ?", table);
+      this.run(
+        "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
+        table,
+        used,
+      );
+    });
   }
 
   /** The first factory: the target of old page links and of work without one. */

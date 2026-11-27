@@ -8,8 +8,9 @@ import { uncheckedKey } from "../db/learnings.ts";
 import type { Definition } from "../definition/load.ts";
 import { checkLearning } from "../definition/write.ts";
 
-/** The kv key of the last event of an item a reflect run already considered. */
-const seenKey = (itemId: number) => `reflect:${itemId}:event`;
+/** The kv key prefix of the last event of an item a reflect run already considered. */
+export const REFLECT_SEEN = "reflect:";
+const seenKey = (itemId: number) => `${REFLECT_SEEN}${itemId}:event`;
 
 const payload = (event: ItemEvent): Record<string, unknown> => {
   try {

@@ -23,6 +23,7 @@ import { definitionHistory } from "../definition/history.ts";
 import { fileRevision } from "../definition/load.ts";
 import { GithubPoller } from "../intake/github.ts";
 import type { Factory } from "../orchestrator/factory.ts";
+import { ITEM_KV_PREFIXES } from "../orchestrator/item-keys.ts";
 import { FactoryRegistry } from "../orchestrator/registry.ts";
 import {
   limitsInput,
@@ -189,6 +190,8 @@ test("factory settings: the record, its definition and its active items", () => 
 async function setup(
   t: { after: (fn: () => Promise<void>) => void },
   slack: SlackChannels | null = null,
+  /** A database file in the data dir, beside which factories keep their applied copy. */
+  onDisk = false,
 ) {
   const dataDir = await mkdtemp(join(tmpdir(), "nakara-settings-"));
   t.after(() => rm(dataDir, { recursive: true, force: true }));
@@ -231,10 +234,11 @@ async function setup(
     NAKARA_CLAUDE_BIN: fakeClaude,
     NAKARA_CODEX_BIN: "/bin/false",
   });
-  const store = new Store(":memory:", {
+  const store = new Store(onDisk ? join(dataDir, "nakara.db") : ":memory:", {
     defaultBudgetUsd: 15,
     factory: () => ({ ...stubFactorySeed(), definition_dir: defaultDir }),
   });
+  if (onDisk) t.after(async () => store.close());
   store.repos.factories.createFactory({
     ...stubFactorySeed(),
     slug: "harbor",
@@ -987,13 +991,22 @@ test("delete removes the closed items' runs, approvals, events, messages and key
     `ci-failed:${item.id}`,
     `push-only:${item.id}`,
     `pr-closed:${item.id}:https://github.com/acme/harbor/pull/1`,
+    `merge-submitted:${item.id}`,
+    `run-limit-told:${item.id}`,
+    `reflect:${item.id}:event`,
+    `slack:item:${item.id}`,
     `tg:approval:${approvalId}`,
+    `slack:approval:${approvalId}`,
+    `slack:reject:${approvalId}`,
+    `reflect:factory:${harbor.record?.id}:unchecked`,
     "repo:harbor",
   ];
   for (const key of keys) store.setKv(key, "1");
   // Another factory's keep their state.
   const other = store.repos.factories.defaultFactory().slug;
   store.setKv(`repo:${other}`, "1");
+  const otherUnchecked = `reflect:factory:${store.repos.factories.defaultFactory().id}:unchecked`;
+  store.setKv(otherUnchecked, "2");
   // A key of another item whose id starts with this one's stays.
   const lookalike = `ci-wait:${item.id}0`;
   store.setKv(lookalike, "1");
@@ -1010,20 +1023,32 @@ test("delete removes the closed items' runs, approvals, events, messages and key
   assert.equal(store.runById(run.id), undefined);
   for (const key of keys) assert.equal(store.getKv(key), undefined, key);
   assert.equal(store.getKv(`repo:${other}`), "1");
+  assert.equal(store.getKv(otherUnchecked), "2");
   assert.equal(store.getKv(lookalike), "1");
 });
 
-test("a factory created after a delete reuses no reach the deleted one approved", async (t) => {
-  const { dataDir, store, registry, harbor, call } = await setup(t);
+test("a factory created after a delete gets a new id, and none of the deleted one's applied copy, reach or keys", async (t) => {
+  const { dataDir, store, registry, harbor, call } = await setup(t, null, true);
   const id = harbor.record?.id;
+  assert.ok(id);
+  const applied = join(dataDir, "applied", String(id));
+  assert.ok(await exists(join(applied, "factory.yaml")));
   assert.ok(store.getKv(`reach:${id}`));
+  const { item } = closedItemWithRun(store, id, "succeeded");
+  store.setKv(`run-limit-told:${item.id}`, "50");
+  store.setKv(`reflect:factory:${id}:unchecked`, "1");
   assert.equal((await call("DELETE", "f/harbor")).status, 200);
   for (const key of [`reach:${id}`, `reach:${id}:pending`, `reach:${id}:repos`])
     assert.equal(store.getKv(key) ?? "", "", key);
-  // The default factory keeps its approved reach.
-  assert.ok(store.getKv(`reach:${registry.default.record?.id}`));
+  assert.equal(store.getKv(`run-limit-told:${item.id}`), undefined);
+  assert.equal(store.getKv(`reflect:factory:${id}:unchecked`), undefined);
+  assert.equal(await exists(applied), false);
+  // The default factory keeps its approved reach and applied copy.
+  const defaultId = registry.default.record?.id;
+  assert.ok(store.getKv(`reach:${defaultId}`));
+  assert.ok(await exists(join(dataDir, "applied", String(defaultId))));
 
-  // The next factory gets the freed id; its other repositories are its first reach, not a widening.
+  // The next factory gets a new id; its other repositories are its first reach, not a widening.
   const dir = join(dataDir, "factories", "reborn");
   await cp("factory", dir, { recursive: true });
   const yaml = join(dir, "factory.yaml");
@@ -1043,13 +1068,40 @@ test("a factory created after a delete reuses no reach the deleted one approved"
     definition_dir: dir,
     definition_mode: "managed",
   });
-  assert.equal(record.id, id);
+  assert.equal(record.id, id + 1);
+  const newItem = store.createItem({
+    title: "New",
+    request: "New",
+    source: "manual",
+    factoryId: record.id,
+  });
+  assert.equal(newItem.id, item.id + 1);
   const reborn = await registry.register(record);
   assert.ok(
     reborn.definition,
     JSON.stringify(reborn.definitionProblems.errors),
   );
   assert.equal(reborn.pendingReach(), null);
+  // It keeps its own applied copy, of its own definition, and nothing of harbor's.
+  assert.equal(await exists(applied), false);
+  assert.match(
+    await readFile(
+      join(dataDir, "applied", String(record.id), "factory.yaml"),
+      "utf8",
+    ),
+    /name: reborn/,
+  );
+  // No kv key of harbor's id or its item's is left for the new ones to inherit.
+  const keyed = (key: string, prefix: string, of: number) =>
+    key === `${prefix}${of}` || key.startsWith(`${prefix}${of}:`);
+  const inherited = store.repos.kv
+    .kvKeys("")
+    .filter(
+      (key) =>
+        ["reach:", "reflect:factory:"].some((p) => keyed(key, p, id)) ||
+        ITEM_KV_PREFIXES.some((p) => keyed(key, p, item.id)),
+    );
+  assert.deepEqual(inherited, []);
 });
 
 test("move refuses a tree that does not load and a failed clone, and moves nothing", async (t) => {
