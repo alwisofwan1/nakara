@@ -71,6 +71,19 @@ export const setupQuery = queryOptions({
   queryFn: () => body(client.setup.$get(), "Unable to load the setup checks"),
 });
 
+/** The settings of this Nakara, which span factories; the Settings page. */
+export const instanceSettingsQuery = queryOptions({
+  queryKey: ["settings"],
+  queryFn: () => body(client.settings.$get(), "Unable to load the settings"),
+});
+
+/** Saves how many agent runs start at once; null returns to NAKARA_CONCURRENCY. */
+export const saveConcurrency = (concurrency: number | null) =>
+  body(
+    client.settings.concurrency.$put({ json: { concurrency } }),
+    "Unable to save the concurrency",
+  );
+
 export const verifyToken = (token: "agent" | "foreman") =>
   body(
     client.setup.verify.$post({ json: { token } }),

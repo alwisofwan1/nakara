@@ -3,9 +3,9 @@ import type { ChangeEvent } from "../../src/web/api.ts";
 
 // Status changes also cover run writes and definition reloads, which the
 // agents and automations pages read, and new items, which add requesters
-// to the New work form.
+// to the New work form, and instance settings, which live in kv.
 const QUERY_KEYS: Record<ChangeEvent["type"], string[]> = {
-  status: ["status", "automations", "agents", "new-work"],
+  status: ["status", "automations", "agents", "new-work", "settings"],
   // The blueprint counts runs, and the stages items move through.
   runs: ["runs", "blueprint"],
   items: ["items", "inbox", "blueprint"],

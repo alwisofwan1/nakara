@@ -101,6 +101,14 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
         >
           Setup
         </Link>
+        <Link
+          className="nav-link"
+          to="/settings"
+          activeProps={{ "aria-current": "page" }}
+          onClick={onNavigate}
+        >
+          Settings
+        </Link>
       </nav>
       <nav aria-label="Factories">
         <div className="nav-heading">

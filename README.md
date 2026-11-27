@@ -48,8 +48,8 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
 - **Several factories, one process.** Every registered factory gets its own
   orchestrator, which loads, validates and reloads that factory's definition
   from the factory's definition directory, and creates its work in that
-  factory. The store, the run queue and its `NAKARA_CONCURRENCY` slots are
-  shared: one scheduler starts the work of every factory. A factory whose
+  factory. The store, the run queue and its slots (`NAKARA_CONCURRENCY`, or
+  the value saved on Settings) are shared: one scheduler starts the work of every factory. A factory whose
   definition does not load shows its errors on its Definition page and in a
   banner; its own work waits, and the other factories keep running.
   `/healthz` reports `definition: true` only when every factory has a valid
@@ -248,7 +248,7 @@ existing shell; the default Tailwind palette and dimension scales are reset.
 | `NAKARA_BUDGET_USD` | `15` | Default budget of a work item, failed runs included. New work can set another one; existing items get this value when migrated. This and the three limits below are defaults: a factory's Settings → Limits can override them for its new work items, and work items keep the limits they were created with |
 | `NAKARA_MAX_RUNS` | `50` | Default run limit of a work item: foreman turns and agent runs, failed and interrupted ones included. At the limit the item pauses until Raise run limit adds 10; existing items get this value when migrated. Replaces `NAKARA_MAX_FOREMAN_TURNS` |
 | `NAKARA_MAX_REVIEWS` / `NAKARA_MAX_REVISIONS` | `1` / `2` | Default review policy of a work item; existing items get these values when migrated |
-| `NAKARA_CONCURRENCY` | `2` | Concurrent agent runs, across all factories |
+| `NAKARA_CONCURRENCY` | `2` | Default number of concurrent agent runs, across all factories. Settings (in the sidebar) can override it with a value from 1 to 10, saved in the database and applied on the next scheduler pass without a restart; clearing the field returns to this default. Lowering it stops no run: nothing new starts until fewer runs than the limit are running |
 | `NAKARA_POLL_SECONDS` | `60` | GitHub polling interval |
 | `NAKARA_PUMP_SECONDS` | `15` | Safety-net scheduler interval; the scheduler also runs after every state change |
 | `NAKARA_DRAIN_SECONDS` | `600` | On SIGTERM, how long runs in flight get to finish before they are interrupted and resumed after the restart. Keep `TimeoutStopSec` in the systemd unit above it |
