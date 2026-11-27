@@ -3,6 +3,7 @@
 // keys, and the startup sweep removes the keys of items that are gone.
 import { MERGE_SUBMITTED } from "./operator-merge.ts";
 import { ITEM_KEY_PREFIXES as GATE_KEY_PREFIXES } from "./pull-request-gate.ts";
+import { PR_FEEDBACK } from "./pr-feedback.ts";
 import { REFLECT_SEEN } from "./reflect.ts";
 import { RUN_LIMIT_TOLD } from "./run-support.ts";
 
@@ -14,5 +15,6 @@ export const ITEM_KV_PREFIXES: readonly string[] = [
   MERGE_SUBMITTED,
   RUN_LIMIT_TOLD,
   REFLECT_SEEN,
+  PR_FEEDBACK,
   SLACK_ITEM,
 ];

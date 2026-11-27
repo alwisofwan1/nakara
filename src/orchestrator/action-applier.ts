@@ -22,6 +22,7 @@ import {
   PullRequestGate,
   type PullRequestPort,
 } from "./pull-request-gate.ts";
+import { answerPrFeedback } from "./pr-feedback.ts";
 import {
   pauseItem,
   RunControl,
@@ -198,6 +199,13 @@ export class ActionApplier {
           action.type === "follow_up" && action.pushOnly
             ? this.gate.takePushOnly(item)
             : null;
+        // It answers the pr_feedback events the policy required.
+        if (
+          action.type === "follow_up" &&
+          action.humanFeedback &&
+          !pushOnlyBranch
+        )
+          answerPrFeedback(this.store, item.id);
         this.store.createRun({
           item_id: item.id,
           role: "agent",

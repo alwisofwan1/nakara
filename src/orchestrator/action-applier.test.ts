@@ -850,3 +850,34 @@ test("a factory's added Handoff Gate checks hold the handoff; CI still fails it 
   assert.deepEqual(await apply(handoff), [handoff]);
   assert.equal(store.item(item.id)?.stage, "handoff");
 });
+
+test("a human_feedback follow_up answers the PR feedback, queues the message and leaves the revision count", async (t) => {
+  const { store, item, apply } = setup(t);
+  store.updateItem(item.id, {
+    stage: "handoff",
+    status: "waiting_human",
+    review_count: 1,
+    revision_count: maxRevisions,
+    pr_url: PR,
+  });
+  const answer = {
+    ...fixes,
+    message: "The operator asked to rename the flag.",
+    humanFeedback: true,
+  } as const;
+  // No pr_feedback event waits for an answer.
+  assert.deepEqual(await apply(answer), []);
+  const key = `pr-feedback:${item.id}`;
+  const cursor = { pr: PR, reviews: 1, inline: 0, comments: 0 };
+  store.setKv(key, JSON.stringify({ ...cursor, open: true }));
+  assert.deepEqual(await apply(answer), [answer]);
+  assert.equal(store.item(item.id)?.revision_count, maxRevisions);
+  assert.equal(store.item(item.id)?.stage, "building");
+  assert.equal(store.runs(item.id)[0]?.input, answer.message);
+  assert.deepEqual(JSON.parse(store.getKv(key) ?? ""), {
+    ...cursor,
+    open: false,
+  });
+  // Answered: the next one waits for new feedback.
+  assert.deepEqual(await apply(answer), []);
+});

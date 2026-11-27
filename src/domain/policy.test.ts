@@ -794,3 +794,64 @@ test("the foreman cannot dispatch or follow up a reflect agent", () => {
   assert.equal(check(fresh, dispatch("REFLECT"), repos).ok, false);
   assert.equal(check(fresh, followUp("REFLECT"), repos).ok, false);
 });
+
+test("a human_feedback follow-up answers PR feedback outside the revision cap, within the budget and run limit", () => {
+  const humanFeedback = {
+    ...followUp("IMPLEMENT"),
+    humanFeedback: true,
+  } as Action;
+  // Handed off after review, with every revision used.
+  const handedOff: PolicyState = {
+    ...fresh,
+    stage: "handoff",
+    status: "waiting_human",
+    reviewCount: 1,
+    revisionCount: 2,
+    prUrl: "https://github.com/o/r/pull/1",
+    prFeedback: true,
+  };
+  assert.equal(check(handedOff, followUp("IMPLEMENT"), repos).ok, false);
+  const accepted = check(handedOff, humanFeedback, repos);
+  assert.ok(accepted.ok, accepted.ok ? "" : accepted.reason);
+  assert.equal(accepted.next.revisionCount, 2);
+  assert.equal(accepted.next.runCount, handedOff.runCount + 1);
+  assert.equal(accepted.next.stage, "building");
+  assert.equal(accepted.next.status, "active");
+  // It answered the feedback: a second one waits for new feedback.
+  assert.equal(accepted.next.prFeedback, false);
+  const again = check(accepted.next, humanFeedback, repos);
+  assert.equal(again.ok, false);
+  assert.match(again.ok ? "" : again.reason, /No pull request feedback/);
+
+  // Without an unanswered pr_feedback event it is refused.
+  for (const prFeedback of [false, undefined]) {
+    const refused = check({ ...handedOff, prFeedback }, humanFeedback, repos);
+    assert.equal(refused.ok, false);
+    assert.match(refused.ok ? "" : refused.reason, /No pull request feedback/);
+  }
+  // It goes to the implementation agent only.
+  assert.equal(
+    check(
+      handedOff,
+      { ...followUp("REVIEW"), humanFeedback: true } as Action,
+      repos,
+    ).ok,
+    false,
+  );
+  // The budget and the run limit still apply.
+  const broke = check(
+    { ...handedOff, costUsd: 10, budgetUsd: 10 },
+    humanFeedback,
+    repos,
+  );
+  assert.equal(broke.ok, false);
+  assert.match(broke.ok ? "" : broke.reason, /Budget cap reached/);
+  const used = check({ ...handedOff, runCount: 30 }, humanFeedback, repos);
+  assert.equal(used.ok, false);
+  assert.match(used.ok ? "" : used.reason, /Run limit reached/);
+  // A closed item takes no revision.
+  assert.equal(
+    check({ ...handedOff, stage: "complete" }, humanFeedback, repos).ok,
+    false,
+  );
+});
