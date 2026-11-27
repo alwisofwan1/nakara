@@ -4,6 +4,7 @@ import {
   type Definition,
   factoryRepositories,
   hasSpecAgent,
+  hasVerifyAgent,
 } from "../definition/load.ts";
 import { type Action, check, runsUsed } from "../domain/policy.ts";
 import { pushOnlyPrompt, short } from "../domain/pushed.ts";
@@ -126,6 +127,7 @@ export class ActionApplier {
       const policy = (current: WorkItem) => ({
         ...this.gate.policyFor(current),
         specAgent: hasSpecAgent(def),
+        verifyAgent: hasVerifyAgent(def),
       });
       let verdict = check(policy(item), action, repositories);
       if (!verdict.ok) {

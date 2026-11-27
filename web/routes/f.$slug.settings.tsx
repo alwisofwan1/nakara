@@ -429,6 +429,8 @@ function Limits({ settings }: { settings: Settings }) {
       <HandoffGateRow
         slug={settings.slug}
         checks={settings.limits.gateChecks}
+        maxReviews={settings.limits.maxReviews}
+        verifyAgent={settings.definition.verifyAgent}
       />
     </section>
   );

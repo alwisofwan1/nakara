@@ -307,12 +307,90 @@ test("handoff needs the checks the factory added to its Handoff Gate, judged on 
     ).stage,
     "handoff",
   );
-  // A factory that added none hands off as before, whatever the runs.
+  // A factory that added none hands off as before, whatever the runs,
+  // the review limit or the agents.
   assert.equal(
-    apply(gated([], [review("revision_needed"), verify("failed")]), handoff)
-      .stage,
+    apply(
+      {
+        ...gated([], [review("revision_needed"), verify("failed")]),
+        reviewCount: 1,
+        verifyAgent: false,
+      },
+      handoff,
+    ).stage,
     "handoff",
   );
+});
+
+test("a gate check the item's limits or agents cannot meet sends the Foreman to ask_human", () => {
+  const prUrl = "https://github.com/o/r/pull/2";
+  const handoff: Action = { type: "handoff", prUrl, summary: "s" };
+  const run = (agent_type: string, review_verdict: string | null) => ({
+    role: "agent",
+    agent_type,
+    status: "succeeded",
+    review_verdict,
+  });
+
+  // Review accepted, and the only review asked for changes; implement fixed
+  // them, but review cannot run again under the limit.
+  const reviewed: PolicyState = {
+    ...apply(
+      { ...fresh, gateChecks: ["review"], prUrl },
+      dispatch("IMPLEMENT"),
+      dispatch("REVIEW"),
+      followUp("IMPLEMENT"),
+    ),
+    ...gateEvidence([run("REVIEW", "revision_needed")]),
+  };
+  assert.equal(reviewed.reviewCount, 1);
+  assert.deepEqual(check(reviewed, handoff, repos), {
+    ok: false,
+    reason:
+      "This factory's Handoff Gate needs an accepted Review, but the latest review did not accept the change and the review limit (1 of 1) is used up, so review cannot run again. Do not dispatch review: ask_human to review and merge the pull request themselves, or to cancel this Work Item. The item copied its review limit when it was created, so changing the factory's limit does not free it.",
+  });
+  // The gate does not lift the review limit.
+  assert.deepEqual(check(reviewed, dispatch("REVIEW"), repos), {
+    ok: false,
+    reason:
+      "Review already ran 1 time(s); the limit is 1. Hand the PR to the human.",
+  });
+  // With a review left, the Foreman is still told to dispatch review.
+  assert.match(
+    (
+      check({ ...reviewed, maxReviews: 2 }, handoff, repos) as {
+        reason: string;
+      }
+    ).reason,
+    /Dispatch review first\.$/,
+  );
+  // An accepted latest review hands off at the limit.
+  assert.equal(
+    apply({ ...reviewed, reviewAccepted: true }, handoff).stage,
+    "handoff",
+  );
+
+  // Verification passed, and the definition has no verify agent.
+  const unverified: PolicyState = {
+    ...fresh,
+    gateChecks: ["verification"],
+    verifyAgent: false,
+  };
+  assert.deepEqual(check(unverified, handoff, repos), {
+    ok: false,
+    reason:
+      "This factory's Handoff Gate needs a passed Verification, but the definition has no verify agent, so no Verification can run. Do not dispatch one: ask_human to add a VERIFY agent to the definition, or to review and merge the pull request themselves. Changing the factory's Handoff Gate only affects new Work Items, not this one.",
+  });
+  // With a verify agent, or when the definition is unknown, it says dispatch.
+  for (const verifyAgent of [true, undefined])
+    assert.match(
+      (
+        check({ ...unverified, verifyAgent }, handoff, repos) as {
+          reason: string;
+        }
+      ).reason,
+      /Dispatch verification first\.$/,
+    );
 });
 
 test("an item's gate checks are read from its snapshot; CI is never one of them", () => {

@@ -75,6 +75,7 @@ test("factory settings: the record, its definition and its active items", () => 
       archiveDir: "/data/archive/factories/harbor",
       backupDir: "/data/backups",
       specAgent: true,
+      verifyAgent: true,
       factoryFile: {
         description: "Ships.",
         agentDefaults: {
@@ -144,6 +145,7 @@ test("factory settings: the record, its definition and its active items", () => 
         history,
         archiveDir: "/data/archive/factories/harbor",
         specAgent: true,
+        verifyAgent: true,
       },
     },
   );
@@ -155,6 +157,7 @@ test("factory settings: the record, its definition and its active items", () => 
       archiveDir: null,
       backupDir: "/data/backups",
       specAgent: false,
+      verifyAgent: false,
       factoryFile: null,
       runners: [],
       pendingReach: null,
@@ -171,6 +174,7 @@ test("factory settings: the record, its definition and its active items", () => 
       archiveDir: null,
       backupDir: "/data/backups",
       specAgent: false,
+      verifyAgent: false,
       factoryFile: null,
       runners: [],
       pendingReach: null,
@@ -579,6 +583,29 @@ test("spec rule: always on a definition without a spec agent is saved, and Setti
   assert.equal(always.status, 200);
   assert.equal(always.body.specRule, "always");
   assert.equal(await specAgent(), false);
+});
+
+test("handoff gate: Verification passed on a definition without a verify agent is saved, and Settings reports the missing agent for the row's warning", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  const verifyAgent = async () =>
+    (await call("GET", "f/harbor/settings")).body.definition.verifyAgent;
+  // The bundled definition has no VERIFY agent.
+  assert.equal(await verifyAgent(), false);
+  // Allowed with the warning: the definition can change after the save, so
+  // the Foreman's refusal, not this save, guards the stall.
+  const on = await call("PUT", "f/harbor/settings/limits", {
+    gateVerification: true,
+  });
+  assert.equal(on.status, 200);
+  assert.deepEqual(on.body.gateChecks, ["verification"]);
+
+  await mkdir(join(harborDir, "agents", "verify"));
+  await writeFile(
+    join(harborDir, "agents", "verify", "agent.md"),
+    "---\ndescription: Verifies the change.\nagentType: VERIFY\n---\n# Verify\n",
+  );
+  assert.ok((await harbor.reloadDefinition()).ok);
+  assert.equal(await verifyAgent(), true);
 });
 
 test("pause and resume are idempotent, return the new state, and show in the settings and the factory list", async (t) => {

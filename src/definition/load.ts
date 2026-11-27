@@ -179,13 +179,22 @@ export function factoryRepositories(definition: Definition): string[] {
   return definition.factory.repositories.map((r) => `${r.owner}/${r.name}`);
 }
 
-/** Whether the definition has a SPEC agent its Foreman may dispatch. */
-export function hasSpecAgent(definition: Definition): boolean {
-  return [...definition.agents.values()].some(
+/** Whether the definition has an agent of the type its Foreman may dispatch. */
+const dispatchable = (definition: Definition, type: AgentType): boolean =>
+  [...definition.agents.values()].some(
     (a) =>
-      a.type === "SPEC" &&
+      a.type === type &&
       (!a.spawnableBy || a.spawnableBy.includes(definition.foreman.name)),
   );
+
+/** Whether the definition has a SPEC agent its Foreman may dispatch. */
+export function hasSpecAgent(definition: Definition): boolean {
+  return dispatchable(definition, "SPEC");
+}
+
+/** Whether the definition has a VERIFY agent its Foreman may dispatch. */
+export function hasVerifyAgent(definition: Definition): boolean {
+  return dispatchable(definition, "VERIFY");
 }
 
 /**

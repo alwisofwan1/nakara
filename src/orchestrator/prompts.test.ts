@@ -94,13 +94,17 @@ test("the Foreman's item header states the item's Spec rule next to its issue an
 });
 
 test("the Foreman's item header states the item's Handoff Gate and which added checks are met", () => {
-  const header = (gate_checks: string, runs: Partial<Run>[]) =>
+  const header = (
+    gate_checks: string,
+    runs: Partial<Run>[],
+    { review_count = 1, max_reviews = 1, verifyAgent = true } = {},
+  ) =>
     renderState(
       {
         stage: "building",
         spec_state: "none",
-        review_count: 1,
-        max_reviews: 1,
+        review_count,
+        max_reviews,
         revision_count: 0,
         max_revisions: 2,
         issue_url: null,
@@ -115,6 +119,7 @@ test("the Foreman's item header states the item's Handoff Gate and which added c
         gate_checks,
       } as WorkItem,
       runs as Run[],
+      verifyAgent,
     )
       .split("\n")
       .filter((line) => line.startsWith("- handoff gate: "));
@@ -132,6 +137,29 @@ test("the Foreman's item header states the item's Handoff Gate and which added c
     ]),
     [
       "- handoff gate: pushed to the PR and CI passes, plus Review accepted (met), Verification passed (not met)",
+    ],
+  );
+  // A check the item's limits or the definition's agents cannot meet says so.
+  const revisionNeeded = [
+    {
+      role: "agent",
+      agent_type: "REVIEW",
+      status: "succeeded",
+      review_verdict: "revision_needed",
+    },
+  ] as Partial<Run>[];
+  assert.deepEqual(
+    header('["review","verification"]', revisionNeeded, {
+      verifyAgent: false,
+    }),
+    [
+      "- handoff gate: pushed to the PR and CI passes, plus Review accepted (not met, and the review limit (1 of 1) is used up so it cannot be met: ask_human), Verification passed (not met, and the definition has no verify agent so it cannot be met: ask_human)",
+    ],
+  );
+  assert.deepEqual(
+    header('["review","verification"]', revisionNeeded, { max_reviews: 2 }),
+    [
+      "- handoff gate: pushed to the PR and CI passes, plus Review accepted (not met), Verification passed (not met)",
     ],
   );
 });

@@ -45,6 +45,8 @@ export function readFactorySettings(
     backupDir: string;
     /** Whether the applied definition has a SPEC agent; null when none is loaded. */
     specAgent: boolean | null;
+    /** Whether the applied definition has a VERIFY agent; null when none is loaded. */
+    verifyAgent: boolean | null;
     /** factory.yaml on disk, as the Description, Agent defaults and Repositories rows edit it; null when unreadable. */
     factoryFile: {
       description: string | null;
@@ -95,6 +97,8 @@ export function readFactorySettings(
       archiveDir: running.archiveDir,
       // The Spec rule row warns when `always` has no spec agent to write one.
       specAgent: running.specAgent,
+      // The Handoff Gate row warns when Verification passed has no verify agent to run.
+      verifyAgent: running.verifyAgent,
     },
   };
 }
