@@ -350,6 +350,7 @@ function createFactoryApi(
   fetchIssue: FetchIssue,
   settings: FactorySettings,
   models: ModelCatalog,
+  wizard: WizardDeps,
 ) {
   const store = registry.store;
   return (
@@ -698,6 +699,10 @@ function createFactoryApi(
       // that widens reach (a Runner moved to the host) waits for approval.
       // A model must be one the harness lists (GET /models/:harness); when
       // the list cannot be had, the edit is not saved rather than unchecked.
+      // An added repository must be one no other factory owns and the agent
+      // token can push to (as GET /wizard/access checks); a removed one must
+      // have no active Work Items and leave at least one. Adding one widens
+      // reach, so it waits for approval too; once applied, it is cloned.
       .put("/settings/definition", factoryFileBody, async (c) => {
         const { revision, ...edit } = c.req.valid("json");
         const list = modelListOf(edit.agentDefaults);
@@ -714,7 +719,18 @@ function createFactoryApi(
               503,
             );
           }
-        const result = await c.var.factory.saveFactory(edit, revision, known);
+        const result = await c.var.factory.saveFactory(
+          edit,
+          revision,
+          known,
+          async (repos) =>
+            (await repoAccess(wizard, repos, c.var.factory.record?.slug)).repos
+              .filter((r) => !r.visible)
+              .map(
+                (r) =>
+                  `Nakara cannot reach ${r.repo}${r.message ? ` (${r.message})` : ""}`,
+              ),
+        );
         if (!result.ok && result.code === "conflict")
           return c.json(apiError("conflict", result.message), 409);
         if (!result.ok)
@@ -726,6 +742,8 @@ function createFactoryApi(
             ),
             422,
           );
+        if (result.reload?.ok && edit.repositories?.add?.length)
+          void c.var.factory.checkRepositories();
         // Nothing changed: the running definition stands as it is.
         const check: CheckResultDto = result.reload
           ? checkResultDto(result.reload)
@@ -875,7 +893,10 @@ export function createApi(
   const settings = new FactorySettings(registry, creation);
   const liveDiffs = new LiveDiffs();
   const api = new Hono()
-    .route("/f/:slug", createFactoryApi(registry, fetchIssue, settings, models))
+    .route(
+      "/f/:slug",
+      createFactoryApi(registry, fetchIssue, settings, models, wizard),
+    )
     .get("/status", (c) =>
       c.json(
         readStatus(store, {

@@ -99,6 +99,10 @@ export class Factory {
             ? join(config.dataDir, "applied", String(options.record.id))
             : undefined,
       },
+      (repo) =>
+        options.record
+          ? store.repos.factories.activeItemsFor(options.record.id, repo)
+          : 0,
     );
     // The runners read the definition through the Factory, so assigning
     // factory.definition (as tests do) applies to them.

@@ -16,19 +16,26 @@ import {
   type AutomationEdit,
   createAgent,
   createAutomation,
+  FACTORY_FILE,
   type FactoryEdit,
   type KnownModels,
   deleteAgent,
   deleteAutomation,
   type NewAgent,
   type NewAutomation,
+  type RepositoriesEdit,
   type WriteResult,
   writeAgent,
   writeAutomation,
   writeFactoryFile,
 } from "../definition/write.ts";
 import { commitDefinition, ensureHistory } from "../definition/history.ts";
-import { RUNNER_LINE, reachOf, widening } from "../definition/reach.ts";
+import {
+  REPO_LINE,
+  RUNNER_LINE,
+  reachOf,
+  widening,
+} from "../definition/reach.ts";
 import { checkRepositories, type RepoProbe } from "../runner/repos.ts";
 import { ensureBareClone } from "../runner/workspace.ts";
 
@@ -64,6 +71,8 @@ export class DefinitionService {
   private readonly reachKey: string;
   /** Where a copy of the last applied definition survives a restart; none for an unregistered factory. */
   private readonly appliedDir: string | undefined;
+  /** The number of this factory's active Work Items that target an `owner/name` repository. */
+  private readonly activeItemsFor: (repo: string) => number;
 
   constructor(
     store: Store,
@@ -77,7 +86,9 @@ export class DefinitionService {
     reach: { key: string; appliedDir?: string | undefined } = {
       key: "reach:default",
     },
+    activeItemsFor: (repo: string) => number = () => 0,
   ) {
+    this.activeItemsFor = activeItemsFor;
     this.reachKey = reach.key;
     this.appliedDir = reach.appliedDir;
     this.store = store;
@@ -194,16 +205,60 @@ export class DefinitionService {
     edit: FactoryEdit,
     revision: string,
     models: KnownModels = {},
+    /** Why Nakara cannot reach each added `owner/name`; empty when it can. */
+    reachable: (repos: string[]) => Promise<string[]> = async () => [],
   ): Promise<DefinitionWrite> {
-    return this.writeDefinition("Edit factory settings", () =>
-      writeFactoryFile(
+    return this.writeDefinition("Edit factory settings", async () => {
+      const refused = await this.refusedRepositories(
+        edit.repositories,
+        reachable,
+      );
+      if (refused.length)
+        return {
+          ok: false,
+          code: "invalid",
+          errors: refused.map((message) => ({ path: FACTORY_FILE, message })),
+          warnings: [],
+        };
+      return writeFactoryFile(
         this.config.definitionDir,
         edit,
         revision,
         HARNESS_FALLBACK,
         { models },
-      ),
-    );
+      );
+    });
+  }
+
+  /**
+   * Why a repositories edit is refused before anything is written: an added
+   * repository another factory owns or Nakara cannot reach, or a removed one
+   * that active Work Items still target. Reach is asked last, and only when
+   * the rest passes, since it asks GitHub.
+   */
+  private async refusedRepositories(
+    edit: RepositoriesEdit | undefined,
+    reachable: (repos: string[]) => Promise<string[]>,
+  ): Promise<string[]> {
+    if (!edit) return [];
+    const refused: string[] = [];
+    const added = (edit.add ?? []).map((r) => `${r.owner}/${r.name}`);
+    for (const repo of added) {
+      const factory = this.repoOwner(repo);
+      if (factory !== undefined)
+        refused.push(
+          `repositories: ${repo} is already owned by the factory "${factory}"; a repository belongs to one factory`,
+        );
+    }
+    for (const repo of edit.remove ?? []) {
+      const active = this.activeItemsFor(repo);
+      if (active > 0)
+        refused.push(
+          `repositories: ${active} active Work Item${active === 1 ? "" : "s"} target${active === 1 ? "s" : ""} ${repo}. Complete or cancel ${active === 1 ? "it" : "them"} first.`,
+        );
+    }
+    if (refused.length || !added.length) return refused;
+    return (await reachable(added)).map((why) => `repositories: ${why}`);
   }
 
   /** Create automations/<name>/automation.md and reload; an invalid or taken automation writes nothing. */
@@ -294,6 +349,11 @@ export class DefinitionService {
       // Reach approved before runners counted: where agents run now is taken as approved.
       if (approved && !known.some((l) => RUNNER_LINE.test(l)))
         known.push(...reach.filter((l) => RUNNER_LINE.test(l)));
+      // Reach approved before repositories counted: the ones listed now are
+      // taken as approved. A flag, not the lines, says they count, so a
+      // factory that listed none still has its first one approved.
+      if (approved && !this.store.getKv(this.reposCountedKey))
+        known.push(...reach.filter((l) => REPO_LINE.test(l)));
       const added = approved ? widening(known, reach) : [];
       this.putKv(
         `${this.reachKey}:pending`,
@@ -310,7 +370,7 @@ export class DefinitionService {
           ],
           warnings: loaded.warnings,
         };
-      else this.putKv(this.reachKey, JSON.stringify(reach));
+      else this.approve(reach);
     }
     // A restart lost the definition a held reload kept: run the last applied copy.
     if (loaded.ok && !result.ok && !this.definition && this.appliedDir) {
@@ -353,6 +413,17 @@ export class DefinitionService {
       .catch(() => undefined);
   }
 
+  /** Set once the approved reach counts repositories (see reloadDefinition). */
+  private get reposCountedKey(): string {
+    return `${this.reachKey}:repos`;
+  }
+
+  /** Record `reach` as approved. */
+  private approve(reach: string[]): void {
+    this.putKv(this.reachKey, JSON.stringify(reach));
+    this.putKv(this.reposCountedKey, "1");
+  }
+
   /** A write is a change event; an unchanged value is not written. */
   private putKv(key: string, value: string): void {
     if ((this.store.getKv(key) ?? "") !== value) this.store.setKv(key, value);
@@ -370,6 +441,7 @@ export class DefinitionService {
     if (!pending) return null;
     const { reach } = JSON.parse(pending) as { reach: string[] };
     this.store.setKv(this.reachKey, JSON.stringify(reach));
+    this.putKv(this.reposCountedKey, "1");
     return this.reload();
   }
 

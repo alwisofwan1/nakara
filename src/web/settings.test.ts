@@ -80,6 +80,7 @@ test("factory settings: the record, its definition and its active items", () => 
           runner: "docker",
           idleTimeoutMinutes: null,
         },
+        repositories: ["acme/widgets"],
         revision: "r",
       },
       runners: [{ name: "docker", sandbox: true }],
@@ -104,6 +105,7 @@ test("factory settings: the record, its definition and its active items", () => 
           runner: "docker",
           idleTimeoutMinutes: null,
         },
+        repositories: ["acme/widgets"],
         revision: "r",
       },
       runners: [{ name: "docker", sandbox: true }],
@@ -235,6 +237,8 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }) {
   const cloned: string[] = [];
   /** Set to make the next gh repo clone fail. */
   const clone = { fail: false };
+  /** Repositories the agent token cannot push to, as gh api answers. */
+  const denied = new Set<string>();
   const app = createApp(
     registry,
     new GithubPoller(registry.factories),
@@ -259,6 +263,11 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }) {
           await exec("git", ["init", "--quiet"], { cwd: dest });
           return { ok: true, stdout: "", stderr: "" };
         }
+        // gh api repos/<owner/name> --jq .permissions.push, as /wizard/access asks.
+        if (args[0] === "api" && args[1]?.startsWith("repos/"))
+          return denied.has(args[1].slice("repos/".length))
+            ? { ok: false, stdout: "", stderr: "HTTP 404: Not Found" }
+            : { ok: true, stdout: "true\n", stderr: "" };
         return { ok: false, stdout: "", stderr: "unexpected gh call" };
       },
     },
@@ -280,7 +289,17 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }) {
   };
   // biome-ignore lint/style/noNonNullAssertion: Registered above.
   const harbor: Factory = registry.get("harbor")!;
-  return { dataDir, harborDir, store, registry, harbor, call, cloned, clone };
+  return {
+    dataDir,
+    harborDir,
+    store,
+    registry,
+    harbor,
+    call,
+    cloned,
+    clone,
+    denied,
+  };
 }
 
 test("rename keeps the slug and URLs; another factory's name is refused", async (t) => {
@@ -1600,4 +1619,125 @@ test("where work comes from: a GitHub pull request trigger is not intake, so the
     intake.some((e: { provider: string }) => e.provider === "github"),
     false,
   );
+});
+
+test("repositories: added after the ownership and access checks, waiting for approval, and removed unless active items target it or it is the last", async (t) => {
+  const { harborDir, store, registry, harbor, call, denied } = await setup(t);
+  const probed: string[] = [];
+  harbor.probeRepository = async (_dir, owner, name) => {
+    probed.push(`${owner}/${name}`);
+    return { defaultBranch: "main" };
+  };
+  const yaml = join(harborDir, "factory.yaml");
+  const settings = async () => (await call("GET", "f/harbor/settings")).body;
+  const revision = async () => (await settings()).factoryFile.revision;
+  const put = async (repositories: unknown) =>
+    call("PUT", "f/harbor/settings/definition", {
+      revision: await revision(),
+      repositories,
+    });
+  const problems = (refused: {
+    body: { error: { problems: { message: string }[] } };
+  }) => refused.body.error.problems.map((p) => p.message).join("\n");
+  assert.deepEqual((await settings()).factoryFile.repositories, [
+    "acme/harbor",
+  ]);
+  const text = await readFile(yaml, "utf8");
+
+  // Owned by the default factory: a 422 naming it, nothing written.
+  const owner = registry.default.record?.name;
+  const owned = await put({
+    add: [{ owner: "alwisofwan1", name: "Nakara" }],
+  });
+  assert.equal(owned.status, 422);
+  assert.equal(owned.body.error.code, "invalid_definition");
+  assert.match(
+    problems(owned),
+    new RegExp(`alwisofwan1/Nakara is already owned by the factory "${owner}"`),
+  );
+  // The agent token cannot reach it: refused before anything is written.
+  denied.add("acme/secret");
+  const unreachable = await put({ add: [{ owner: "acme", name: "secret" }] });
+  assert.equal(unreachable.status, 422);
+  assert.match(problems(unreachable), /Nakara cannot reach acme\/secret/);
+  // A malformed repository is a 400.
+  assert.equal(
+    (await put({ add: [{ owner: "acme corp", name: "docs" }] })).status,
+    400,
+  );
+  assert.equal(await readFile(yaml, "utf8"), text);
+
+  // Added: written, but it widens reach, so the running definition waits for approval.
+  const added = await put({ add: [{ owner: "acme", name: "docs" }] });
+  assert.equal(added.status, 200);
+  assert.equal(added.body.ok, false);
+  assert.match(added.body.errors[0].message, /waits for your approval/);
+  assert.deepEqual((await settings()).factoryFile.repositories, [
+    "acme/harbor",
+    "acme/docs",
+  ]);
+  assert.deepEqual((await settings()).pendingReach, ["repository acme/docs"]);
+  assert.deepEqual(
+    harbor.definition?.factory.repositories.map((r) => r.name),
+    ["harbor"],
+  );
+  assert.equal(
+    (await call("POST", "f/harbor/definition/reach/approve")).body.ok,
+    true,
+  );
+  assert.deepEqual(
+    harbor.definition?.factory.repositories.map((r) => r.name),
+    ["harbor", "docs"],
+  );
+  assert.equal((await settings()).pendingReach, null);
+  // Approved, it is cloned with the others.
+  await harbor.checkRepositories();
+  assert.ok(probed.includes("acme/docs"), probed.join());
+
+  // An active item targeting acme/harbor (in GitHub's other spelling) blocks its removal.
+  const harborId = harbor.record?.id ?? 0;
+  const item = store.createItem({
+    title: "Fix",
+    request: "Fix",
+    source: "manual",
+    repo: "ACME/harbor",
+    factoryId: harborId,
+  });
+  // Another factory's item and a closed one do not count.
+  store.createItem({
+    title: "Other",
+    request: "Other",
+    source: "manual",
+    repo: "acme/harbor",
+    factoryId: registry.default.record?.id ?? 0,
+  });
+  const done = store.createItem({
+    title: "Done",
+    request: "Done",
+    source: "manual",
+    repo: "acme/harbor",
+    factoryId: harborId,
+  });
+  store.updateItem(done.id, { stage: "complete" });
+  const busy = await put({ remove: ["acme/harbor"] });
+  assert.equal(busy.status, 422);
+  assert.match(
+    problems(busy),
+    /1 active Work Item targets acme\/harbor\. Complete or cancel it first\./,
+  );
+  store.updateItem(item.id, { stage: "cancelled" });
+
+  // Removing narrows reach: applied at once.
+  const removed = await put({ remove: ["acme/harbor"] });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.ok, true);
+  assert.deepEqual(
+    harbor.definition?.factory.repositories.map((r) => r.name),
+    ["docs"],
+  );
+  // The last repository stays.
+  const last = await put({ remove: ["acme/docs"] });
+  assert.equal(last.status, 422);
+  assert.match(problems(last), /at least one repository/);
+  assert.deepEqual((await settings()).factoryFile.repositories, ["acme/docs"]);
 });
