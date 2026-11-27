@@ -126,9 +126,9 @@ export class FactoryRepository extends Repository {
    * modules own), its saved limits, its repository status (`repo:<slug>`,
    * see runner/repos.ts), its approved and pending reach (`reach:<id>` and
    * `reach:<id>:…`, see DefinitionService) and its unchecked corrections.
-   * Ids are not reused (migration 023), but nothing keyed by them outlives
-   * them. The caller refuses a factory with active items; the foreign keys
-   * refuse what is left behind.
+   * Ids are not reused (migrations 023 and 024), but nothing keyed by them
+   * outlives them. The caller refuses a factory with active items; the
+   * foreign keys refuse what is left behind.
    */
   deleteFactory(id: number, itemKeyPrefixes: readonly string[] = []): void {
     const items = "SELECT id FROM work_items WHERE factory_id = ?";
