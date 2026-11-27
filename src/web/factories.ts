@@ -52,6 +52,8 @@ export function readFactorySettings(
     } | null;
     /** The runners of the applied definition; a sandbox runs agents in a container. */
     runners: { name: string; sandbox: boolean }[];
+    /** The reach lines a saved edit adds that wait for approval; null when none waits. */
+    pendingReach: string[] | null;
   },
 ) {
   const { factories, factorySettings } = repos;
@@ -69,6 +71,7 @@ export function readFactorySettings(
     backupDir: running.backupDir,
     factoryFile: running.factoryFile,
     runners: running.runners,
+    pendingReach: running.pendingReach,
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
     ...pauseState(factorySettings.pausedAt(record.id)),

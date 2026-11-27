@@ -83,6 +83,7 @@ test("factory settings: the record, its definition and its active items", () => 
         revision: "r",
       },
       runners: [{ name: "docker", sandbox: true }],
+      pendingReach: null,
     }),
     {
       slug: "harbor",
@@ -105,6 +106,7 @@ test("factory settings: the record, its definition and its active items", () => 
         revision: "r",
       },
       runners: [{ name: "docker", sandbox: true }],
+      pendingReach: null,
       limits: {
         budgetUsd: 15,
         maxReviews: 1,
@@ -140,6 +142,7 @@ test("factory settings: the record, its definition and its active items", () => 
       specAgent: false,
       factoryFile: null,
       runners: [],
+      pendingReach: null,
     })?.isDefault,
     true,
   );
@@ -153,6 +156,7 @@ test("factory settings: the record, its definition and its active items", () => 
       specAgent: false,
       factoryFile: null,
       runners: [],
+      pendingReach: null,
     }),
     undefined,
   );
@@ -1362,7 +1366,10 @@ test("agent defaults: saved through Settings, shown for agents without their own
   assert.equal(harbor.definition?.agents.get("helper")?.runner, "docker");
   const pending = (await call("GET", "f/harbor/definition")).body.pendingReach;
   assert.ok(pending.includes("helper · runner host"), pending.join("\n"));
+  // Settings shows what waits, until the Operator decides.
+  assert.deepEqual((await settings()).pendingReach, pending);
   const approved = await call("POST", "f/harbor/definition/reach/approve");
   assert.equal(approved.body.ok, true);
   assert.equal(harbor.definition?.agents.get("helper")?.runner, "local");
+  assert.equal((await settings()).pendingReach, null);
 });

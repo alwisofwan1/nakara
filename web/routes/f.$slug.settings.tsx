@@ -28,6 +28,7 @@ import {
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
 import { AdoptDefinition } from "../features/definition/adopt-definition";
+import { AgentDefaultsSection } from "../features/settings/agent-defaults-section";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
   AVATAR_COLORS,
@@ -61,6 +62,14 @@ function SettingsPage() {
       </div>
       <General settings={data} />
       <Limits settings={data} />
+      {data.factoryFile && (
+        <AgentDefaultsSection
+          slug={slug}
+          file={data.factoryFile}
+          runners={data.runners}
+          pendingReach={data.pendingReach}
+        />
+      )}
       <Definition settings={data} />
       <DangerZone settings={data} />
     </section>
@@ -243,7 +252,8 @@ function Description({
         (current) =>
           current && {
             ...current,
-            factoryFile: {
+            factoryFile: current.factoryFile && {
+              ...current.factoryFile,
               description: description || null,
               revision: result.revision,
             },

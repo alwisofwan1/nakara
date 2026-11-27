@@ -672,6 +672,7 @@ function createFactoryApi(
                 sandbox: Boolean(runner.platform?.linux?.dockerImage),
               }),
             ),
+            pendingReach: factory.pendingReach(),
           },
         );
         if (!dto)

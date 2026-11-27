@@ -214,7 +214,7 @@ export function serializeMarkdown(
 }
 
 /** A harness, model and reasoning effort, written together. */
-export interface ModelChoice {
+interface ModelChoice {
   harness: string | null;
   model: string | null;
   effort: string | null;
@@ -415,7 +415,7 @@ const flowString = (node: YAMLMap | YAMLSeq) => {
 
 /**
  * The text of each one-line flow collection (`[a, b]`, `{ k: v }`) of `doc`,
- * parsed from `text`. `restore` puts it back into the re-serialized document
+ * parsed from `text`. The function it returns puts it back into the re-serialized document
  * for each one an edit left alone, which the yaml library would respace.
  */
 function flowText(doc: Document, text: string) {
