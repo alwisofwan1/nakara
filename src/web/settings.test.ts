@@ -997,6 +997,45 @@ test("delete removes the closed items' runs, approvals, events, messages and key
   assert.equal(store.getKv(lookalike), "1");
 });
 
+test("a factory created after a delete reuses no reach the deleted one approved", async (t) => {
+  const { dataDir, store, registry, harbor, call } = await setup(t);
+  const id = harbor.record?.id;
+  assert.ok(store.getKv(`reach:${id}`));
+  assert.equal((await call("DELETE", "f/harbor")).status, 200);
+  for (const key of [`reach:${id}`, `reach:${id}:pending`, `reach:${id}:repos`])
+    assert.equal(store.getKv(key) ?? "", "", key);
+  // The default factory keeps its approved reach.
+  assert.ok(store.getKv(`reach:${registry.default.record?.id}`));
+
+  // The next factory gets the freed id; its other repositories are its first reach, not a widening.
+  const dir = join(dataDir, "factories", "reborn");
+  await cp("factory", dir, { recursive: true });
+  const yaml = join(dir, "factory.yaml");
+  await writeFile(
+    yaml,
+    (await readFile(yaml, "utf8")).replace(
+      /repositories:\n(?: {2}- owner: .*\n {4}name: .*\n)+/,
+      "repositories:\n  - owner: acme\n    name: reborn\n",
+    ),
+  );
+  const record = store.repos.factories.createFactory({
+    ...stubFactorySeed(),
+    slug: "reborn",
+    name: "Reborn",
+    avatar_color: "#0e7490",
+    foreman_handle: "reborn",
+    definition_dir: dir,
+    definition_mode: "managed",
+  });
+  assert.equal(record.id, id);
+  const reborn = await registry.register(record);
+  assert.ok(
+    reborn.definition,
+    JSON.stringify(reborn.definitionProblems.errors),
+  );
+  assert.equal(reborn.pendingReach(), null);
+});
+
 test("move refuses a tree that does not load and a failed clone, and moves nothing", async (t) => {
   const { dataDir, harborDir, call, clone } = await setup(t);
   const checkout = join(dataDir, "checkouts", "acme", "harbor");
