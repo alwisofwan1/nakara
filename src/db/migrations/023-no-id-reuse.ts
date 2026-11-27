@@ -66,30 +66,71 @@ const swap = (from: string, to: string) => (sql: string) => {
   return sql.slice(0, at) + to + sql.slice(at + from.length);
 };
 
-const highest = (db: DatabaseSync, query: string): number =>
+/**
+ * An id written as Nakara writes one, decimal digits without leading zeros,
+ * from 1 up to Number.MAX_SAFE_INTEGER; anything else is no id. Ids read from free-form text (kv keys and values)
+ * must neither fail the read nor start the sequence near SQLite's limit.
+ */
+const parseId = (text: string | undefined): number | undefined => {
+  if (!text || !/^[1-9]\d{0,15}$/.test(text)) return undefined;
+  const id = Number(text);
+  return id >= 1 && id <= Number.MAX_SAFE_INTEGER ? id : undefined;
+};
+
+/** The highest id among `texts`; malformed ones are ignored. */
+const highestOf = (texts: Iterable<string | undefined>): number => {
+  let max = 0;
+  for (const text of texts) max = Math.max(max, parseId(text) ?? 0);
+  return max;
+};
+
+/** The highest in-range integer in `column` of `table`; other values are ignored. */
+const highestIn = (db: DatabaseSync, table: string, column: string): number =>
   Number(
-    (db.prepare(query).get() as { n: number | bigint | null } | undefined)?.n ??
-      0,
+    (
+      db
+        .prepare(
+          `SELECT max(${column}) AS n FROM ${table}
+           WHERE typeof(${column}) = 'integer' AND ${column} BETWEEN 1 AND ?`,
+        )
+        .get(Number.MAX_SAFE_INTEGER) as { n: number | null } | undefined
+    )?.n ?? 0,
   );
 
-/** The highest id in the kv keys under `prefixes`; other keys are ignored. */
-function highestInKeys(db: DatabaseSync, prefixes: string[]): number {
-  let max = 0;
+/** The ids in the kv keys under `prefixes`: `<prefix><id>` or `<prefix><id>:…`. */
+function* idsInKeys(db: DatabaseSync, prefixes: string[]) {
   const keys = db.prepare("SELECT key FROM kv").all() as { key: string }[];
   for (const { key } of keys)
-    for (const prefix of prefixes) {
-      if (!key.startsWith(prefix)) continue;
-      const id = /^(\d+)(:|$)/.exec(key.slice(prefix.length))?.[1];
-      if (id) max = Math.max(max, Number(id));
-    }
-  return max;
+    for (const prefix of prefixes)
+      if (key.startsWith(prefix))
+        yield /^([^:]*)(:|$)/.exec(key.slice(prefix.length))?.[1];
 }
+
+/** `expression` over the kv rows whose key starts with `prefix`, as text. */
+const kvTexts = (
+  db: DatabaseSync,
+  prefix: string,
+  expression: string,
+  where = "1",
+): string[] =>
+  (
+    db
+      .prepare(
+        `SELECT CAST(${expression} AS TEXT) AS v FROM kv
+         WHERE substr(key, 1, ?) = ? AND ${where}`,
+      )
+      .all(prefix.length, prefix) as { v: string | null }[]
+  ).flatMap((r) => (r.v === null ? [] : [r.v]));
 
 /** Start `table`'s ids after `used`, unless they already start later. */
 function seedSequence(db: DatabaseSync, table: string, used: number): void {
-  const seq = highest(
-    db,
-    `SELECT seq AS n FROM sqlite_sequence WHERE name = '${table}'`,
+  // Set by the rebuild from the rows' own ids.
+  const seq = Number(
+    (
+      db.prepare("SELECT seq FROM sqlite_sequence WHERE name = ?").get(table) as
+        | { seq: number }
+        | undefined
+    )?.seq ?? 0,
   );
   if (used <= seq) return;
   db.prepare("DELETE FROM sqlite_sequence WHERE name = ?").run(table);
@@ -99,42 +140,46 @@ function seedSequence(db: DatabaseSync, table: string, used: number): void {
   );
 }
 
+const ITEM_ID_COLUMNS: [string, string][] = [
+  ["work_items", "id"],
+  ...[
+    "runs",
+    "approvals",
+    "messages",
+    "events",
+    "stage_transitions",
+    "evidence",
+    "learnings",
+  ].map((t): [string, string] => [t, "item_id"]),
+];
+const FACTORY_ID_COLUMNS: [string, string][] = [
+  ["factories", "id"],
+  ["factory_settings", "factory_id"],
+  ["work_items", "factory_id"],
+];
+
 export const noIdReuse: Migration = {
   version: 23,
   name: "no-id-reuse",
   up(db) {
     const factoryHigh = Math.max(
-      highest(
-        db,
-        `SELECT max(n) AS n FROM (
-          SELECT max(id) AS n FROM factories
-          UNION ALL SELECT max(factory_id) FROM factory_settings
-          UNION ALL SELECT max(factory_id) FROM work_items)`,
-      ),
-      highestInKeys(db, FACTORY_KEY_PREFIXES),
+      ...FACTORY_ID_COLUMNS.map(([t, c]) => highestIn(db, t, c)),
+      highestOf(idsInKeys(db, FACTORY_KEY_PREFIXES)),
     );
     const itemHigh = Math.max(
-      highest(
-        db,
-        `SELECT max(n) AS n FROM (
-          SELECT max(id) AS n FROM work_items
-          ${[
-            "runs",
-            "approvals",
-            "messages",
-            "events",
-            "stage_transitions",
-            "evidence",
-            "learnings",
-          ]
-            .map((t) => `UNION ALL SELECT max(item_id) FROM ${t}`)
-            .join("\n")}
-          UNION ALL SELECT max(CAST(value AS INTEGER)) FROM kv
-            WHERE substr(key, 1, 13) = 'slack:thread:' AND value GLOB '[0-9]*'
-          UNION ALL SELECT max(CAST(json_extract(value, '$.item') AS INTEGER)) FROM kv
-            WHERE substr(key, 1, 5) = 'tg:m:' AND json_valid(value))`,
+      ...ITEM_ID_COLUMNS.map(([t, c]) => highestIn(db, t, c)),
+      highestOf(idsInKeys(db, ITEM_KEY_PREFIXES)),
+      // A Slack thread's item: the value, all digits.
+      highestOf(kvTexts(db, "slack:thread:", "value")),
+      // A Telegram message's item: a JSON integer, never a string or real.
+      highestOf(
+        kvTexts(
+          db,
+          "tg:m:",
+          "json_extract(value, '$.item')",
+          "json_valid(value) AND json_type(value, '$.item') = 'integer'",
+        ),
       ),
-      highestInKeys(db, ITEM_KEY_PREFIXES),
     );
     rebuild(db, "factories", swap(PLAIN, AUTO));
     rebuild(db, "work_items", swap(PLAIN, AUTO));

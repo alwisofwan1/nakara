@@ -17,11 +17,23 @@ export const appliedDir = (dataDir: string, factoryId: number): string =>
 /** kv keys `<prefix><factory id>` or `<prefix><factory id>:…`. */
 const FACTORY_KV_PREFIXES = ["reach:", "reflect:factory:"];
 
-/** The id in `<prefix><id>` or `<prefix><id>:…`, or undefined. */
-const idIn = (key: string, prefix: string): number | undefined => {
-  const id = /^(\d+)(:|$)/.exec(key.slice(prefix.length))?.[1];
-  return id === undefined ? undefined : Number(id);
+/**
+ * An id written as Nakara writes one, decimal digits without leading zeros,
+ * from 1 up to Number.MAX_SAFE_INTEGER; anything else (a malformed or
+ * oversized key or folder name) is no id, and is neither counted nor removed.
+ */
+const parseId = (text: string | undefined): number | undefined => {
+  if (!text || !/^[1-9]\d{0,15}$/.test(text)) return undefined;
+  const id = Number(text);
+  return id <= Number.MAX_SAFE_INTEGER ? id : undefined;
 };
+
+/** The id in `<prefix><id>` or `<prefix><id>:…`, or undefined. */
+const idIn = (key: string, prefix: string): number | undefined =>
+  parseId(/^([^:]*)(:|$)/.exec(key.slice(prefix.length))?.[1]);
+
+const highest = (ids: (number | undefined)[]): number =>
+  ids.reduce<number>((max, id) => Math.max(max, id ?? 0), 0);
 
 /**
  * Before the factories load: reserve the factory ids of the applied/
@@ -39,24 +51,18 @@ export async function sweepFreedIds(
   const { dataDir } = dirs;
   const itemDirs = (
     await readdir(dirs.workDir).catch(() => [] as string[])
-  ).flatMap((name) => /^item-(\d+)(\.nakara|\.home)?$/.exec(name)?.[1] ?? []);
-  store.repos.factories.reserveIds(
-    "work_items",
-    Math.max(0, ...itemDirs.map(Number)),
-  );
+  ).map((name) => parseId(/^item-([^.]*)(\.nakara|\.home)?$/.exec(name)?.[1]));
+  store.repos.factories.reserveIds("work_items", highest(itemDirs));
   const factories = new Set(store.repos.factories.factories().map((f) => f.id));
   const applied = (
     await readdir(join(dataDir, "applied")).catch(() => [] as string[])
-  ).filter((name) => /^\d+$/.test(name));
-  store.repos.factories.reserveIds(
-    "factories",
-    Math.max(0, ...applied.map(Number)),
-  );
-  for (const name of applied) {
-    if (factories.has(Number(name))) continue;
-    const path = join(dataDir, "applied", name);
+  ).flatMap((name) => parseId(name) ?? []);
+  store.repos.factories.reserveIds("factories", highest(applied));
+  for (const id of applied) {
+    if (factories.has(id)) continue;
+    const path = appliedDir(dataDir, id);
     await rm(path, { recursive: true, force: true });
-    log.info("startup.stale_state_removed", { factory_id: name, path });
+    log.info("startup.stale_state_removed", { factory_id: id, path });
   }
   const sweep = (
     prefixes: readonly string[],

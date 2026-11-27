@@ -27,6 +27,13 @@ test("the startup sweep reserves the ids folders show, and removes only the stat
     join(workDir, "item-30.nakara"),
     join(workDir, "item-40.home"),
     join(workDir, "item-x"),
+    // Malformed and oversized names are no ids: not counted, not removed.
+    join(workDir, "item-99999999999999999999999.nakara"),
+    join(workDir, "item-9007199254740993"),
+    join(workDir, "item-0050"),
+    join(dataDir, "applied", "99999999999999999999999"),
+    join(dataDir, "applied", "12x"),
+    join(dataDir, "applied", "007"),
   ])
     await mkdir(dir, { recursive: true });
   const kept = [
@@ -38,6 +45,10 @@ test("the startup sweep reserves the ids folders show, and removes only the stat
     `reflect:${item.id}:event`,
     `ci-wait:${item.id}`,
     "tg:cursor",
+    "run-limit-told:99999999999999999999999",
+    "ci-wait:9007199254740993",
+    "reach:12x",
+    "reach:007",
   ];
   const removed = [
     "reach:9",
@@ -62,6 +73,8 @@ test("the startup sweep reserves the ids folders show, and removes only the stat
   for (const key of removed) assert.equal(store.getKv(key), undefined, key);
   assert.ok(existsSync(join(dataDir, "applied", String(factory))));
   assert.equal(existsSync(join(dataDir, "applied", "9")), false);
+  for (const name of ["99999999999999999999999", "12x", "007"])
+    assert.ok(existsSync(join(dataDir, "applied", name)), name);
   // The item folders keep their logs.
   assert.ok(existsSync(join(workDir, "item-30.nakara")));
   const logged = lines.map((l) => JSON.parse(l));

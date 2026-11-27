@@ -1210,6 +1210,63 @@ test("migration 023 does not hand out an id that a child row or kv key shows was
   assert.deepEqual(seq, { factories: 7, work_items: 13 });
 });
 
+test("migration 023 ignores malformed and oversized ids in kv keys and values, and completes", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedIds(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  const insert = db.prepare("INSERT INTO kv (key, value) VALUES (?, ?)");
+  for (const [key, value] of [
+    // Slack: only all digits, in range.
+    ["slack:thread:C1:1", "999999999999999999999999x"],
+    ["slack:thread:C1:2", "99999999999999999999999999"],
+    ["slack:thread:C1:3", "9223372036854775807"],
+    ["slack:thread:C1:4", "9007199254740993"],
+    ["slack:thread:C1:5", "12abc"],
+    ["slack:thread:C1:6", "-40"],
+    ["slack:thread:C1:7", "1e9"],
+    ["slack:thread:C1:8", "0"],
+    ["slack:thread:C1:9", "007"],
+    // Telegram: only a JSON integer, in range.
+    ["tg:m:1", '{"item":"999999999999999999999999x"}'],
+    ["tg:m:2", '{"item":"70"}'],
+    ["tg:m:3", '{"item":71.5}'],
+    ["tg:m:4", '{"item":72.0}'],
+    ["tg:m:5", '{"item":1e9}'],
+    ["tg:m:6", '{"item":99999999999999999999}'],
+    ["tg:m:7", '{"item":9223372036854775807}'],
+    ["tg:m:8", '{"item":-73}'],
+    ["tg:m:9", "not json"],
+    ["tg:m:10", '{"item":null}'],
+    // Keys: an oversized or malformed id is no id.
+    ["run-limit-told:99999999999999999999999", "50"],
+    ["ci-wait:9223372036854775807", "1"],
+    ["merge-submitted:12x", "u"],
+    ["reach:99999999999999999999999:pending", ""],
+    ["reach:00", "[]"],
+  ] as const)
+    insert.run(key, value);
+  // A well-formed value of each kind still counts.
+  insert.run("slack:thread:C1:10", "21");
+  insert.run("tg:m:11", '{"item":22}');
+
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  const seq = Object.fromEntries(
+    db
+      .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+      .all()
+      .map((r) => [r.name, r.seq]),
+  );
+  // reflect:factory:3 and run-limit-told:5 from the fixture; 22 from tg:m:11.
+  assert.deepEqual(seq, { factories: 3, work_items: 22 });
+  const store = new Store(join(dir, "nakara.db"), { defaultBudgetUsd: 15 });
+  t.after(() => store.close());
+  assert.equal(
+    store.createItem({ title: "n", request: "r", source: "manual" }).id,
+    23,
+  );
+});
+
 test("migration 023 down restores version 22 with every row, and up again", (t) => {
   const dir = tempDir(t);
   const db = withFreedIds(join(dir, "nakara.db"));
