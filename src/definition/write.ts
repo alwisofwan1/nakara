@@ -18,11 +18,11 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
   Document,
+  isCollection,
   isMap,
   isScalar,
   parseDocument,
   stringify,
-  visit,
   type YAMLMap,
   type YAMLSeq,
 } from "yaml";
@@ -413,36 +413,55 @@ const flowString = (node: YAMLMap | YAMLSeq) => {
   return new Document(bare).toString({ lineWidth: 0 }).trimEnd();
 };
 
+type YamlKey = string | number | bigint | boolean;
+
+/** Each flow collection below `node`, outermost only, with its key path. */
+function flowNodes(
+  node: unknown,
+  path: YamlKey[] = [],
+  out: { path: YamlKey[]; node: YAMLMap | YAMLSeq }[] = [],
+) {
+  if (!isCollection(node)) return out;
+  if (node.flow) out.push({ path, node });
+  else if (isMap(node)) {
+    for (const pair of node.items)
+      if (isScalar(pair.key))
+        flowNodes(pair.value, [...path, pair.key.value as YamlKey], out);
+  } else
+    for (const [i, item] of node.items.entries())
+      flowNodes(item, [...path, i], out);
+  return out;
+}
+
 /**
  * The text of each one-line flow collection (`[a, b]`, `{ k: v }`) of `doc`,
- * parsed from `text`. The function it returns puts it back into the re-serialized document
- * for each one an edit left alone, which the yaml library would respace.
+ * parsed from `text`. The function it returns parses the re-serialized
+ * document and, at the same key path, puts the written text back over each
+ * one whose value an edit left alone, which the yaml library would respace.
+ * Only that node's range is replaced, never matching text elsewhere.
  */
 function flowText(doc: Document, text: string) {
-  const flows = (each: (node: YAMLMap | YAMLSeq) => void) =>
-    visit(doc, {
-      Collection(_, node) {
-        if (!node.flow) return;
-        each(node);
-        return visit.SKIP;
-      },
-    });
-  const written = new Map<YAMLMap | YAMLSeq, { text: string; as: string }>();
-  flows((node) => {
+  const written = flowNodes(doc.contents).flatMap(({ path, node }) => {
     const source = node.range && text.slice(node.range[0], node.range[1]);
-    if (source && !/[\n#]/.test(source))
-      written.set(node, { text: source, as: flowString(node) });
+    return source && !/[\n#]/.test(source)
+      ? [{ path, text: source, as: flowString(node) }]
+      : [];
   });
   return (out: string) => {
-    let at = 0;
-    flows((node) => {
-      const was = written.get(node);
-      if (!was || flowString(node) !== was.as) return;
-      const found = out.indexOf(was.as, at);
-      if (found < 0) return;
-      out = out.slice(0, found) + was.text + out.slice(found + was.as.length);
-      at = found + was.text.length;
+    const next = parseDocument(out, { intAsBigInt: true });
+    if (next.errors.length) return out;
+    const spans = written.flatMap((was) => {
+      const node = next.getIn(was.path, true);
+      return isCollection(node) &&
+        node.flow &&
+        node.range &&
+        flowString(node) === was.as
+        ? [{ from: node.range[0], to: node.range[1], text: was.text }]
+        : [];
     });
+    // From the end, so earlier ranges stay where they were.
+    for (const span of spans.sort((x, y) => y.from - x.from))
+      out = out.slice(0, span.from) + span.text + out.slice(span.to);
     return out;
   };
 }
@@ -556,25 +575,80 @@ export function writeAutomation(
   );
 }
 
+/** A harness whose CLI lists its models. */
+export type ListedHarness = "claude" | "codex";
+/** The model ids each listed harness offers, as GET /models/:harness returns them. */
+export type KnownModels = Partial<Record<ListedHarness, string[]>>;
+
+/**
+ * The harness whose model list must have the model an agentDefaults edit
+ * sets, resolved as the loader does: Claude Code for `claude`, `claude-code`
+ * and the `model` shorthand, Codex for `codex`. Null when the edit sets no
+ * model, or picks a harness without a list: the shorthand's `qwen…` names the
+ * gateway's one model, and an unknown harness is the loader's error.
+ */
+export function modelListOf(
+  edit: AgentDefaultsEdit | undefined,
+): ListedHarness | null {
+  const model = edit?.model;
+  if (!model) return null;
+  const harness = edit.harness ?? null;
+  if (harness === null)
+    return model.toLowerCase().startsWith("qwen") ? null : "claude";
+  if (harness === "claude" || harness === "claude-code") return "claude";
+  return harness === "codex" ? "codex" : null;
+}
+
+/** Why the model an agentDefaults edit sets is refused, or null when it is offered. */
+function unknownModel(
+  edit: AgentDefaultsEdit | undefined,
+  models: KnownModels,
+): string | null {
+  if (edit?.model && edit.harness === "qwen")
+    return "agentDefaults.harness: qwen runs the gateway's one model; leave the model empty";
+  const list = modelListOf(edit);
+  if (!list || !edit?.model) return null;
+  const ids = models[list];
+  if (!ids)
+    return `agentDefaults.model: the ${list} model list is needed to check "${edit.model}"`;
+  return ids.includes(edit.model)
+    ? null
+    : `agentDefaults.model: "${edit.model}" is not a model ${list} offers (${ids.join(", ") || "none listed"})`;
+}
+
 /**
  * Write `edit` into factory.yaml through the yaml Document API, so comments,
  * key order and unknown keys survive; revision check, validation and swap as
- * in writeAgent.
+ * in writeAgent. A model the edit sets must be in `models` for its harness
+ * (see modelListOf); otherwise the edit is refused and nothing is written.
+ * The loader itself keeps accepting any model a file already names.
  */
 export function writeFactoryFile(
   root: string,
   edit: FactoryEdit,
   revision: string,
   defaults: ResolvedHarness,
-  beforeSwap?: () => Promise<void>,
+  options: {
+    models?: KnownModels;
+    /** Runs after validation, right before the swap; tests use it to race the file. */
+    beforeSwap?: () => Promise<void>;
+  } = {},
 ): Promise<WriteResult> {
+  const refused = unknownModel(edit.agentDefaults, options.models ?? {});
+  if (refused)
+    return Promise.resolve({
+      ok: false,
+      code: "invalid",
+      errors: [{ path: FACTORY_FILE, message: refused }],
+      warnings: [],
+    });
   return writeTextFile(
     root,
     FACTORY_FILE,
     (text) => serializeFactory(text, edit),
     revision,
     defaults,
-    beforeSwap,
+    options.beforeSwap,
   );
 }
 

@@ -17,6 +17,7 @@ import {
   createAgent,
   createAutomation,
   type FactoryEdit,
+  type KnownModels,
   deleteAgent,
   deleteAutomation,
   type NewAgent,
@@ -185,14 +186,22 @@ export class DefinitionService {
     );
   }
 
-  /** Write factory.yaml settings (the description), then reload. Saved like an agent edit. */
-  saveFactory(edit: FactoryEdit, revision: string): Promise<DefinitionWrite> {
+  /**
+   * Write factory.yaml settings (the description, agentDefaults), then reload.
+   * Saved like an agent edit; a model the edit sets must be in `models`.
+   */
+  saveFactory(
+    edit: FactoryEdit,
+    revision: string,
+    models: KnownModels = {},
+  ): Promise<DefinitionWrite> {
     return this.writeDefinition("Edit factory settings", () =>
       writeFactoryFile(
         this.config.definitionDir,
         edit,
         revision,
         HARNESS_FALLBACK,
+        { models },
       ),
     );
   }

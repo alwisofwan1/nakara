@@ -88,25 +88,49 @@ export const isSandbox = (runner: string | null, runners: RunnerOption[]) =>
 /**
  * Runs saves of one file one after another, each with the revision the save
  * before it returned, so back-to-back saves never send the revision a
- * refetch has not replaced yet. `seen` takes a revision loaded from the server.
+ * refetch has not replaced yet. One queue serves every editor of the file.
+ *
+ * `seen` offers a revision loaded from the server. A write-returned revision
+ * stays authoritative: while a save is queued or running the offer is
+ * ignored, and so is a revision a save already wrote past, which only a
+ * refetch that started before that save can bring. Any other revision is a
+ * change made elsewhere (another tab) and is taken.
  */
 export function revisionQueue(initial: string) {
   let revision = initial;
+  let pending = 0;
   let queue: Promise<unknown> = Promise.resolve();
+  /** Revisions a save here replaced. */
+  const replaced = new Set<string>();
   return {
+    get revision() {
+      return revision;
+    },
     seen(next: string) {
+      if (pending > 0 || replaced.has(next)) return;
       revision = next;
     },
     run<T extends { revision: string }>(
       save: (revision: string) => Promise<T>,
     ): Promise<T> {
-      const run = queue.then(async () => {
-        const result = await save(revision);
-        revision = result.revision;
-        return result;
-      });
+      pending++;
+      const run = queue
+        .then(async () => {
+          const sent = revision;
+          const result = await save(sent);
+          if (result.revision !== sent) replaced.add(sent);
+          // A save that writes the file back to an earlier text makes that revision current again.
+          replaced.delete(result.revision);
+          revision = result.revision;
+          return result;
+        })
+        .finally(() => {
+          pending--;
+        });
       queue = run.catch(() => {});
       return run;
     },
   };
 }
+
+export type RevisionQueue = ReturnType<typeof revisionQueue>;

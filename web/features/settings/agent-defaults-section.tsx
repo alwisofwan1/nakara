@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { useToast } from "../../app/toast";
 import { ApiError, factorySettingsQuery, saveFactoryFile } from "../../lib/api";
@@ -13,7 +13,7 @@ import {
   harnessOf,
   isSandbox,
   type RunnerOption,
-  revisionQueue,
+  type RevisionQueue,
   runnerFor,
 } from "./agent-defaults";
 
@@ -27,8 +27,11 @@ export function AgentDefaultsSection({
   file,
   runners,
   pendingReach,
+  queue,
 }: {
   slug: string;
+  /** The page's one queue of factory.yaml saves, shared with the description. */
+  queue: RevisionQueue;
   file: { agentDefaults: AgentDefaultsForm; revision: string };
   runners: RunnerOption[];
   /** What a saved edit adds to agents' reach, waiting for approval; null when nothing waits. */
@@ -46,13 +49,10 @@ export function AgentDefaultsSection({
   const harness = harnessOf(form);
   const sandbox = isSandbox(form.runner, runners);
   const sameKind = runners.filter((r) => r.sandbox === sandbox);
-  // A revision loaded from the server (another tab, the description) replaces the one held.
-  const queue = useRef(revisionQueue(file.revision));
-  useEffect(() => queue.current.seen(file.revision), [file.revision]);
 
   const save = useMutation({
     mutationFn: (agentDefaults: NonNullable<typeof changes>) =>
-      queue.current.run((revision) =>
+      queue.run((revision) =>
         saveFactoryFile(slug, { revision, agentDefaults }),
       ),
     onSuccess: (result, sent) => {

@@ -32,6 +32,8 @@ import {
   AGENT_NAME,
   AUTOMATION_NAME,
   type AgentDefaultsEdit,
+  type KnownModels,
+  modelListOf,
   type AgentEdit,
   type AutomationEdit,
   appendLearning,
@@ -1274,6 +1276,12 @@ test("factory.yaml: an edit the loader rejects writes nothing", async () => {
   assert.deepEqual(await snapshot(root), before);
 });
 
+/** The models the harness CLIs list in these tests. */
+const MODELS: KnownModels = {
+  claude: ["opus", "sonnet", "haiku"],
+  codex: ["gpt-5.5"],
+};
+
 /** factory.yaml with secrets, servers and an auth key under agentDefaults, as a team writes them. */
 const DEFAULTS = `schemaVersion: v1alpha1
 name: t
@@ -1299,6 +1307,7 @@ test("factory.yaml agentDefaults: a model replaces the harness and back; secrets
       { agentDefaults },
       fileRevision(await readFile(path)),
       HARNESS_FALLBACK,
+      { models: MODELS },
     );
   const kept = [
     "  secrets: [LINEAR_TOKEN] # read by the linear server\n",
@@ -1384,8 +1393,91 @@ test("factory.yaml agentDefaults: an unknown harness, runner or timeout, or a lo
     { agentDefaults: { harness: null, model: "opus" } },
     fileRevision(await readFile(path)),
     HARNESS_FALLBACK,
+    { models: MODELS },
   );
   assert.ok(!auth.ok && auth.code === "invalid");
   assert.match(auth.errors[0]?.message ?? "", /would drop auth/);
   assert.match(await readFile(path, "utf8"), /auth: \{ kind: key \}/);
+});
+
+test("factory.yaml: only the untouched flow collection gets its text back, never matching text elsewhere", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  // The description holds the respaced form of the secrets list.
+  const text = `schemaVersion: v1alpha1
+name: t
+description: "see [ A ]"
+repositories: [{ owner: o, name: r }]
+agentDefaults:
+  model: auto
+  runner: std
+  secrets: [A]
+`;
+  await writeFile(path, text);
+  const result = await writeFactoryFile(
+    root,
+    { agentDefaults: { runner: "big" } },
+    fileRevision(await readFile(path)),
+    HARNESS_FALLBACK,
+  );
+  assert.ok(result.ok && result.changed);
+  assert.equal(
+    await readFile(path, "utf8"),
+    text.replace("  runner: std\n", "  runner: big\n"),
+  );
+  // An edited flow collection is written as the library writes it.
+  assert.equal(
+    serializeFactory(
+      "schemaVersion: v1alpha1\nagentDefaults: {model: auto, runner: std}\nsecrets: [A]\n",
+      { agentDefaults: { runner: "big" } },
+    ),
+    "schemaVersion: v1alpha1\nagentDefaults: { model: auto, runner: big }\nsecrets: [A]\n",
+  );
+});
+
+test("factory.yaml agentDefaults: a model must be one its harness lists; nothing is written otherwise", async () => {
+  const root = await tree();
+  const path = join(root, "factory.yaml");
+  await writeFile(path, DEFAULTS);
+  const before = await snapshot(root);
+  const save = async (agentDefaults: AgentDefaultsEdit, models = MODELS) =>
+    writeFactoryFile(
+      root,
+      { agentDefaults },
+      fileRevision(await readFile(path)),
+      HARNESS_FALLBACK,
+      { models },
+    );
+  for (const [agentDefaults, message, models] of [
+    [
+      { harness: "claude", model: "opus-9" },
+      /"opus-9" is not a model claude offers \(opus, sonnet, haiku\)/,
+    ],
+    // Warp's claude-code and the shorthand run on Claude Code.
+    [{ harness: "claude-code", model: "gpt-5.5" }, /not a model claude offers/],
+    [{ harness: null, model: "gpt-5.5" }, /not a model claude offers/],
+    [{ harness: "codex", model: "opus" }, /"opus" is not a model codex offers/],
+    [{ harness: "qwen", model: "qwen3-coder" }, /gateway's one model/],
+    // No list to check against: refused, never written unchecked.
+    [{ harness: "claude", model: "opus" }, /claude model list is needed/, {}],
+  ] as const) {
+    const result = await save(agentDefaults, models);
+    assert.ok(!result.ok && result.code === "invalid", String(message));
+    assert.match(result.errors[0]?.message ?? "", message);
+    assert.equal(result.errors[0]?.path, "factory.yaml");
+  }
+  assert.deepEqual(await snapshot(root), before);
+
+  // Listed models, and edits that set no model, need no check.
+  assert.ok((await save({ harness: "claude", model: "sonnet" })).ok);
+  assert.ok((await save({ harness: "qwen", model: null })).ok);
+  assert.ok((await save({ runner: "big" }, {})).ok);
+  // A file that already names an unlisted model still loads: the check is the write's.
+  await writeFile(path, DEFAULTS.replace("model: haiku", "model: opus-9"));
+  assert.ok((await loadDefinition(root, HARNESS_FALLBACK)).ok);
+  assert.ok((await save({ idleTimeoutMinutes: 10 }, {})).ok);
+
+  assert.equal(modelListOf({ model: "qwen3-coder" }), null);
+  assert.equal(modelListOf({ harness: "codex", model: null }), null);
+  assert.equal(modelListOf({ harness: "oz", model: "x" }), null);
 });

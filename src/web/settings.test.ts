@@ -183,10 +183,31 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }) {
       "repositories:\n  - owner: acme\n    name: harbor\n",
     ),
   );
+  // A claude that only answers the model lookup; codex cannot list its models.
+  const fakeClaude = join(dataDir, "fake-claude");
+  await writeFile(
+    fakeClaude,
+    `#!/bin/sh\nread -r _\necho '${JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: "models",
+        response: {
+          models: [
+            { value: "opus", displayName: "Opus" },
+            { value: "sonnet", displayName: "Sonnet" },
+          ],
+        },
+      },
+    })}'\n`,
+    { mode: 0o755 },
+  );
   const config = loadConfig({
     NAKARA_DATA_DIR: dataDir,
     NAKARA_DEFINITION_DIR: defaultDir,
     NAKARA_GITHUB_MIRROR: "false",
+    NAKARA_CLAUDE_BIN: fakeClaude,
+    NAKARA_CODEX_BIN: "/bin/false",
   });
   const store = new Store(":memory:", {
     defaultBudgetUsd: 15,
@@ -1332,10 +1353,15 @@ test("agent defaults: saved through Settings, shown for agents without their own
   assert.equal(agent.defaults.model, "opus");
   assert.equal(agent.defaults.idleTimeoutMinutes, 20);
 
-  // An unknown harness or runner, or a timeout out of range: the loader's problems, nothing written.
+  // An unknown harness, runner or model, or a timeout out of range: problems, nothing written.
   const text = await readFile(yaml, "utf8");
   for (const [agentDefaults, message] of [
     [{ harness: "gemini", model: null }, /harness\.type/],
+    [
+      { harness: "claude", model: "opus-9" },
+      /"opus-9" is not a model claude offers \(opus, sonnet\)/,
+    ],
+    [{ harness: null, model: "gpt-5.5" }, /not a model claude offers/],
     [{ runner: "missing" }, /runner "missing" is not defined/],
     [{ idleTimeoutMinutes: 90 }, /idleTimeoutMinutes/],
   ] as const) {
@@ -1352,6 +1378,17 @@ test("agent defaults: saved through Settings, shown for agents without their own
       message,
     );
   }
+  // Codex cannot list its models here: the model is not saved unchecked.
+  const offline = await call("PUT", "f/harbor/settings/definition", {
+    revision: saved.body.revision,
+    agentDefaults: { harness: "codex", model: "gpt-5.5" },
+  });
+  assert.equal(offline.status, 503);
+  assert.equal(offline.body.error.code, "unavailable");
+  assert.match(
+    offline.body.error.message,
+    /codex model list could not be loaded/,
+  );
   assert.equal(await readFile(yaml, "utf8"), text);
 
   // To the host: written, but the running definition keeps the container until approved.

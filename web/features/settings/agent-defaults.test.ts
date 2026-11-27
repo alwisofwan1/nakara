@@ -82,7 +82,64 @@ describe("runner for a kind", () => {
   });
 });
 
+/** factory.yaml on the server: a stale revision is a 409, a save returns the next one. */
+function server() {
+  const disk = { revision: "r0" };
+  const save = async (revision: string) => {
+    if (revision !== disk.revision) throw new Error("409 conflict");
+    disk.revision = `r${Number(disk.revision.slice(1)) + 1}`;
+    return { revision: disk.revision };
+  };
+  return { disk, save };
+}
+
 describe("revision queue", () => {
+  it("keeps the revision a save returned when a stale refetch arrives after it", async () => {
+    const { save } = server();
+    const queue = revisionQueue("r0");
+    // The settings GET started before the save and answers after it.
+    expect((await queue.run(save)).revision).toBe("r1");
+    queue.seen("r0");
+    expect(queue.revision).toBe("r1");
+    expect((await queue.run(save)).revision).toBe("r2");
+  });
+
+  it("ignores a refetch that answers while a save runs", async () => {
+    const { save } = server();
+    const queue = revisionQueue("r0");
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = queue.run(async (revision) => {
+      await gate;
+      return save(revision);
+    });
+    queue.seen("r0");
+    release();
+    expect((await first).revision).toBe("r1");
+    expect((await queue.run(save)).revision).toBe("r2");
+  });
+
+  it("shared by two editors: a stale refetch after one's save does not break the other's", async () => {
+    const { save } = server();
+    const queue = revisionQueue("r0");
+    // The description saves, then a refetch from before it lands, then agent defaults save.
+    await queue.run(save);
+    queue.seen("r0");
+    await expect(queue.run(save)).resolves.toEqual({ revision: "r2" });
+  });
+
+  it("takes a revision written elsewhere, and one a save wrote back to", async () => {
+    const queue = revisionQueue("r0");
+    queue.seen("x9");
+    expect(queue.revision).toBe("x9");
+    // Saving the original text back: r0 is current again, so a GET of it is not stale.
+    await queue.run(async () => ({ revision: "r0" }));
+    queue.seen("r0");
+    expect(queue.revision).toBe("r0");
+  });
+
   it("saves twice in a row without waiting for a refetch, with no conflict", async () => {
     // The server: a stale revision is a 409, a save returns the new one.
     let onDisk = "r0";
