@@ -7,6 +7,7 @@ import {
   FACTORY_DESCRIPTION_MAX,
 } from "../definition/write.ts";
 import { SPEC_RULES } from "../domain/policy.ts";
+import type { IntakeDto } from "./automations.ts";
 import { FOLDER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
@@ -54,6 +55,8 @@ export function readFactorySettings(
     runners: { name: string; sandbox: boolean }[];
     /** The reach lines a saved edit adds that wait for approval; null when none waits. */
     pendingReach: string[] | null;
+    /** Where work comes from: manual intake, then the intake automations. */
+    intake: IntakeDto[];
   },
 ) {
   const { factories, factorySettings } = repos;
@@ -72,6 +75,7 @@ export function readFactorySettings(
     factoryFile: running.factoryFile,
     runners: running.runners,
     pendingReach: running.pendingReach,
+    intake: running.intake,
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
     ...pauseState(factorySettings.pausedAt(record.id)),

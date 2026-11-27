@@ -33,6 +33,7 @@ import {
   type RevisionQueue,
   revisionQueue,
 } from "../features/settings/agent-defaults";
+import { WhereWorkComesFrom } from "../features/settings/intake-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
   AVATAR_COLORS,
@@ -74,6 +75,7 @@ function SettingsPage() {
         </p>
       </div>
       <General settings={data} queue={factoryFile} />
+      <WhereWorkComesFrom slug={data.slug} intake={data.intake} />
       <Limits settings={data} />
       {data.factoryFile && (
         <AgentDefaultsSection

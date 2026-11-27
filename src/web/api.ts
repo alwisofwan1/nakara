@@ -34,6 +34,7 @@ import {
   cronPreviewInput,
   newAutomationInput,
   readAutomations,
+  readIntake,
 } from "./automations.ts";
 import {
   type CheckResultDto,
@@ -161,10 +162,7 @@ export type { FactoryDto, FactorySettingsDto } from "./factories.ts";
 export type { PullRequestDto } from "./pull-request.ts";
 export type { RepoDiffDto, RunDiffDto } from "./run-diff.ts";
 export type { RunDetailDto, RunRowDto, RunsDto } from "./runs.ts";
-export type {
-  TemplateAgent,
-  TemplateInfo,
-} from "../definition/scaffold.ts";
+export type { TemplateAgent, TemplateInfo } from "../definition/scaffold.ts";
 export type {
   AgentTokenDto,
   CreationDto,
@@ -679,6 +677,10 @@ function createFactoryApi(
               }),
             ),
             pendingReach: factory.pendingReach(),
+            intake: readIntake(
+              factory.definition?.automations ?? [],
+              factory.definition?.label,
+            ),
           },
         );
         if (!dto)

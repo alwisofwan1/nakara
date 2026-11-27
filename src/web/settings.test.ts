@@ -84,6 +84,7 @@ test("factory settings: the record, its definition and its active items", () => 
       },
       runners: [{ name: "docker", sandbox: true }],
       pendingReach: null,
+      intake: [],
     }),
     {
       slug: "harbor",
@@ -107,6 +108,7 @@ test("factory settings: the record, its definition and its active items", () => 
       },
       runners: [{ name: "docker", sandbox: true }],
       pendingReach: null,
+      intake: [],
       limits: {
         budgetUsd: 15,
         maxReviews: 1,
@@ -143,6 +145,7 @@ test("factory settings: the record, its definition and its active items", () => 
       factoryFile: null,
       runners: [],
       pendingReach: null,
+      intake: [],
     })?.isDefault,
     true,
   );
@@ -157,6 +160,7 @@ test("factory settings: the record, its definition and its active items", () => 
       factoryFile: null,
       runners: [],
       pendingReach: null,
+      intake: [],
     }),
     undefined,
   );
@@ -1409,4 +1413,123 @@ test("agent defaults: saved through Settings, shown for agents without their own
   assert.equal(approved.body.ok, true);
   assert.equal(harbor.definition?.agents.get("helper")?.runner, "local");
   assert.equal((await settings()).pendingReach, null);
+});
+
+test("where work comes from: manual intake, then only the GitHub, Telegram and Slack automations", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  for (const name of ["slack-request", "telegram-request"])
+    await rm(join(harborDir, "automations", name), { recursive: true });
+  assert.ok((await harbor.reloadDefinition()).ok);
+  const revision = fileRevision(
+    await readFile(
+      join(harborDir, "automations", "issue-labeled", "automation.md"),
+    ),
+  );
+  // weekly-health-check, a schedule automation, is not intake.
+  assert.deepEqual((await call("GET", "f/harbor/settings")).body.intake, [
+    {
+      automation: null,
+      displayName: "Manual",
+      provider: "nakara",
+      event: "manual",
+      enabled: true,
+      detail: null,
+      revision: null,
+    },
+    {
+      automation: "issue-labeled",
+      displayName: "issue-labeled",
+      provider: "github",
+      event: "issue_labeled",
+      enabled: true,
+      detail: harbor.definition?.label,
+      revision,
+    },
+  ]);
+});
+
+test("where work comes from: the bundled Telegram and Slack automations, and a switch saved on either page shows on both", async (t) => {
+  const { harbor, call } = await setup(t);
+  const intake = async () =>
+    (await call("GET", "f/harbor/settings")).body.intake as {
+      automation: string | null;
+      detail: string | null;
+      enabled: boolean;
+      revision: string | null;
+    }[];
+  const entry = async (name: string) =>
+    (await intake()).find((e) => e.automation === name);
+  const automation = async (name: string) =>
+    (await call("GET", "f/harbor/automations")).body.find(
+      (a: { name: string }) => a.name === name,
+    );
+  assert.deepEqual(
+    (await intake()).map((e) => [e.automation, e.detail]),
+    [
+      [null, null],
+      ["issue-labeled", harbor.definition?.label],
+      ["slack-request", "1 trusted member"],
+      ["telegram-request", "messages"],
+    ],
+  );
+
+  // Off from Settings: the same endpoint and revision as the Automations page.
+  const before = await entry("telegram-request");
+  assert.equal(before?.enabled, false);
+  assert.equal(
+    before?.revision,
+    (await automation("telegram-request")).revision,
+  );
+  const on = await call("PUT", "f/harbor/automations/telegram-request", {
+    enabled: true,
+    revision: before?.revision,
+  });
+  assert.equal(on.status, 200);
+  assert.equal((await entry("telegram-request"))?.enabled, true);
+  assert.equal((await automation("telegram-request")).enabled, true);
+
+  // From the Automations page with its own revision: Settings follows.
+  const off = await call("PUT", "f/harbor/automations/issue-labeled", {
+    enabled: false,
+    revision: (await automation("issue-labeled")).revision,
+  });
+  assert.equal(off.status, 200);
+  const after = await entry("issue-labeled");
+  assert.equal(after?.enabled, false);
+  assert.equal(after?.revision, off.body.revision);
+  assert.equal((await automation("issue-labeled")).enabled, false);
+
+  // A stale revision is refused, as on the Automations page.
+  const stale = await call("PUT", "f/harbor/automations/telegram-request", {
+    enabled: false,
+    revision: before?.revision,
+  });
+  assert.equal(stale.status, 409);
+  assert.equal((await entry("telegram-request"))?.enabled, true);
+});
+
+test("where work comes from: a GitHub pull request trigger is not intake, so there is still no GitHub intake", async (t) => {
+  const { harborDir, harbor, call } = await setup(t);
+  for (const name of ["issue-labeled", "slack-request", "telegram-request"])
+    await rm(join(harborDir, "automations", name), { recursive: true });
+  // Lifecycle notifications for factory PRs, not a way work comes in.
+  await mkdir(join(harborDir, "automations", "pr-merged"));
+  await writeFile(
+    join(harborDir, "automations", "pr-merged", "automation.md"),
+    "---\ntriggers:\n  - provider: github\n    event: pull_request_merged\n  - provider: github\n    event: pull_request_closed\n---\nA factory PR closed.\n",
+  );
+  assert.ok((await harbor.reloadDefinition()).ok);
+  assert.ok(harbor.definition?.automations.some((a) => a.name === "pr-merged"));
+  const { intake } = (await call("GET", "f/harbor/settings")).body;
+  assert.deepEqual(
+    intake.map((e: { provider: string; event: string }) => [
+      e.provider,
+      e.event,
+    ]),
+    [["nakara", "manual"]],
+  );
+  assert.equal(
+    intake.some((e: { provider: string }) => e.provider === "github"),
+    false,
+  );
 });

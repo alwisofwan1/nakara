@@ -17,6 +17,10 @@ import { useToast } from "../app/toast";
 import { AutomationForm, utc } from "../features/automations/automation-form";
 import { DeleteAutomation } from "../features/automations/delete-automation";
 import { NewAutomationForm } from "../features/automations/new-automation";
+import {
+  AutomationSwitch,
+  useAutomationToggle,
+} from "../features/automations/automation-switch";
 
 export const Route = createFileRoute("/f/$slug/automations")({
   // Started, not awaited: the page shows its frame and its own loading state.
@@ -68,43 +72,15 @@ function Automations() {
             tone: "bad",
           },
     );
-  const toggle = useMutation({
-    mutationFn: ({
-      automation,
-      enabled,
-    }: {
-      automation: Automation;
-      enabled: boolean;
-    }) =>
-      saveAutomation(slug, automation.name, {
-        enabled,
-        revision: automation.revision ?? "",
-      }),
-    onSuccess: async (result, { automation, enabled }) => {
-      // A draft of the same file continues from the file as it is now.
+  const toggle = useAutomationToggle(slug, {
+    // A draft of the same file continues from the file as it is now.
+    onSaved: (automation, revision) =>
       setDraft((d) =>
         d?.name === automation.name && d.revision === automation.revision
-          ? { ...d, revision: result.revision }
+          ? { ...d, revision }
           : d,
-      );
-      await client.invalidateQueries({ queryKey: ["automations"] });
-      saved(
-        result.ok,
-        result.errors.length,
-        `${automation.displayName} ${enabled ? "enabled" : "disabled"}`,
-      );
-    },
-    onError: (error) =>
-      toast({
-        title: "The switch was not saved",
-        description: error.message,
-        tone: "bad",
-        // A file changed on disk: load it as it is now, then switch again.
-        ...(error instanceof ApiError &&
-          error.code === "conflict" && {
-            action: { label: "Reload", onClick: () => reload.mutate() },
-          }),
-      }),
+      ),
+    onReload: () => reload.mutate(),
   });
   const save = useMutation({
     mutationFn: ({
@@ -159,24 +135,8 @@ function Automations() {
     setDraft(null);
     save.reset();
   };
-  const enabledSwitch = (
-    automation: Automation,
-    label = `${automation.displayName} enabled`,
-  ) => (
-    <input
-      type="checkbox"
-      role="switch"
-      aria-checked={automation.enabled}
-      aria-label={label}
-      checked={automation.enabled}
-      disabled={!automation.revision || toggle.isPending}
-      title={automation.revision ? undefined : "Not defined in a file"}
-      className="automation-switch"
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) =>
-        toggle.mutate({ automation, enabled: event.target.checked })
-      }
-    />
+  const enabledSwitch = (automation: Automation, label?: string) => (
+    <AutomationSwitch automation={automation} toggle={toggle} label={label} />
   );
   return (
     <section>
