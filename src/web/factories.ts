@@ -2,8 +2,12 @@ import { z } from "zod";
 
 import type { Repositories } from "../db.ts";
 import type { Commit } from "../definition/history.ts";
-import { FACTORY_DESCRIPTION_MAX } from "../definition/write.ts";
+import {
+  type AgentDefaultsForm,
+  FACTORY_DESCRIPTION_MAX,
+} from "../definition/write.ts";
 import { SPEC_RULES } from "../domain/policy.ts";
+import type { IntakeDto } from "./automations.ts";
 import { FOLDER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
@@ -41,8 +45,18 @@ export function readFactorySettings(
     backupDir: string;
     /** Whether the applied definition has a SPEC agent; null when none is loaded. */
     specAgent: boolean | null;
-    /** factory.yaml on disk, as the Description row edits it; null when unreadable. */
-    factoryFile: { description: string | null; revision: string } | null;
+    /** factory.yaml on disk, as the Description and Agent defaults rows edit it; null when unreadable. */
+    factoryFile: {
+      description: string | null;
+      agentDefaults: AgentDefaultsForm;
+      revision: string;
+    } | null;
+    /** The runners of the applied definition; a sandbox runs agents in a container. */
+    runners: { name: string; sandbox: boolean }[];
+    /** The reach lines a saved edit adds that wait for approval; null when none waits. */
+    pendingReach: string[] | null;
+    /** Where work comes from: manual intake, then the intake automations. */
+    intake: IntakeDto[];
   },
 ) {
   const { factories, factorySettings } = repos;
@@ -59,6 +73,9 @@ export function readFactorySettings(
     activeItems: factories.activeItems(record.id),
     backupDir: running.backupDir,
     factoryFile: running.factoryFile,
+    runners: running.runners,
+    pendingReach: running.pendingReach,
+    intake: running.intake,
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
     ...pauseState(factorySettings.pausedAt(record.id)),
@@ -115,18 +132,42 @@ export const limitsInput = z.strictObject({
   gateVerification: z.boolean().nullable().optional(),
 });
 
-/** A factory.yaml edit from Settings; an empty description removes the key. */
-export const factoryFileInput = z.strictObject({
-  revision: z.string().regex(/^[0-9a-f]{64}$/),
-  description: z
-    .string()
-    .trim()
-    .max(
-      FACTORY_DESCRIPTION_MAX,
-      `must be at most ${FACTORY_DESCRIPTION_MAX} characters`,
-    )
-    .nullable(),
-});
+/**
+ * A factory.yaml edit from Settings; an omitted key keeps its value, an empty
+ * description removes the key. agentDefaults takes the ranges of the agent
+ * editor; the loader validates the values (harness, runner, idle timeout).
+ */
+export const factoryFileInput = z
+  .strictObject({
+    revision: z.string().regex(/^[0-9a-f]{64}$/),
+    description: z
+      .string()
+      .trim()
+      .max(
+        FACTORY_DESCRIPTION_MAX,
+        `must be at most ${FACTORY_DESCRIPTION_MAX} characters`,
+      )
+      .nullable()
+      .optional(),
+    agentDefaults: z
+      .strictObject({
+        harness: z.string().trim().min(1).max(100).nullable().optional(),
+        model: z.string().trim().min(1).max(200).nullable().optional(),
+        effort: z
+          .string()
+          .regex(/^[a-z]{1,20}$/, "Effort is a lowercase word such as high")
+          .nullable()
+          .optional(),
+        runner: z.string().trim().min(1).max(100).nullable().optional(),
+        idleTimeoutMinutes: z.number().int().nullable().optional(),
+      })
+      .optional(),
+  })
+  .refine(
+    (edit) =>
+      edit.description !== undefined || edit.agentDefaults !== undefined,
+    "Send a description or agentDefaults",
+  );
 
 export const moveInput = z.object({
   repo: z.string().regex(REPO, "repo must be owner/name"),

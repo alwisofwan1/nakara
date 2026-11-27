@@ -288,6 +288,11 @@
     @apply absolute z-10 mt-xs grid w-full rounded-control border border-line bg-bg text-small;
     max-width: 28rem;
   }
+  /* At the end of a Settings row: the panel opens leftward from the button. */
+  .agent-defaults .model-picker {
+    right: 0;
+    width: min(28rem, calc(100vw - 2rem));
+  }
   .model-picker-list {
     @apply grid overflow-y-auto p-xs;
     max-height: 18rem;

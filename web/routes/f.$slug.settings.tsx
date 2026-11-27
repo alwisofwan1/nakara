@@ -28,7 +28,13 @@ import {
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
 import { AdoptDefinition } from "../features/definition/adopt-definition";
+import { AgentDefaultsSection } from "../features/settings/agent-defaults-section";
+import {
+  type RevisionQueue,
+  revisionQueue,
+} from "../features/settings/agent-defaults";
 import { HandoffGateRow } from "../features/settings/handoff-gate-row";
+import { WhereWorkComesFrom } from "../features/settings/intake-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
   AVATAR_COLORS,
@@ -50,6 +56,15 @@ type Settings = Awaited<
 function SettingsPage() {
   const { slug } = Route.useParams();
   const { data } = useSuspenseQuery(factorySettingsQuery(slug));
+  // Every editor of factory.yaml saves through one queue, so none sends a
+  // revision another one, or a stale refetch, has fallen behind.
+  const [factoryFile] = useState(() =>
+    revisionQueue(data.factoryFile?.revision ?? ""),
+  );
+  const loaded = data.factoryFile?.revision;
+  useEffect(() => {
+    if (loaded) factoryFile.seen(loaded);
+  }, [factoryFile, loaded]);
   return (
     <section className="grid gap-xl">
       <div className="grid gap-xs">
@@ -60,8 +75,18 @@ function SettingsPage() {
           change.
         </p>
       </div>
-      <General settings={data} />
+      <General settings={data} queue={factoryFile} />
+      <WhereWorkComesFrom slug={data.slug} intake={data.intake} />
       <Limits settings={data} />
+      {data.factoryFile && (
+        <AgentDefaultsSection
+          slug={slug}
+          file={data.factoryFile}
+          runners={data.runners}
+          pendingReach={data.pendingReach}
+          queue={factoryFile}
+        />
+      )}
       <Definition settings={data} />
       <DangerZone settings={data} />
     </section>
@@ -69,7 +94,13 @@ function SettingsPage() {
 }
 
 /** Rename: the display name and avatar. */
-function General({ settings }: { settings: Settings }) {
+function General({
+  settings,
+  queue,
+}: {
+  settings: Settings;
+  queue: RevisionQueue;
+}) {
   const client = useQueryClient();
   const toast = useToast();
   const [name, setName] = useState(settings.name);
@@ -140,7 +171,11 @@ function General({ settings }: { settings: Settings }) {
           </label>
         </div>
         {settings.factoryFile && (
-          <Description slug={settings.slug} file={settings.factoryFile} />
+          <Description
+            slug={settings.slug}
+            file={settings.factoryFile}
+            queue={queue}
+          />
         )}
         <fieldset className="grid gap-sm">
           <legend className="field-label mb-sm">Avatar color</legend>
@@ -201,9 +236,12 @@ function General({ settings }: { settings: Settings }) {
 function Description({
   slug,
   file,
+  queue,
 }: {
   slug: string;
   file: NonNullable<Settings["factoryFile"]>;
+  /** The page's one queue of factory.yaml saves. */
+  queue: RevisionQueue;
 }) {
   const client = useQueryClient();
   const toast = useToast();
@@ -216,35 +254,18 @@ function Description({
     committed.current = saved;
     setValue(saved);
   }, [saved]);
-  // The revision of factory.yaml as last loaded or written. A save takes it
-  // from the previous save's response, so back-to-back saves never send the
-  // revision the page loaded with while the settings refetch.
-  const revision = useRef(file.revision);
-  useEffect(() => {
-    revision.current = file.revision;
-  }, [file.revision]);
   // Saves run one after another, each with the revision the one before wrote.
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const save = useMutation({
-    mutationFn: (description: string) => {
-      const run = queue.current.then(async () => {
-        const result = await saveFactoryFile(slug, {
-          revision: revision.current,
-          description,
-        });
-        revision.current = result.revision;
-        return result;
-      });
-      queue.current = run.catch(() => {});
-      return run;
-    },
+    mutationFn: (description: string) =>
+      queue.run((revision) => saveFactoryFile(slug, { revision, description })),
     onSuccess: (result, description) => {
       client.setQueryData(
         factorySettingsQuery(slug).queryKey,
         (current) =>
           current && {
             ...current,
-            factoryFile: {
+            factoryFile: current.factoryFile && {
+              ...current.factoryFile,
               description: description || null,
               revision: result.revision,
             },

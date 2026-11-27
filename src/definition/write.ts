@@ -16,7 +16,16 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { isMap, isScalar, parseDocument, stringify } from "yaml";
+import {
+  Document,
+  isCollection,
+  isMap,
+  isScalar,
+  parseDocument,
+  stringify,
+  type YAMLMap,
+  type YAMLSeq,
+} from "yaml";
 
 import type { AgentType } from "../domain/policy.ts";
 import { parseCron } from "../intake/schedule.ts";
@@ -204,34 +213,65 @@ export function serializeMarkdown(
   return eol === "\n" ? out : out.replaceAll("\n", eol);
 }
 
+/** A harness, model and reasoning effort, written together. */
+interface ModelChoice {
+  harness: string | null;
+  model: string | null;
+  effort: string | null;
+}
+
+/**
+ * Write `choice` under the map at `at`, keeping the schema's either/or: a
+ * harness writes `harness:` and removes the `model` shorthand, no harness
+ * writes the shorthand and removes `harness`. `harness` is the current value,
+ * so keys the form does not edit (auth) are kept, or refused rather than lost.
+ */
+function putModel(
+  put: Put,
+  at: string[],
+  harness: unknown,
+  choice: ModelChoice,
+  /** Names the shorthand and the file in the refusal. */
+  shorthand: string,
+  file: string,
+): void {
+  if (choice.harness) {
+    put([...at, "model"], null);
+    put([...at, "harness", "type"], choice.harness);
+    put([...at, "harness", "model"], choice.model || null);
+    put([...at, "harness", "reasoningLevel"], choice.effort || null);
+    return;
+  }
+  if (choice.effort)
+    throw new Error(
+      "harness: an effort needs an explicit harness; choose one, or clear the effort",
+    );
+  const extra =
+    harness && typeof harness === "object" && !Array.isArray(harness)
+      ? Object.keys(harness).filter(
+          (k) => k !== "type" && k !== "model" && k !== "reasoningLevel",
+        )
+      : [];
+  if (extra.length)
+    throw new Error(
+      `harness: ${shorthand} would drop ${extra.join(", ")}; keep an explicit harness or remove ${extra.length > 1 ? "these keys" : "this key"} from ${file} first`,
+    );
+  put([...at, "harness"], null);
+  put([...at, "model"], choice.model || null);
+}
+
 /** Apply `edit` to the text of an agent.md; see serializeMarkdown for what is kept. */
 export function serializeAgent(text: string, edit: AgentEdit): string {
   return serializeMarkdown(text, edit.prompt, (put, current) => {
     put(["description"], edit.description || null);
-    if (edit.harness) {
-      put(["model"], null);
-      put(["harness", "type"], edit.harness);
-      put(["harness", "model"], edit.model || null);
-      put(["harness", "reasoningLevel"], edit.effort || null);
-    } else {
-      if (edit.effort)
-        throw new Error(
-          "harness: an effort needs an explicit harness; choose one, or clear the effort",
-        );
-      const harness = current().harness;
-      const extra =
-        harness && typeof harness === "object" && !Array.isArray(harness)
-          ? Object.keys(harness).filter(
-              (k) => k !== "type" && k !== "model" && k !== "reasoningLevel",
-            )
-          : [];
-      if (extra.length)
-        throw new Error(
-          `harness: the Default harness would drop ${extra.join(", ")}; keep an explicit harness or remove ${extra.length > 1 ? "these keys" : "this key"} from agent.md first`,
-        );
-      put(["harness"], null);
-      put(["model"], edit.model || null);
-    }
+    putModel(
+      put,
+      [],
+      current().harness,
+      edit,
+      "the Default harness",
+      "agent.md",
+    );
     put(["runner"], edit.runner || null);
     put(["spawnableBy"], edit.spawnableBy);
     put(["idleTimeoutMinutes"], edit.idleTimeoutMinutes);
@@ -261,25 +301,47 @@ export const FACTORY_FILE = "factory.yaml";
 /** The longest factory description Settings accepts. */
 export const FACTORY_DESCRIPTION_MAX = 500;
 
+/** The everyday agentDefaults of factory.yaml; an omitted key keeps its value, null removes it. */
+export interface AgentDefaultsEdit {
+  /**
+   * With `model` and `effort`, one choice written by putModel: when `harness`
+   * or `model` is given, an omitted one of the three is null. Exactly one of
+   * `harness` and `model` stays, as the schema requires.
+   */
+  harness?: string | null | undefined;
+  model?: string | null | undefined;
+  effort?: string | null | undefined;
+  /** Null removes it, so agents run on the host. */
+  runner?: string | null | undefined;
+  /** Null removes it, so agents wait the built-in 60 minutes. */
+  idleTimeoutMinutes?: number | null | undefined;
+}
+
 /** The editable settings of factory.yaml; an omitted key keeps its value. */
 export interface FactoryEdit {
   /** Null or blank removes `description`. */
   description?: string | null | undefined;
+  /** `secrets`, `mcpServers` and any other key of agentDefaults are kept. */
+  agentDefaults?: AgentDefaultsEdit | undefined;
 }
+
+/** A yaml value as the loader sees it; the document keeps integers as BigInt. */
+const plain = (value: unknown): unknown =>
+  typeof value === "bigint" ? Number(value) : value;
 
 /**
  * Apply `edit` to the text of factory.yaml. Values, key order, unknown keys and
- * comments are kept, though a changed file is re-serialized, so its formatting
- * (flow style spacing) may be normalized; an edit that changes nothing returns
- * the text as it was.
+ * comments are kept, and so is the text of one-line flow collections the edit
+ * leaves alone, though a changed file is re-serialized, so other formatting
+ * may be normalized; an edit that changes nothing returns the text as it was.
  */
 export function serializeFactory(text: string, edit: FactoryEdit): string {
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
   // BigInt keeps long integers (e.g. Slack IDs) exact on re-serialization.
-  const doc = parseDocument(text.replaceAll("\r\n", "\n"), {
-    intAsBigInt: true,
-  });
+  const lf = text.replaceAll("\r\n", "\n");
+  const doc = parseDocument(lf, { intAsBigInt: true });
   if (doc.errors[0]) throw new Error(doc.errors[0].message);
+  const keepFlows = flowText(doc, lf);
   let changed = false;
   if (edit.description !== undefined) {
     const next = edit.description?.trim() || null;
@@ -300,28 +362,153 @@ export function serializeFactory(text: string, edit: FactoryEdit): string {
       changed = true;
     }
   }
+  const defaults = edit.agentDefaults;
+  if (defaults) {
+    const put: Put = (path, value) => {
+      const node = doc.getIn(path);
+      if (value === null || value === undefined) {
+        if (!doc.hasIn(path)) return;
+        doc.deleteIn(path);
+      } else {
+        if (isDeepStrictEqual(plain(node), value)) return;
+        doc.setIn(path, value);
+      }
+      changed = true;
+    };
+    const at = ["agentDefaults"];
+    if (defaults.harness !== undefined || defaults.model !== undefined) {
+      const harness = doc.getIn([...at, "harness"], true);
+      putModel(
+        put,
+        at,
+        isMap(harness) ? harness.toJSON() : harness,
+        {
+          harness: defaults.harness ?? null,
+          model: defaults.model ?? null,
+          effort: defaults.effort ?? null,
+        },
+        "a model without a harness",
+        FACTORY_FILE,
+      );
+    } else if (defaults.effort !== undefined)
+      throw new Error(
+        "agentDefaults: an effort is saved with its harness and model",
+      );
+    if (defaults.runner !== undefined)
+      put([...at, "runner"], defaults.runner || null);
+    if (defaults.idleTimeoutMinutes !== undefined)
+      put([...at, "idleTimeoutMinutes"], defaults.idleTimeoutMinutes);
+  }
   if (!changed) return text;
   // lineWidth 0: never fold long lines the team wrote on one line.
-  const out = doc.toString({ lineWidth: 0 });
+  const out = keepFlows(doc.toString({ lineWidth: 0 }));
   return eol === "\n" ? out : out.replaceAll("\n", eol);
 }
 
+/** One flow collection as the yaml library writes it, without its comments. */
+const flowString = (node: YAMLMap | YAMLSeq) => {
+  const bare = node.clone();
+  bare.comment = null;
+  bare.commentBefore = null;
+  return new Document(bare).toString({ lineWidth: 0 }).trimEnd();
+};
+
+type YamlKey = string | number | bigint | boolean;
+
+/** Each flow collection below `node`, outermost only, with its key path. */
+function flowNodes(
+  node: unknown,
+  path: YamlKey[] = [],
+  out: { path: YamlKey[]; node: YAMLMap | YAMLSeq }[] = [],
+) {
+  if (!isCollection(node)) return out;
+  if (node.flow) out.push({ path, node });
+  else if (isMap(node)) {
+    for (const pair of node.items)
+      if (isScalar(pair.key))
+        flowNodes(pair.value, [...path, pair.key.value as YamlKey], out);
+  } else
+    for (const [i, item] of node.items.entries())
+      flowNodes(item, [...path, i], out);
+  return out;
+}
+
 /**
- * The description and revision of factory.yaml as it is on disk, for the
- * Settings editor; null when the file cannot be read.
+ * The text of each one-line flow collection (`[a, b]`, `{ k: v }`) of `doc`,
+ * parsed from `text`. The function it returns parses the re-serialized
+ * document and, at the same key path, puts the written text back over each
+ * one whose value an edit left alone, which the yaml library would respace.
+ * Only that node's range is replaced, never matching text elsewhere.
  */
-export async function readFactoryFile(
-  root: string,
-): Promise<{ description: string | null; revision: string } | null> {
+function flowText(doc: Document, text: string) {
+  const written = flowNodes(doc.contents).flatMap(({ path, node }) => {
+    const source = node.range && text.slice(node.range[0], node.range[1]);
+    return source && !/[\n#]/.test(source)
+      ? [{ path, text: source, as: flowString(node) }]
+      : [];
+  });
+  return (out: string) => {
+    const next = parseDocument(out, { intAsBigInt: true });
+    if (next.errors.length) return out;
+    const spans = written.flatMap((was) => {
+      const node = next.getIn(was.path, true);
+      return isCollection(node) &&
+        node.flow &&
+        node.range &&
+        flowString(node) === was.as
+        ? [{ from: node.range[0], to: node.range[1], text: was.text }]
+        : [];
+    });
+    // From the end, so earlier ranges stay where they were.
+    for (const span of spans.sort((x, y) => y.from - x.from))
+      out = out.slice(0, span.from) + span.text + out.slice(span.to);
+    return out;
+  };
+}
+
+/** agentDefaults as written in factory.yaml, for the Settings form. */
+export interface AgentDefaultsForm {
+  /** Null: the `model` shorthand, or no harness at all. */
+  harness: string | null;
+  model: string | null;
+  effort: string | null;
+  runner: string | null;
+  idleTimeoutMinutes: number | null;
+}
+
+const text = (value: unknown) => (typeof value === "string" ? value : null);
+
+/**
+ * The description, agentDefaults and revision of factory.yaml as it is on
+ * disk, for the Settings editor; null when the file cannot be read.
+ */
+export async function readFactoryFile(root: string): Promise<{
+  description: string | null;
+  agentDefaults: AgentDefaultsForm;
+  revision: string;
+} | null> {
   const bytes = await readFile(join(root, FACTORY_FILE)).catch(() => null);
   if (!bytes) return null;
   const doc = parseDocument(bytes.toString("utf8"));
-  const description = doc.errors.length ? null : doc.get("description");
+  const data = doc.errors.length ? {} : (doc.toJS() ?? {});
+  const d = isRecord(data.agentDefaults) ? data.agentDefaults : {};
+  const harness = isRecord(d.harness) ? d.harness : {};
+  const idle = d.idleTimeoutMinutes;
   return {
-    description: typeof description === "string" ? description : null,
+    description: text(data.description),
+    agentDefaults: {
+      harness: text(harness.type),
+      model: text(d.harness === undefined ? d.model : harness.model),
+      effort: text(harness.reasoningLevel),
+      runner: text(d.runner),
+      idleTimeoutMinutes: typeof idle === "number" ? idle : null,
+    },
     revision: fileRevision(bytes),
   };
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const tracked = (p: string) =>
   stat(join(p, ".git")).then(
@@ -388,25 +575,80 @@ export function writeAutomation(
   );
 }
 
+/** A harness whose CLI lists its models. */
+export type ListedHarness = "claude" | "codex";
+/** The model ids each listed harness offers, as GET /models/:harness returns them. */
+export type KnownModels = Partial<Record<ListedHarness, string[]>>;
+
+/**
+ * The harness whose model list must have the model an agentDefaults edit
+ * sets, resolved as the loader does: Claude Code for `claude`, `claude-code`
+ * and the `model` shorthand, Codex for `codex`. Null when the edit sets no
+ * model, or picks a harness without a list: the shorthand's `qwen…` names the
+ * gateway's one model, and an unknown harness is the loader's error.
+ */
+export function modelListOf(
+  edit: AgentDefaultsEdit | undefined,
+): ListedHarness | null {
+  const model = edit?.model;
+  if (!model) return null;
+  const harness = edit.harness ?? null;
+  if (harness === null)
+    return model.toLowerCase().startsWith("qwen") ? null : "claude";
+  if (harness === "claude" || harness === "claude-code") return "claude";
+  return harness === "codex" ? "codex" : null;
+}
+
+/** Why the model an agentDefaults edit sets is refused, or null when it is offered. */
+function unknownModel(
+  edit: AgentDefaultsEdit | undefined,
+  models: KnownModels,
+): string | null {
+  if (edit?.model && edit.harness === "qwen")
+    return "agentDefaults.harness: qwen runs the gateway's one model; leave the model empty";
+  const list = modelListOf(edit);
+  if (!list || !edit?.model) return null;
+  const ids = models[list];
+  if (!ids)
+    return `agentDefaults.model: the ${list} model list is needed to check "${edit.model}"`;
+  return ids.includes(edit.model)
+    ? null
+    : `agentDefaults.model: "${edit.model}" is not a model ${list} offers (${ids.join(", ") || "none listed"})`;
+}
+
 /**
  * Write `edit` into factory.yaml through the yaml Document API, so comments,
  * key order and unknown keys survive; revision check, validation and swap as
- * in writeAgent.
+ * in writeAgent. A model the edit sets must be in `models` for its harness
+ * (see modelListOf); otherwise the edit is refused and nothing is written.
+ * The loader itself keeps accepting any model a file already names.
  */
 export function writeFactoryFile(
   root: string,
   edit: FactoryEdit,
   revision: string,
   defaults: ResolvedHarness,
-  beforeSwap?: () => Promise<void>,
+  options: {
+    models?: KnownModels;
+    /** Runs after validation, right before the swap; tests use it to race the file. */
+    beforeSwap?: () => Promise<void>;
+  } = {},
 ): Promise<WriteResult> {
+  const refused = unknownModel(edit.agentDefaults, options.models ?? {});
+  if (refused)
+    return Promise.resolve({
+      ok: false,
+      code: "invalid",
+      errors: [{ path: FACTORY_FILE, message: refused }],
+      warnings: [],
+    });
   return writeTextFile(
     root,
     FACTORY_FILE,
     (text) => serializeFactory(text, edit),
     revision,
     defaults,
-    beforeSwap,
+    options.beforeSwap,
   );
 }
 
