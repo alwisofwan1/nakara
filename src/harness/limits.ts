@@ -16,7 +16,8 @@
 // - The result then has `"is_error":true` and repeats that text and api_error.
 // - Claude Code 1.x printed "Claude AI usage limit reached|<epoch seconds>"
 //   as the result text instead.
-// Only those signals count: a limit text quoted by a tool, an MCP server or
+// "API Error: 429" text counts only when those fields or a rejected
+// rate_limit_event of the same run confirm it. Only those signals count: a limit text quoted by a tool, an MCP server or
 // the agent's own reply (an API's "429 Too Many Requests") is no limit of the
 // harness, and neither is stderr.
 //
@@ -50,7 +51,22 @@ export interface RateLimit {
  * API-error message or its error result: never matched anywhere else.
  */
 const CLAUDE_LIMIT =
-  /^(?:Claude AI usage limit reached\||You['’]ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b|API Error: 429\b)/i;
+  /^(?:Claude AI usage limit reached\||You['’]ve (?:hit|reached) your (?:[\w-]+ ){0,3}limit\b)/i;
+
+/**
+ * Claude Code's prefix for any API error. A failure can quote an outside 429
+ * this way ("API Error: 429 from GitHub"), so it is a limit only with the
+ * CLI's own confirmation from the same run (see LimitWatch.claude).
+ */
+const API_429 = /^API Error: 429\b/;
+
+/** The CLI's own error kinds of a refused request that mean a limit. */
+const LIMIT_ERRORS = new Set(["rate_limit", "usage_limit_reached"]);
+
+/** The CLI's own API-error fields on an event say it hit a limit. */
+const limitFields = (event: Record<string, unknown>) =>
+  LIMIT_ERRORS.has(String(event.error)) ||
+  LIMIT_ERRORS.has(String(event.api_error));
 
 /** How codex's own limit error starts, in its error or turn.failed event. */
 const CODEX_LIMIT =
@@ -159,6 +175,8 @@ export function resetFromText(text: string, now = Date.now()): string | null {
 export class LimitWatch {
   private resetAt: string | null = null;
   private message: string | null = null;
+  /** A rate_limit_event of this run said the account's limit refused a request. */
+  private rejected = false;
   /** Model output arrived that was not a limit refusal: the run did work. */
   worked = false;
 
@@ -167,8 +185,14 @@ export class LimitWatch {
     if (event.type === "result") {
       // The error result repeats the refused request's api_error and text.
       if (event.is_error !== true) return;
-      const text = typeof event.result === "string" ? event.result : "";
-      if (event.api_error === "usage_limit_reached" || isClaudeLimit(text)) {
+      const text = (
+        typeof event.result === "string" ? event.result : ""
+      ).trim();
+      if (
+        limitFields(event) ||
+        isClaudeLimit(text) ||
+        (API_429.test(text) && this.rejected)
+      ) {
         this.resetAt = resetFromText(text) ?? this.resetAt;
         this.message ??= text || "usage limit reached";
       }
@@ -177,8 +201,10 @@ export class LimitWatch {
     if (event.type === "rate_limit_event") {
       const info = event.rate_limit_info as Record<string, unknown> | undefined;
       // Only when it resets: the refused request that follows is the limit.
-      if (info?.status === "rejected")
+      if (info?.status === "rejected") {
+        this.rejected = true;
         this.resetAt = epoch(info.resetsAt) ?? this.resetAt;
+      }
       return;
     }
     if (event.type !== "assistant") return;
@@ -192,9 +218,10 @@ export class LimitWatch {
       (event.message as { model?: unknown } | undefined)?.model ===
         "<synthetic>";
     if (
-      event.error === "rate_limit" ||
-      event.api_error === "usage_limit_reached" ||
-      (synthetic && text && isClaudeLimit(text))
+      limitFields(event) ||
+      (synthetic &&
+        text &&
+        (isClaudeLimit(text) || (API_429.test(text.trim()) && this.rejected)))
     ) {
       this.resetAt =
         epoch(params?.rate_limit_info?.resetsAt) ??

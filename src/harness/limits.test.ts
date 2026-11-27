@@ -44,6 +44,8 @@ const LIMITED = [
   ["claude", "claude-usage-limit.jsonl", "2026-11-28T14:00:00.000Z"],
   ["claude", "claude-legacy-usage-limit.jsonl", "2026-11-28T14:00:00.000Z"],
   ["claude", "claude-rate-limit.jsonl", null],
+  // "API Error: 429" with no error fields, confirmed by the run's rejected rate_limit_event.
+  ["claude", "claude-rate-limit-event-429.jsonl", "2026-11-28T14:00:00.000Z"],
   ["codex", "codex-rate-limit.jsonl", null],
 ] as const;
 
@@ -83,6 +85,8 @@ test("codex's usage limit carries its reset time", async (t) => {
 for (const [harness, fixture] of [
   ["claude", "claude-ordinary-failure.jsonl"],
   ["claude", "claude-tool-quotes-limit.jsonl"],
+  // An outside 429 surfaced as the final result, with no CLI limit structure.
+  ["claude", "claude-outside-429.jsonl"],
   ["codex", "codex-ordinary-failure.jsonl"],
   ["codex", "codex-tool-quotes-limit.jsonl"],
 ] as const)
@@ -90,13 +94,16 @@ for (const [harness, fixture] of [
     const out = await replay(harness, fixture, t);
     assert.equal(out.ok, false);
     assert.equal(out.limit ?? null, null);
+    // Reported as the ordinary failure it is, not as a limit.
+    assert.doesNotMatch(out.error ?? "", /hit a rate or usage limit/);
   });
 
 test("only the CLI's own limit error counts, where its text starts", () => {
   assert.ok(isClaudeLimit("Claude AI usage limit reached|1795874400"));
   assert.ok(isClaudeLimit("You've hit your weekly limit · resets Mon 9am"));
   assert.ok(isClaudeLimit("You’ve reached your Opus limit"));
-  assert.ok(isClaudeLimit('API Error: 429 {"type":"error"}'));
+  // Claude Code's prefix for any API error: a limit only with its own confirmation (see the fixtures).
+  assert.ok(!isClaudeLimit('API Error: 429 {"type":"error"}'));
   assert.ok(!isClaudeLimit("The test failed: API Error: 429 from GitHub"));
   assert.ok(!isClaudeLimit("usage limit reached for this key"));
   assert.ok(!isClaudeLimit("429 Too Many Requests"));

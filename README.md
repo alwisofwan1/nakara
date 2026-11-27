@@ -605,7 +605,10 @@ What this version supports:
 A subscription's usage limit or a rate limit makes a harness refuse runs until
 it resets. Nakara recognises that only in the CLI's own limit signal (claude's
 `rate_limit_event`, its 429 `rate_limit`/`usage_limit_reached` API-error
-message and error result, whose text starts "You've hit your … limit";
+message and error result, whose text starts "You've hit your … limit"; an
+"API Error: 429" text counts only when those error fields or a rejected
+`rate_limit_event` of the same run confirm it, so an outside 429 such as
+"API Error: 429 from GitHub" stays an ordinary failure;
 codex's error event starting "You've hit your usage limit … try again at …"
 or "exceeded retry limit, last status: 429"), never in tool output, MCP
 errors, the agent's reply or stderr that quote such a text. The run then
