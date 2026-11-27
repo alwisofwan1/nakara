@@ -4,6 +4,7 @@ import type { Repositories } from "../db.ts";
 import type { Commit } from "../definition/history.ts";
 import { FACTORY_DESCRIPTION_MAX } from "../definition/write.ts";
 import { SPEC_RULES } from "../domain/policy.ts";
+import type { IntakeDto } from "./automations.ts";
 import { FOLDER, REPO } from "./wizard.ts";
 
 /** The registered factories the shell lists, oldest (the default) first. */
@@ -43,6 +44,8 @@ export function readFactorySettings(
     specAgent: boolean | null;
     /** factory.yaml on disk, as the Description row edits it; null when unreadable. */
     factoryFile: { description: string | null; revision: string } | null;
+    /** Where work comes from: manual intake, then the intake automations. */
+    intake: IntakeDto[];
   },
 ) {
   const { factories, factorySettings } = repos;
@@ -59,6 +62,7 @@ export function readFactorySettings(
     activeItems: factories.activeItems(record.id),
     backupDir: running.backupDir,
     factoryFile: running.factoryFile,
+    intake: running.intake,
     // What new Work Items copy; null-saved limits show their default.
     limits: factorySettings.settings(record.id),
     ...pauseState(factorySettings.pausedAt(record.id)),

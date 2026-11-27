@@ -29,6 +29,7 @@ import {
   cronPreviewInput,
   newAutomationInput,
   readAutomations,
+  readIntake,
 } from "./automations.ts";
 import {
   type CheckResultDto,
@@ -666,6 +667,10 @@ function createFactoryApi(
               ? hasSpecAgent(factory.definition)
               : null,
             factoryFile: await readFactoryFile(factory.config.definitionDir),
+            intake: readIntake(
+              factory.definition?.automations ?? [],
+              factory.definition?.label,
+            ),
           },
         );
         if (!dto)

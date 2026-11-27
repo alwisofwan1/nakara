@@ -28,6 +28,7 @@ import {
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
 import { AdoptDefinition } from "../features/definition/adopt-definition";
+import { WhereWorkComesFrom } from "../features/settings/intake-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
   AVATAR_COLORS,
@@ -60,6 +61,7 @@ function SettingsPage() {
         </p>
       </div>
       <General settings={data} />
+      <WhereWorkComesFrom slug={data.slug} intake={data.intake} />
       <Limits settings={data} />
       <Definition settings={data} />
       <DangerZone settings={data} />
