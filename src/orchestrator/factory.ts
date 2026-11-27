@@ -403,10 +403,25 @@ export class Factory {
 
   // ---------- intake & human input ----------
 
-  /** Create a work item in this factory (the first factory when standalone) and wake the foreman. */
-  createWorkItem(input: Parameters<Store["createItem"]>[0]): WorkItem {
+  /**
+   * Create a work item in this factory (the first factory when standalone) and
+   * wake the foreman. An item created by an Automation keeps a copy of its
+   * instructions and display name (ADR-0006), so deleting, editing or
+   * recreating the Automation leaves the item's request alone.
+   */
+  createWorkItem(
+    input: Omit<
+      Parameters<Store["createItem"]>[0],
+      "automationInstructions" | "automationDisplayName"
+    >,
+  ): WorkItem {
+    const automation = input.automation
+      ? this.definition?.automations.find((a) => a.name === input.automation)
+      : undefined;
     const item = this.store.createItem({
       ...input,
+      automationInstructions: automation?.instructions ?? null,
+      automationDisplayName: automation?.frontmatter.displayName ?? null,
       factoryId: input.factoryId ?? this.record?.id,
     });
     this.store.addEvent(item.id, "work_received", {

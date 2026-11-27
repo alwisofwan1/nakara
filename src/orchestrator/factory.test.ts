@@ -342,6 +342,77 @@ test("a definition reload emits one status change only when it succeeds, and alw
   assert.deepEqual(events.slice(2), [{ type: "definition", id: "global" }]);
 });
 
+test("an item keeps its Automation's instructions after the Automation is deleted, edited or recreated", async (t) => {
+  const store = new Store(":memory:", { defaultBudgetUsd: 15 });
+  t.after(() => store.db.close());
+  const factory = new Factory(store, loadConfig({}));
+  factory.pump = async () => {};
+  assert.ok((await factory.reloadDefinition()).ok);
+  // biome-ignore lint/style/noNonNullAssertion: Loaded above.
+  const def = factory.definition!;
+  const name = "weekly-health-check";
+  // biome-ignore lint/style/noNonNullAssertion: The bundled factory has it.
+  const original = def.automations.find((a) => a.name === name)!;
+  const heading = `### Automation \`${name}\` (Weekly health check)\n${original.instructions}`;
+  const created = factory.createWorkItem({
+    title: "Health",
+    request: "Check",
+    source: "schedule",
+    automation: name,
+  });
+  // An item from before migration 020: no copy, so the lookup by name.
+  const legacy = store.createItem({
+    title: "Old",
+    request: "Check",
+    source: "schedule",
+    automation: name,
+  });
+  store.addEvent(legacy.id, "work_received", { automation: name });
+  const plain = factory.createWorkItem({
+    title: "Plain",
+    request: "Fix",
+    source: "manual",
+  });
+  const render = (id: number) => {
+    // biome-ignore lint/style/noNonNullAssertion: Created above.
+    const item = store.item(id)!;
+    // biome-ignore lint/style/noNonNullAssertion: Added on creation.
+    const event = store.events(id).find((e) => e.kind === "work_received")!;
+    // biome-ignore lint/style/noNonNullAssertion: Loaded above.
+    return renderEvent(event, item, factory.definition!);
+  };
+  assert.ok(render(created.id).endsWith(heading));
+  assert.ok(render(legacy.id).endsWith(heading));
+  assert.doesNotMatch(render(plain.id), /### Automation/);
+
+  // Edited: the item keeps the instructions it was created with.
+  def.automations = def.automations.map((a) =>
+    a.name === name ? { ...a, instructions: "Edited." } : a,
+  );
+  assert.ok(render(created.id).endsWith(heading));
+  assert.ok(render(legacy.id).endsWith("Edited."));
+
+  // Deleted: the section is not dropped.
+  def.automations = def.automations.filter((a) => a.name !== name);
+  assert.ok(render(created.id).endsWith(heading));
+  assert.doesNotMatch(render(legacy.id), /### Automation/);
+
+  // Recreated under the same name: still the original instructions.
+  def.automations = [
+    ...def.automations,
+    {
+      ...original,
+      instructions: "Something else.",
+      frontmatter: { ...original.frontmatter, displayName: null },
+    },
+  ];
+  assert.ok(render(created.id).endsWith(heading));
+  assert.ok(
+    render(legacy.id).endsWith(`### Automation \`${name}\`\nSomething else.`),
+  );
+  assert.doesNotMatch(render(plain.id), /### Automation/);
+});
+
 test("stopping a running agent run cancels it and wakes the foreman, not the item", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "nakara-stop-run-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
