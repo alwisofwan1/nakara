@@ -1200,12 +1200,10 @@ test("migration 023 does not hand out an id that a child row or kv key shows was
       ('run-limit-told:9', '50'), ('reflect:11:event', '3'), ('ci-wait:8', '1'),
       ('slack:thread:C1:1.2', '12'), ('tg:m:99', '{"item":13}'), ('tg:cursor', '500');
     INSERT INTO events (item_id, kind, payload, created_at) VALUES (10, 'work_received', '{}', 't');`);
-  migrate(db, { defaultBudgetUsd: 15 });
+  migrate(db, { defaultBudgetUsd: 15, migrations: MIGRATIONS.slice(0, 23) });
   const seq = Object.fromEntries(
     db
-      .prepare(
-        "SELECT name, seq FROM sqlite_sequence WHERE name IN ('factories', 'work_items') ORDER BY name",
-      )
+      .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
       .all()
       .map((r) => [r.name, r.seq]),
   );
@@ -1251,13 +1249,11 @@ test("migration 023 ignores malformed and oversized ids in kv keys and values, a
   insert.run("slack:thread:C1:10", "21");
   insert.run("tg:m:11", '{"item":22}');
 
-  migrate(db, { defaultBudgetUsd: 15 });
-  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  migrate(db, { defaultBudgetUsd: 15, migrations: MIGRATIONS.slice(0, 23) });
+  assert.equal(schemaVersion(db), 23);
   const seq = Object.fromEntries(
     db
-      .prepare(
-        "SELECT name, seq FROM sqlite_sequence WHERE name IN ('factories', 'work_items') ORDER BY name",
-      )
+      .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
       .all()
       .map((r) => [r.name, r.seq]),
   );
@@ -1303,8 +1299,12 @@ test("migration 023 down restores version 22 with every row, and up again", (t) 
   assert.deepEqual(schema(db), freshSchema());
 });
 
-/** A database at version 23 whose newest proof (2) was posted to Slack, then deleted. */
-function withFreedEvidence(path: string, cursor: string) {
+/**
+ * A database at version 23 whose factory 2, with the newest messages,
+ * approvals, events and runs, was deleted, and whose newest evidence was
+ * deleted by hand.
+ */
+function withFreedRows(path: string) {
   const db = new DatabaseSync(path);
   migrate(db, {
     defaultBudgetUsd: 15,
@@ -1312,148 +1312,152 @@ function withFreedEvidence(path: string, cursor: string) {
     migrations: MIGRATIONS.slice(0, 23),
   });
   db.exec(`
+    INSERT INTO factories (slug, name, avatar_color, foreman_handle, definition_dir, definition_mode, created_at)
+      VALUES ('two', 'two', '#000', 'two', '/f', 'managed', 't');
     INSERT INTO work_items (title, request, source, budget_usd, created_at, updated_at, factory_id)
-      VALUES ('a', 'r', 'manual', 5, 't', 't', 1);
+      VALUES ('a', 'r', 'manual', 5, 't', 't', 1), ('b', 'r', 'manual', 5, 't', 't', 2);
     INSERT INTO runs (item_id, role, agent, agent_type, harness, status, input, started_at)
-      VALUES (1, 'implement', 'implement', 'agent', 'claude', 'succeeded', '{}', 't');
-    INSERT INTO evidence (item_id, run_id, criterion, file, created_at)
-      VALUES (1, 1, 'a', 'a.png', 't'), (1, 1, 'b', 'b.png', 't');
-    DELETE FROM evidence WHERE id = 2;`);
-  db.prepare("INSERT INTO kv (key, value) VALUES ('slack:evidence', ?)").run(
-    cursor,
-  );
+      VALUES (1, 'implement', 'implement', 'agent', 'claude', 'succeeded', '{}', 't'),
+             (2, 'implement', 'implement', 'agent', 'claude', 'succeeded', '{}', 't');
+    INSERT INTO approvals (item_id, kind, prompt, created_at) VALUES (1, 'question', 'q', 't'), (2, 'spec', 's', 't');
+    INSERT INTO messages (item_id, author, body, created_at) VALUES (1, 'factory', 'm', 't'), (2, 'factory', 'm', 't');
+    INSERT INTO events (item_id, kind, payload, created_at) VALUES (1, 'work_received', '{}', 't'), (2, 'work_received', '{}', 't');
+    INSERT INTO evidence (item_id, run_id, criterion, file, created_at) VALUES (1, 1, 'c', 'a.png', 't'), (1, 1, 'c', 'b.png', 't');
+    INSERT INTO learnings (item_id, run_id, lines, mistake, created_at) VALUES (1, 1, 'l', 'm', 't');
+    DELETE FROM evidence WHERE id = 2;
+    DELETE FROM approvals WHERE item_id = 2;
+    DELETE FROM messages WHERE item_id = 2;
+    DELETE FROM events WHERE item_id = 2;
+    DELETE FROM runs WHERE item_id = 2;
+    DELETE FROM stage_transitions WHERE item_id = 2;
+    DELETE FROM work_items WHERE factory_id = 2;
+    DELETE FROM factories WHERE id = 2;`);
   return db;
 }
 
-const addProof = (db: DatabaseSync) =>
-  Number(
-    db
-      .prepare(
-        "INSERT INTO evidence (item_id, run_id, criterion, file, created_at) VALUES (1, 1, 'c', 'c.png', 't')",
-      )
-      .run().lastInsertRowid,
+const freedRows = (db: DatabaseSync) =>
+  Object.fromEntries(
+    ["messages", "approvals", "evidence", "runs", "events", "learnings"].map(
+      (t) => [t, db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all()],
+    ),
   );
 
-const evidenceRows = (db: DatabaseSync) =>
-  db.prepare("SELECT * FROM evidence ORDER BY id").all();
+const sequences = (db: DatabaseSync) =>
+  Object.fromEntries(
+    db
+      .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+      .all()
+      .map((r) => [r.name, r.seq]),
+  );
 
-test("migration 024 keeps every proof and starts new evidence ids after the Slack cursor", (t) => {
+test("migration 024 keeps every row, id and foreign key, and a deleted row's id is not handed out again", (t) => {
   const dir = tempDir(t);
-  const db = withFreedEvidence(join(dir, "nakara.db"), "2");
+  const db = withFreedRows(join(dir, "nakara.db"));
   t.after(() => db.close());
-  const before = evidenceRows(db);
+  const before = freedRows(db);
   migrate(db, { defaultBudgetUsd: 15 });
   assert.equal(schemaVersion(db), MIGRATIONS.length);
-  assert.deepEqual(evidenceRows(db), before);
-  assert.deepEqual(schema(db), freshSchema());
+  assert.deepEqual(freedRows(db), before);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-  // Without 024, SQLite would hand out 2 again, at the cursor.
-  assert.equal(addProof(db), 3);
-});
-
-test("migration 024 makes the Slack cursor canonical, so Slack posts the next proof whatever the cursor held", (t) => {
-  const dir = tempDir(t);
-  // [stored cursor, what kv holds after the migration]; undefined: deleted.
-  const cases: [string, string | undefined][] = [
-    ["007", "7"],
-    [" 3 ", "3"],
-    ["1e1", "10"],
-    ["5.0", "5"],
-    ["", undefined],
-    ["abc", undefined],
-    ["-1", undefined],
-    ["2.5", undefined],
-    ["99999999999999999999", undefined],
-  ];
-  for (const [i, [cursor, canonical]] of cases.entries()) {
-    const path = join(dir, `nakara-${i}.db`);
-    withFreedEvidence(path, cursor).close();
-    const store = new Store(path, { defaultBudgetUsd: 15 });
-    t.after(() => store.close());
-    assert.equal(store.getKv("slack:evidence"), canonical, cursor);
-    // What Slack does: seed a missing cursor at start, then read it.
-    if (!store.getKv("slack:evidence"))
-      store.setKv("slack:evidence", String(store.lastEvidenceId()));
-    const read = Number(store.getKv("slack:evidence") ?? 0);
-    store.addEvidence(1, 1, [{ criterion: "c", file: "c.png" }]);
-    const added = store.lastEvidenceId();
-    assert.ok(added > Math.max(read, 1), cursor);
-    assert.deepEqual(
-      store.evidenceAfter(read).map((e) => e.id),
-      [added],
-      cursor,
+  assert.deepEqual(schema(db), freshSchema());
+  // evidence and learnings still refer to runs.
+  for (const child of ["evidence", "learnings"])
+    assert.ok(
+      db
+        .prepare(`PRAGMA foreign_key_list(${child})`)
+        .all()
+        .some((k) => k.table === "runs"),
     );
-  }
+  // Nothing in the database shows the deleted rows, so each starts after its rows.
+  assert.deepEqual(sequences(db), {
+    approvals: 1,
+    events: 1,
+    evidence: 1,
+    factories: 2,
+    messages: 1,
+    runs: 1,
+    work_items: 2,
+  });
+  // From now on a delete frees no id.
+  const store = new Store(join(dir, "nakara.db"), { defaultBudgetUsd: 15 });
+  t.after(() => store.close());
+  store.addMessage(1, "factory", "n");
+  assert.equal(store.lastMessageId(), 2);
+  store.db.exec("DELETE FROM messages WHERE id = 2");
+  store.addMessage(1, "factory", "n");
+  assert.equal(store.lastMessageId(), 3);
+  const approval = store.addApproval(1, "question", "q", null);
+  store.db.prepare("DELETE FROM approvals WHERE id = ?").run(approval);
+  assert.equal(store.addApproval(1, "question", "q", null), approval + 1);
 });
 
-test("migration 024 down restores version 23 with every proof, and up again", (t) => {
+test("migration 024 starts each sequence after the ids the relay cursors, kv keys and child rows show were used", (t) => {
   const dir = tempDir(t);
-  const db = withFreedEvidence(join(dir, "nakara.db"), "2");
+  const db = withFreedRows(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    INSERT INTO kv (key, value) VALUES
+      ('slack:cursor', '40'), ('tg:cursor', '41'), ('slack:evidence', '30'),
+      ('tg:approval:7', '100'), ('slack:approval:8', '1'), ('slack:reject:9', '1'),
+      ('reflect:1:event', '12'), ('reflect:factory:1:unchecked', '99');
+    INSERT INTO evidence (item_id, run_id, criterion, file, created_at) VALUES (1, 20, 'c', 'c.png', 't');
+    INSERT INTO learnings (item_id, run_id, lines, mistake, status, created_at) VALUES (1, 21, 'l', 'm', 'approved', 't');`);
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.deepEqual(sequences(db), {
+    approvals: 9,
+    events: 12,
+    evidence: 30,
+    factories: 2,
+    messages: 41,
+    runs: 21,
+    work_items: 2,
+  });
+});
+
+test("migration 024 ignores malformed and oversized relay cursors, and completes", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedRows(join(dir, "nakara.db"));
+  t.after(() => db.close());
+  db.exec(`INSERT INTO kv (key, value) VALUES
+    ('slack:cursor', '99999999999999999999999'), ('tg:cursor', '12abc'),
+    ('slack:evidence', '9223372036854775807'), ('tg:approval:x1', '1'),
+    ('reflect:1:event', '-4')`);
+  migrate(db, { defaultBudgetUsd: 15 });
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  assert.deepEqual(sequences(db), {
+    approvals: 1,
+    events: 1,
+    evidence: 1,
+    factories: 2,
+    messages: 1,
+    runs: 1,
+    work_items: 2,
+  });
+});
+
+test("migration 024 down restores version 23 with every row, and up again", (t) => {
+  const dir = tempDir(t);
+  const db = withFreedRows(join(dir, "nakara.db"));
   t.after(() => db.close());
   const version23 = schema(db);
+  db.exec("INSERT INTO kv (key, value) VALUES ('tg:cursor', '5')");
   migrate(db, { defaultBudgetUsd: 15 });
-  addProof(db);
-  const before = evidenceRows(db);
+  db.exec(
+    "INSERT INTO messages (item_id, author, body, created_at) VALUES (1, 'factory', 'm', 't')",
+  );
+  const before = freedRows(db);
+  assert.equal(before.messages?.at(-1)?.id, 6);
 
   assert.equal(migrateDown(db, 23), 23);
   assert.deepEqual(schema(db), version23);
-  assert.deepEqual(evidenceRows(db), before);
+  assert.deepEqual(freedRows(db), before);
   assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-  assert.equal(
-    db
-      .prepare(
-        "SELECT COUNT(*) AS n FROM sqlite_sequence WHERE name = 'evidence'",
-      )
-      .get()?.n,
-    0,
-  );
+  // 023's tables keep their sequences; 024's are gone with their AUTOINCREMENT.
+  assert.deepEqual(sequences(db), { factories: 2, work_items: 2 });
 
   migrate(db, { defaultBudgetUsd: 15 });
-  assert.deepEqual(evidenceRows(db), before);
+  assert.deepEqual(freedRows(db), before);
   assert.deepEqual(schema(db), freshSchema());
-});
-
-test("proof added after deleting the factory with the newest proof is still after the Slack cursor", (t) => {
-  const store = new Store(":memory:", {
-    defaultBudgetUsd: 15,
-    factory: stubFactorySeed,
-  });
-  t.after(() => store.close());
-  const proof = (itemId: number) => {
-    const run = store.createRun({
-      item_id: itemId,
-      role: "agent",
-      agent: "implement",
-      agent_type: "IMPLEMENT",
-      harness: "claude",
-      model: null,
-      input: "Implement",
-      session_id: null,
-      status: "succeeded",
-    });
-    store.addEvidence(itemId, run.id, [{ criterion: "c", file: "p.png" }]);
-  };
-  const kept = store.createItem({ title: "k", request: "r", source: "manual" });
-  const gone = store.repos.factories.createFactory({
-    ...stubFactorySeed(),
-    slug: "gone",
-  });
-  const closed = store.createItem({
-    title: "c",
-    request: "r",
-    source: "manual",
-    factoryId: gone.id,
-  });
-  store.updateItem(closed.id, { stage: "complete", status: "done" });
-  proof(closed.id);
-  // Slack posted it.
-  const cursor = store.lastEvidenceId();
-  store.setKv("slack:evidence", String(cursor));
-
-  store.repos.factories.deleteFactory(gone.id);
-  proof(kept.id);
-  assert.deepEqual(
-    store.evidenceAfter(cursor).map((e) => e.item_id),
-    [kept.id],
-  );
+  assert.equal(sequences(db).messages, 6);
 });

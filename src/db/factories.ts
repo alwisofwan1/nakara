@@ -127,9 +127,9 @@ export class FactoryRepository extends Repository {
    * modules own), its saved limits, its repository status (`repo:<slug>`,
    * see runner/repos.ts), its approved and pending reach (`reach:<id>` and
    * `reach:<id>:…`, see DefinitionService) and its unchecked corrections.
-   * Ids are not reused (migration 023), but nothing keyed by them outlives
-   * them. The caller refuses a factory with active items; the foreign keys
-   * refuse what is left behind.
+   * Ids are not reused (migrations 023 and 024), but nothing keyed by them
+   * outlives them. The caller refuses a factory with active items; the
+   * foreign keys refuse what is left behind.
    *
    * Every lesson proposal goes, approved ones too: an approved lesson was
    * already written into the factory's own skills/learnings/SKILL.md, and
