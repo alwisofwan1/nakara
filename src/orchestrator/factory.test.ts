@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 
 import { loadConfig } from "../config.ts";
-import { type ItemEvent, RESUME_INPUT, Store } from "../db.ts";
+import { type ItemEvent, type NeedsYou, RESUME_INPUT, Store } from "../db.ts";
 import { GithubPoller } from "../intake/github.ts";
 import { Logger } from "../telemetry/log.ts";
 import { Metrics } from "../telemetry/metrics.ts";
@@ -1643,7 +1643,18 @@ for (const harness of ["qwen", "codex"] as const) {
     assert.equal(store.item(id)?.cost_usd, 0);
 
     // The limit holds: the next turn does not start and the item pauses.
+    const needsYou: NeedsYou[] = [];
+    store.attention.on("needsYou", (e) => needsYou.push(e));
     await factory.foremanTurn(id);
+    await new Promise((r) => setImmediate(r));
+    // The Operator is told once, with the reason.
+    assert.deepEqual(needsYou, [
+      {
+        itemId: id,
+        event: "paused",
+        what: "Run limit reached (2 of 2 runs, foreman turns and failed runs included). Press Raise run limit on the work item to continue, or cancel it.",
+      },
+    ]);
     assert.equal((await readFile(join(dir, "turns"), "utf8")).trim(), "turn");
     const paused = store.item(id);
     assert.equal(paused?.status, "paused");

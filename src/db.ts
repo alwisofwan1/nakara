@@ -25,7 +25,7 @@ import { KvRepository } from "./db/kv.ts";
 import { LearningRepository } from "./db/learnings.ts";
 import { MessageRepository } from "./db/messages.ts";
 import { migrate } from "./db/migrate.ts";
-import { type ChangeEvent, Notifier } from "./db/notifier.ts";
+import { type ChangeEvent, type NeedsYou, Notifier } from "./db/notifier.ts";
 import { transaction } from "./db/repository.ts";
 import { RunRepository } from "./db/runs.ts";
 
@@ -46,7 +46,7 @@ export type {
 export { policyState, type WorkItem } from "./db/items.ts";
 
 export type { Message } from "./db/messages.ts";
-export type { ChangeEvent, ChangeType } from "./db/notifier.ts";
+export type { ChangeEvent, ChangeType, NeedsYou } from "./db/notifier.ts";
 export {
   RESUME_INPUT,
   type Run,
@@ -101,11 +101,18 @@ export class Store {
   private readonly lock: DatabaseSync | undefined;
   private readonly notifier = new Notifier();
   readonly changes = this.notifier.changes;
+  /** Work Items that need the Operator, for the Slack bridge's notifications. */
+  readonly attention = this.notifier.attention;
   readonly repos: Repositories;
 
   /** Tell live clients that a resource changed. */
   notify(event: ChangeEvent): void {
     this.notifier.notify(event);
+  }
+
+  /** Tell the Operator's channels that a Work Item needs them; never throws. */
+  needsYou(event: NeedsYou): void {
+    this.notifier.needsYou(event);
   }
 
   /**

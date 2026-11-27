@@ -375,8 +375,14 @@ export class ItemRepository extends Repository {
     this.changed(id);
   }
 
+  /** Add spend to the item; the spend that takes it to its Budget tells the Operator. */
   addCost(id: number, usd: number): void {
     if (usd <= 0) return;
+    // A finished item's last spend asks nothing of the Operator.
+    const before = this.get<Pick<WorkItem, "cost_usd" | "budget_usd">>(
+      "SELECT cost_usd, budget_usd FROM work_items WHERE id = ? AND stage NOT IN ('complete', 'cancelled')",
+      id,
+    );
     this.run(
       "UPDATE work_items SET cost_usd = cost_usd + ?, updated_at = ? WHERE id = ?",
       usd,
@@ -384,5 +390,15 @@ export class ItemRepository extends Repository {
       id,
     );
     this.changed(id);
+    if (
+      before &&
+      before.cost_usd < before.budget_usd &&
+      before.cost_usd + usd >= before.budget_usd
+    )
+      this.notifier.needsYou({
+        itemId: id,
+        event: "paused",
+        what: `It reached its Budget ($${(before.cost_usd + usd).toFixed(2)} of $${before.budget_usd.toFixed(2)}). Raise the budget to continue, or cancel it.`,
+      });
   }
 }

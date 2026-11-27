@@ -24,7 +24,11 @@ import { fileRevision } from "../definition/load.ts";
 import { GithubPoller } from "../intake/github.ts";
 import type { Factory } from "../orchestrator/factory.ts";
 import { FactoryRegistry } from "../orchestrator/registry.ts";
-import { limitsInput, readFactorySettings } from "./factories.ts";
+import {
+  limitsInput,
+  readFactorySettings,
+  type SlackChannels,
+} from "./factories.ts";
 import { createApp } from "./test-support.ts";
 
 const exec = promisify(execFile);
@@ -85,6 +89,7 @@ test("factory settings: the record, its definition and its active items", () => 
       runners: [{ name: "docker", sandbox: true }],
       pendingReach: null,
       intake: [],
+      slackConnected: true,
     }),
     {
       slug: "harbor",
@@ -125,6 +130,11 @@ test("factory settings: the record, its definition and its active items", () => 
       },
       paused: false,
       pausedAt: null,
+      notifications: {
+        slackChannel: null,
+        notify: { approvals: true, handoff: true, paused: true },
+        slackConnected: true,
+      },
       definition: {
         mode: "managed",
         dir: "/data/factories/harbor",
@@ -147,6 +157,7 @@ test("factory settings: the record, its definition and its active items", () => 
       runners: [],
       pendingReach: null,
       intake: [],
+      slackConnected: false,
     })?.isDefault,
     true,
   );
@@ -162,6 +173,7 @@ test("factory settings: the record, its definition and its active items", () => 
       runners: [],
       pendingReach: null,
       intake: [],
+      slackConnected: false,
     }),
     undefined,
   );
@@ -172,7 +184,10 @@ test("factory settings: the record, its definition and its active items", () => 
  * Nakara-managed under the data directory. Both start from the bundled
  * definition; Harbor claims other repositories so both load.
  */
-async function setup(t: { after: (fn: () => Promise<void>) => void }) {
+async function setup(
+  t: { after: (fn: () => Promise<void>) => void },
+  slack: SlackChannels | null = null,
+) {
   const dataDir = await mkdtemp(join(tmpdir(), "nakara-settings-"));
   t.after(() => rm(dataDir, { recursive: true, force: true }));
   const defaultDir = join(dataDir, "default");
@@ -262,6 +277,7 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }) {
         return { ok: false, stdout: "", stderr: "unexpected gh call" };
       },
     },
+    slack,
   );
   const call = async (method: string, path: string, json?: unknown) => {
     const response = await app.request(
@@ -1600,4 +1616,76 @@ test("where work comes from: a GitHub pull request trigger is not intake, so the
     intake.some((e: { provider: string }) => e.provider === "github"),
     false,
   );
+});
+
+test("notifications: the Slack channel and switches, on when unsaved; a #name is saved as its channel ID", async (t) => {
+  const resolved: string[] = [];
+  const { store, harbor, call } = await setup(t, {
+    resolveChannel: async (channel) => {
+      resolved.push(channel);
+      return channel === "#releases" ? "C0RELEASES" : channel;
+    },
+  });
+  const harborId = harbor.record?.id ?? 0;
+  const before = await call("GET", "f/harbor/settings");
+  assert.deepEqual(before.body.notifications, {
+    slackChannel: null,
+    notify: { approvals: true, handoff: true, paused: true },
+    slackConnected: true,
+  });
+
+  const saved = await call("PUT", "f/harbor/settings/notifications", {
+    slackChannel: " #releases ",
+    handoff: false,
+  });
+  assert.deepEqual(saved, {
+    status: 200,
+    body: {
+      slackChannel: "C0RELEASES",
+      notify: { approvals: true, handoff: false, paused: true },
+    },
+  });
+  assert.deepEqual(resolved, ["#releases"]);
+  // An unknown name is stored as given.
+  const unknown = await call("PUT", "f/harbor/settings/notifications", {
+    slackChannel: "#nowhere",
+  });
+  assert.equal(unknown.body.slackChannel, "#nowhere");
+  // An omitted key stays; null turns a switch back on, "" clears the channel.
+  const reset = await call("PUT", "f/harbor/settings/notifications", {
+    slackChannel: "",
+    handoff: null,
+    paused: false,
+  });
+  assert.deepEqual(reset.body, {
+    slackChannel: null,
+    notify: { approvals: true, handoff: true, paused: false },
+  });
+  assert.deepEqual(
+    store.repos.factorySettings.notifications(harborId),
+    reset.body,
+  );
+  // Another factory keeps its own.
+  assert.equal(
+    store.repos.factorySettings.notifications(
+      store.repos.factories.defaultFactory().id,
+    ).notify.paused,
+    true,
+  );
+  const invalid = await call("PUT", "f/harbor/settings/notifications", {
+    slackChannel: "#no spaces",
+  });
+  assert.equal(invalid.status, 400);
+});
+
+test("notifications: without the Slack bridge the channel is saved as given and Settings says Slack is not connected", async (t) => {
+  const { call } = await setup(t);
+  assert.equal(
+    (await call("GET", "f/harbor/settings")).body.notifications.slackConnected,
+    false,
+  );
+  const saved = await call("PUT", "f/harbor/settings/notifications", {
+    slackChannel: "#releases",
+  });
+  assert.equal(saved.body.slackChannel, "#releases");
 });

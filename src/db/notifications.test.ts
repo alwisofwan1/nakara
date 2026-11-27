@@ -113,7 +113,13 @@ const READS = [
   "approvedLearnings",
   "getKv",
 ];
-const INFRASTRUCTURE = ["constructor", "notify", "close", "transaction"];
+const INFRASTRUCTURE = [
+  "constructor",
+  "notify",
+  "needsYou",
+  "close",
+  "transaction",
+];
 
 test("every Store method is classified as a write or a read", () => {
   assert.deepEqual(

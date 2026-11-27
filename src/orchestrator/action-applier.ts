@@ -288,6 +288,11 @@ export class ActionApplier {
       "factory",
       `Ready for your review and merge: ${action.prUrl}${headSha ? ` (checks passed on ${short(headSha)})` : ""}\n\n${action.summary}`,
     );
+    this.store.needsYou({
+      itemId: item.id,
+      event: "handoff",
+      what: `The Pull Request is ready to merge: ${action.prUrl}`,
+    });
     return true;
   }
 
@@ -319,6 +324,11 @@ export class ActionApplier {
     // The foreman's last turn used the last run: nothing more can start.
     if (runsUsed(policyState(item))) {
       this.pause(item, runLimitPause(item));
+      this.store.needsYou({
+        itemId: item.id,
+        event: "paused",
+        what: runLimitPause(item),
+      });
       return;
     }
     this.log.info("item.stalled", { item_id: item.id });
