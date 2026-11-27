@@ -211,7 +211,9 @@ export function feedbackPrompt(prUrl: string, read: PrFeedbackRead): string {
     })),
     ...read.comments.map((r) => ({ head: `Comment by @${r.login}`, r })),
   ];
-  const bodies = entries.map(({ r }) => clip(r.body, 10_000));
+  const bodies = entries.map(({ r }) =>
+    r.body.trim() ? clip(r.body, 10_000) : "(no text after /nakara)",
+  );
   // Longer than any backtick run in the feedback, so it cannot close the fence.
   const fence = "`".repeat(
     Math.max(
@@ -363,20 +365,24 @@ export class PrFeedbackPoller {
             throw new Error(`cannot read the write access of ${login}`);
           return writer === true;
         };
-        // The feedback a remark carries, or null. Nakara's own logins write
-        // feedback only after /nakara: with a shared identity, a writer's
-        // comment and an agent's reply come from the same login.
-        const feedback = async (r: PrRemark): Promise<string | null> => {
+        // The feedback a remark carries, or null when it is none. Nakara's
+        // own logins write feedback only after /nakara: with a shared
+        // identity, a writer's comment and an agent's reply come from the
+        // same login. The prefix alone decides: a bare /nakara is feedback
+        // too, with no text after it.
+        const feedback = async (
+          r: PrRemark,
+        ): Promise<{ body: string } | null> => {
           const login = r.login ?? "";
           const triggered = afterTrigger(r.body);
-          if (own.has(login) && !triggered) return null;
+          if (own.has(login) && triggered === null) return null;
           if (!(await writes(login))) return null;
-          return triggered ?? r.body;
+          return { body: triggered ?? r.body };
         };
         for (const kind of KINDS)
           for (const r of found[kind]) {
-            const body = await feedback(r);
-            if (body) fresh[kind].push({ ...r, body });
+            const counted = await feedback(r);
+            if (counted) fresh[kind].push({ ...r, body: counted.body });
           }
       }
     }

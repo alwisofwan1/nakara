@@ -404,3 +404,47 @@ test("with separate identities, a writer's comment counts with or without /nakar
     [["alice", "Rename the flag."]],
   );
 });
+
+test("a bare /nakara, with nothing or only whitespace after it, is feedback too", async (t) => {
+  const { github, poll, feedback } = await feedbackPoller(t);
+  // Shared identity: the agent token acts as the Operator, a writer.
+  const shared = {
+    users: { "agent-secret": "operator" },
+    permissions: { operator: "admin", alice: "write" },
+  };
+  await github(shared);
+  await poll();
+  await github({
+    ...shared,
+    reviews: [
+      { id: 11, login: "operator", state: "COMMENTED", body: "/nakara" },
+    ],
+    comments: [
+      { id: 31, login: "operator", body: "  /NAKARA  \n\t " },
+      // Separate identity: a writer's bare trigger counts the same way.
+      { id: 32, login: "alice", body: "/nakara" },
+    ],
+  });
+  await poll();
+  const events = feedback();
+  assert.equal(events.length, 1);
+  const payload = JSON.parse(events[0]?.payload ?? "{}");
+  assert.deepEqual(
+    payload.reviews.map((r: { author: string; body: string }) => [
+      r.author,
+      r.body,
+    ]),
+    [["operator", ""]],
+  );
+  assert.deepEqual(
+    payload.comments.map((r: { author: string; body: string }) => [
+      r.author,
+      r.body,
+    ]),
+    [
+      ["operator", ""],
+      ["alice", ""],
+    ],
+  );
+  assert.match(payload.prompt, /\(no text after \/nakara\)/);
+});

@@ -53,7 +53,7 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
     login, or a token of a writer's own account, such as your fine-grained
     token): a review or comment from that login counts only when its body
     starts with `/nakara` (any case, after leading whitespace). The text after
-    `/nakara` is the feedback. GitHub does not let you request changes on a
+    `/nakara` is the feedback; a bare `/nakara` counts too. GitHub does not let you request changes on a
     pull request opened under your own login, so here feedback arrives as
     comments, inline comments or "Comment" reviews that start with `/nakara`.
 
@@ -730,7 +730,10 @@ the agent's runner:
   Issues read and Metadata read, which the permissions above already grant.
   The `gh` on an agent's and the foreman's PATH is Nakara's guard
   (`run-<id>.gh` beside the run's log), which refuses a comment, review or API
-  body that starts with `/nakara` and runs the real `gh` otherwise; in a
+  body that starts with `/nakara` and runs the real `gh` otherwise. For
+  `gh api graphql` it decodes every string in the query as GitHub does
+  (escapes, `\u` escapes, block strings) and checks every variable, and it
+  refuses a query whose strings it cannot decode; in a
   container it runs with the image's `node`. It guards `gh` only: an agent
   that posts through another client (`curl` with `GH_TOKEN`, the real `gh`
   by its full path, or a GitHub MCP server in its definition) is not stopped,
