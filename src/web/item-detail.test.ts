@@ -437,6 +437,35 @@ test("item detail: properties carry links, budget and counters", () => {
   assert.equal(dto.closed, false);
 });
 
+test("item detail: the Handoff Gate lists the checks the item copied, met or not by its latest runs", () => {
+  // An item whose factory added no checks lists none.
+  assert.deepEqual(fixture().handoffGate, []);
+
+  const dto = fixture((store, item) => {
+    store.updateItem(item.id, {
+      stage: "handoff",
+      pr_url: PR,
+      gate_checks: '["review","verification"]',
+    });
+    addRun(store, item, "review", "REVIEW", "succeeded", {
+      review_verdict: "accepted",
+    });
+    addRun(store, item, "verify", "VERIFY", "succeeded");
+    addRun(store, item, "verify", "VERIFY", "cancelled");
+  });
+  const expected = [
+    { check: "review", label: "Review accepted", met: true },
+    // The latest verify run was cancelled, so the earlier success no longer counts.
+    { check: "verification", label: "Verification passed", met: false },
+  ];
+  assert.deepEqual(dto.handoffGate, expected);
+  assert.equal(dto.card.kind, "pr");
+  assert.deepEqual(
+    dto.card.kind === "pr" ? dto.card.gateChecks : null,
+    expected,
+  );
+});
+
 test("item detail: an unknown item has no detail", () => {
   const store = new Store(":memory:", { defaultBudgetUsd: 15 });
   assert.equal(readItem(store, 99), undefined);

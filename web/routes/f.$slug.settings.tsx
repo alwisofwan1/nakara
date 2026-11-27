@@ -28,6 +28,7 @@ import {
 import { Icon } from "../ui/icons";
 import { useToast } from "../app/toast";
 import { AdoptDefinition } from "../features/definition/adopt-definition";
+import { HandoffGateRow } from "../features/settings/handoff-gate-row";
 import { SpecRuleRow } from "../features/settings/spec-rule-row";
 import {
   AVATAR_COLORS,
@@ -389,6 +390,10 @@ function Limits({ settings }: { settings: Settings }) {
         slug={settings.slug}
         rule={settings.limits.specRule}
         specAgent={settings.definition.specAgent}
+      />
+      <HandoffGateRow
+        slug={settings.slug}
+        checks={settings.limits.gateChecks}
       />
     </section>
   );

@@ -25,6 +25,7 @@ import { factoryPaused } from "./migrations/017-factory-paused.ts";
 import { factoryArchive } from "./migrations/018-factory-archive.ts";
 import { specRule } from "./migrations/019-spec-rule.ts";
 import { automationSnapshot } from "./migrations/020-automation-snapshot.ts";
+import { handoffGateChecks } from "./migrations/021-handoff-gate-checks.ts";
 
 export interface MigrationContext {
   /** The budget of items that predate per-item budgets. */
@@ -73,6 +74,7 @@ export const MIGRATIONS: readonly Migration[] = [
   factoryArchive,
   specRule,
   automationSnapshot,
+  handoffGateChecks,
 ];
 
 export const schemaVersion = (db: DatabaseSync): number =>

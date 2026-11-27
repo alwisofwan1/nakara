@@ -41,6 +41,54 @@ export class SpecRequestRefused extends Error {
   }
 }
 
+/**
+ * The checks a factory may add to its Handoff Gate (ADR-0006 rules 1 and 2):
+ * an accepted Review, a passed Verification. The fixed part, the work pushed
+ * to the Pull Request and its CI passing, is not among them: it cannot be
+ * turned off.
+ */
+export const GATE_CHECKS = ["review", "verification"] as const;
+export type GateCheck = (typeof GATE_CHECKS)[number];
+
+/** How the Operator and the Foreman read each gate check. */
+export const GATE_CHECK_LABEL: Record<GateCheck, string> = {
+  review: "Review accepted",
+  verification: "Verification passed",
+};
+
+/** The gate checks a Work Item snapshotted, parsed from its JSON column; unknown entries are dropped. */
+export const parseGateChecks = (json: string): GateCheck[] => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  return Array.isArray(parsed)
+    ? GATE_CHECKS.filter((check) => parsed.includes(check))
+    : [];
+};
+
+/** Whether each of the item's gate checks is met by the evidence its runs left. */
+export const gateCheckMet = (
+  state: Pick<PolicyState, "reviewAccepted" | "verificationPassed">,
+  check: GateCheck,
+): boolean =>
+  check === "review" ? state.reviewAccepted : state.verificationPassed;
+
+/**
+ * Why the checks the item's factory added to its Handoff Gate are not met;
+ * null when they are (or it added none).
+ */
+const gateCheckMissing = (state: PolicyState): string | null => {
+  const missing = state.gateChecks.find((check) => !gateCheckMet(state, check));
+  if (missing === "review")
+    return "This factory's Handoff Gate also needs an accepted Review. Dispatch review first.";
+  if (missing === "verification")
+    return "This factory's Handoff Gate also needs a passed Verification. Dispatch verification first.";
+  return null;
+};
+
 export const AGENT_TYPES = [
   "FOREMAN",
   "TRIAGE",
@@ -80,6 +128,12 @@ export interface PolicyState {
    * dispatch. Absent counts as present: only the loaded definition can tell.
    */
   specAgent?: boolean;
+  /** The checks the work item's factory added to its Handoff Gate, snapshotted at creation. */
+  gateChecks: readonly GateCheck[];
+  /** Whether the item's latest REVIEW run reported the verdict accepted; filled by the caller. */
+  reviewAccepted: boolean;
+  /** Whether the item's latest VERIFY run succeeded; filled by the caller. */
+  verificationPassed: boolean;
   prUrl: string | null;
   prMerged: boolean;
   ciFailed?: boolean;
@@ -235,6 +289,10 @@ export function check(
       // Code built without the Spec the rule asks for is not handed off either.
       const missing = specMissing(state);
       if (missing) return refuse(missing);
+      // The factory's own checks come on top of the fixed part (pushed + CI),
+      // which the Pull Request gate evaluates whatever they are.
+      const added = gateCheckMissing(state);
+      if (added) return refuse(added);
       if (!action.prUrl)
         return refuse("handoff requires the pull request URL.");
       return {
@@ -499,4 +557,27 @@ export function decideSpec(state: PolicyState, approved: boolean): PolicyState {
   return approved
     ? { ...state, specState: "approved", status: "active" }
     : { ...state, specState: "drafting", status: "active" };
+}
+
+/**
+ * The evidence for the Handoff Gate checks a factory can add, from the item's
+ * runs in start order. Review accepted: the latest REVIEW run reported the
+ * verdict accepted. Verification passed: the latest VERIFY run succeeded; a
+ * verify run reports no pass/fail verdict of its own, so finishing without an
+ * error is the only signal there is.
+ */
+export function gateEvidence(
+  runs: readonly {
+    role: string;
+    agent_type: string;
+    status: string;
+    review_verdict: string | null;
+  }[],
+): Pick<PolicyState, "reviewAccepted" | "verificationPassed"> {
+  const latest = (type: AgentType) =>
+    runs.findLast((r) => r.role === "agent" && r.agent_type === type);
+  return {
+    reviewAccepted: latest("REVIEW")?.review_verdict === "accepted",
+    verificationPassed: latest("VERIFY")?.status === "succeeded",
+  };
 }

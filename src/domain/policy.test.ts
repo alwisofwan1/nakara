@@ -6,6 +6,9 @@ import {
   check,
   checkRetry,
   decideSpec,
+  GATE_CHECKS,
+  gateEvidence,
+  parseGateChecks,
   raiseBudget,
   raiseRunLimit,
   RUN_STEP,
@@ -30,6 +33,9 @@ const fresh: PolicyState = {
   maxRevisions: 2,
   specRule: "when_asked",
   specRequested: false,
+  gateChecks: [],
+  reviewAccepted: false,
+  verificationPassed: false,
   prUrl: null,
   prMerged: false,
 };
@@ -210,6 +216,115 @@ test("handoff waits for the Spec the rule asks for", () => {
     false,
   );
   assert.equal(apply(fresh, handoff).stage, "handoff");
+});
+
+test("handoff needs the checks the factory added to its Handoff Gate, judged on the latest runs", () => {
+  const handoff: Action = {
+    type: "handoff",
+    prUrl: "https://github.com/o/r/pull/2",
+    summary: "s",
+  };
+  const review = (verdict: string | null, status = "succeeded") => ({
+    role: "agent",
+    agent_type: "REVIEW",
+    status,
+    review_verdict: verdict,
+  });
+  const verify = (status: string) => ({
+    role: "agent",
+    agent_type: "VERIFY",
+    status,
+    review_verdict: null,
+  });
+  const gated = (
+    gateChecks: PolicyState["gateChecks"],
+    runs: Parameters<typeof gateEvidence>[0],
+  ): PolicyState => ({ ...fresh, gateChecks, ...gateEvidence(runs) });
+
+  // Review accepted: refused on "revision needed", allowed on "accepted".
+  assert.deepEqual(
+    check(gated(["review"], [review("revision_needed")]), handoff, repos),
+    {
+      ok: false,
+      reason:
+        "This factory's Handoff Gate also needs an accepted Review. Dispatch review first.",
+    },
+  );
+  assert.equal(check(gated(["review"], []), handoff, repos).ok, false);
+  assert.equal(
+    apply(gated(["review"], [review("accepted")]), handoff).stage,
+    "handoff",
+  );
+  // Only the latest review counts: a later one asking for revision undoes the acceptance.
+  assert.equal(
+    check(
+      gated(["review"], [review("accepted"), review("revision_needed")]),
+      handoff,
+      repos,
+    ).ok,
+    false,
+  );
+
+  // Verification passed: refused when the latest verify run failed, allowed when it succeeded.
+  assert.deepEqual(
+    check(gated(["verification"], [verify("failed")]), handoff, repos),
+    {
+      ok: false,
+      reason:
+        "This factory's Handoff Gate also needs a passed Verification. Dispatch verification first.",
+    },
+  );
+  assert.equal(check(gated(["verification"], []), handoff, repos).ok, false);
+  assert.equal(
+    check(
+      gated(["verification"], [verify("succeeded"), verify("running")]),
+      handoff,
+      repos,
+    ).ok,
+    false,
+  );
+  assert.equal(
+    apply(gated(["verification"], [verify("succeeded")]), handoff).stage,
+    "handoff",
+  );
+
+  // Both checks: each one is needed.
+  assert.equal(
+    check(
+      gated(["review", "verification"], [review("accepted")]),
+      handoff,
+      repos,
+    ).ok,
+    false,
+  );
+  assert.equal(
+    apply(
+      gated(
+        ["review", "verification"],
+        [review("accepted"), verify("succeeded")],
+      ),
+      handoff,
+    ).stage,
+    "handoff",
+  );
+  // A factory that added none hands off as before, whatever the runs.
+  assert.equal(
+    apply(gated([], [review("revision_needed"), verify("failed")]), handoff)
+      .stage,
+    "handoff",
+  );
+});
+
+test("an item's gate checks are read from its snapshot; CI is never one of them", () => {
+  assert.deepEqual(parseGateChecks("[]"), []);
+  assert.deepEqual(parseGateChecks('["verification","review"]'), [
+    "review",
+    "verification",
+  ]);
+  // CI and pushed are fixed: a snapshot naming them adds nothing and removes nothing.
+  assert.deepEqual(parseGateChecks('["ci","pushed","review"]'), ["review"]);
+  assert.deepEqual(parseGateChecks("not json"), []);
+  assert.deepEqual([...GATE_CHECKS], ["review", "verification"]);
 });
 
 test("review runs once and needs a PR", () => {

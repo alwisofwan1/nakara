@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { loadConfig } from "../config.ts";
 import { HARNESS_FALLBACK, loadDefinition } from "../definition/load.ts";
-import type { ItemEvent, WorkItem } from "../db.ts";
+import type { ItemEvent, Run, WorkItem } from "../db.ts";
 import type { Workspace } from "../runner/workspace.ts";
 import { foremanSystemPrompt, renderEvent, renderState } from "./prompts.ts";
 
@@ -91,4 +91,47 @@ test("the Foreman's item header states the item's Spec rule next to its issue an
   assert.deepEqual(header("when_asked", 1), [
     "- spec rule: when asked, and this item asked for one (write a Spec first: implement waits until the spec agent's Spec is approved)",
   ]);
+});
+
+test("the Foreman's item header states the item's Handoff Gate and which added checks are met", () => {
+  const header = (gate_checks: string, runs: Partial<Run>[]) =>
+    renderState(
+      {
+        stage: "building",
+        spec_state: "none",
+        review_count: 1,
+        max_reviews: 1,
+        revision_count: 0,
+        max_revisions: 2,
+        issue_url: null,
+        pr_url: null,
+        pr_merged: 0,
+        cost_usd: 0,
+        budget_usd: 15,
+        run_count: 0,
+        max_runs: 50,
+        spec_rule: "when_asked",
+        spec_requested: 0,
+        gate_checks,
+      } as WorkItem,
+      runs as Run[],
+    )
+      .split("\n")
+      .filter((line) => line.startsWith("- handoff gate: "));
+  assert.deepEqual(header("[]", []), [
+    "- handoff gate: pushed to the PR and CI passes",
+  ]);
+  assert.deepEqual(
+    header('["review","verification"]', [
+      {
+        role: "agent",
+        agent_type: "REVIEW",
+        status: "succeeded",
+        review_verdict: "accepted",
+      },
+    ]),
+    [
+      "- handoff gate: pushed to the PR and CI passes, plus Review accepted (met), Verification passed (not met)",
+    ],
+  );
 });

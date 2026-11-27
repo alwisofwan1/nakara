@@ -10,6 +10,7 @@ import {
   BudgetBar,
   CancelButton,
   FormError,
+  GateChecks,
   type Item,
   Linkified,
   money,
@@ -358,6 +359,15 @@ function Properties({ item, now: page }: { item: Item; now: number }) {
           </Prop>
         </dl>
       </section>
+      {item.handoffGate.length > 0 && (
+        <section className="flex flex-col gap-sm">
+          <h2 className="pane-heading">Handoff Gate</h2>
+          <p className="text-small text-muted">
+            Pushed to the PR and CI passes, plus:
+          </p>
+          <GateChecks checks={item.handoffGate} />
+        </section>
+      )}
       <section className="flex flex-col gap-sm">
         <h2 className="pane-heading">Runs</h2>
         {item.runs.length === 0 ? (
