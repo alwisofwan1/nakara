@@ -28,6 +28,7 @@ import {
 } from "../domain/pushed.ts";
 import { run } from "../runner/workspace.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
+import { samePr } from "../domain/pr-url.ts";
 import { prFeedbackOpen } from "./pr-feedback.ts";
 import { clearVerify, latestVerify, verifyPolicy } from "./verify.ts";
 
@@ -116,7 +117,8 @@ export class PullRequestGate {
    * Re-recording the same PR changes nothing, so its merge is reported once.
    */
   record(itemId: number, prUrl: string): void {
-    if (this.store.item(itemId)?.pr_url === prUrl) return;
+    // The same PR in another spelling (a trailing slash, other casing) is not a new PR.
+    if (samePr(this.store.item(itemId)?.pr_url, prUrl)) return;
     this.store.transaction(() => {
       this.store.updateItem(itemId, { pr_url: prUrl, pr_merged: 0 });
       this.store.setKv(WAIT + itemId, "");
@@ -137,7 +139,7 @@ export class PullRequestGate {
     const result = latestVerify(this.store, itemId);
     if (!result || result.status === "passed") return;
     const prUrl = this.store.item(itemId)?.pr_url;
-    if (prUrl !== result.prUrl) {
+    if (!prUrl || !samePr(prUrl, result.prUrl)) {
       clearVerify(this.store, itemId);
       return;
     }

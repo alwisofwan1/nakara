@@ -3,6 +3,8 @@
 // and how it moves the work item. Pure: no I/O, so the MCP server and the
 // orchestrator apply the exact same rules.
 
+import { samePr } from "./pr-url.ts";
+
 export const STAGES = [
   "intake",
   "triage",
@@ -407,9 +409,14 @@ function foreignUrl(
   return null;
 }
 
-/** A different PR starts unmerged; re-recording the same PR keeps its state. */
+/**
+ * A different PR starts unmerged; re-recording the same PR, in any spelling,
+ * keeps its state and the URL first recorded.
+ */
 function withPr(state: PolicyState, prUrl: string): PolicyState {
-  return prUrl === state.prUrl ? state : { ...state, prUrl, prMerged: false };
+  return samePr(prUrl, state.prUrl)
+    ? state
+    : { ...state, prUrl, prMerged: false };
 }
 
 function checkAgentWork(

@@ -6,6 +6,7 @@
 import type { Store } from "../db.ts";
 import type { Definition } from "../definition/load.ts";
 import { DEFAULT_VERIFY_TIMEOUT_MINUTES } from "../definition/schema.ts";
+import { parsePrUrl } from "../domain/pr-url.ts";
 import { short } from "../domain/pushed.ts";
 import type { VerifyOutcome } from "../runner/verify.ts";
 
@@ -32,14 +33,12 @@ export function verifyConfig(
   runner: string | undefined;
   timeoutMs: number;
 } | null {
-  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+\/?$/.exec(
-    prUrl,
-  );
-  if (!m) return null;
+  const pr = parsePrUrl(prUrl);
+  if (!pr) return null;
   const repo = def.factory.repositories.find(
     (r) =>
-      r.owner.toLowerCase() === m[1]?.toLowerCase() &&
-      r.name.toLowerCase() === m[2]?.toLowerCase(),
+      r.owner.toLowerCase() === pr.owner.toLowerCase() &&
+      r.name.toLowerCase() === pr.name.toLowerCase(),
   );
   if (!repo?.verify?.length) return null;
   return {

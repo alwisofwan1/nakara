@@ -855,3 +855,31 @@ test("a human_feedback follow-up answers PR feedback outside the revision cap, w
     false,
   );
 });
+
+test("recording the same PR in another spelling keeps its URL and merge state; a different PR starts unmerged", () => {
+  const recorded = apply(fresh, {
+    type: "record_refs",
+    prUrl: "https://github.com/o/r/pull/1",
+  });
+  const merged = { ...recorded, prMerged: true };
+  for (const spelling of [
+    "https://github.com/o/r/pull/1/",
+    "https://github.com/O/R/pull/1",
+  ]) {
+    const again = check(
+      merged,
+      { type: "record_refs", prUrl: spelling },
+      repos,
+    );
+    assert.ok(again.ok, spelling);
+    assert.equal(again.ok && again.next.prUrl, "https://github.com/o/r/pull/1");
+    assert.equal(again.ok && again.next.prMerged, true, spelling);
+  }
+  const other = check(
+    merged,
+    { type: "record_refs", prUrl: "https://github.com/o/r/pull/2" },
+    repos,
+  );
+  assert.equal(other.ok && other.next.prUrl, "https://github.com/o/r/pull/2");
+  assert.equal(other.ok && other.next.prMerged, false);
+});
