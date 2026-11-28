@@ -12,6 +12,7 @@ import { removeWorkspace } from "../runner/workspace.ts";
 import type { ActionApplier } from "./action-applier.ts";
 import { checkFollowUp } from "./follow-up.ts";
 import { limitWait, resumeLimited } from "./limit-wait.ts";
+import { releaseUnrunVerify } from "./verify.ts";
 import { quietTelemetry, type Telemetry } from "../telemetry/metrics.ts";
 import {
   type RunControl,
@@ -89,6 +90,7 @@ export class HumanInput {
       } else {
         this.store.resolveApproval(approvalId, "answered", decision.answer);
         this.store.updateItem(item.id, { status: "active" });
+        releaseUnrunVerify(this.store, item.id);
         this.store.addEvent(item.id, "human_reply", {
           kind: "question",
           prompt: approval.prompt,
@@ -121,6 +123,8 @@ export class HumanInput {
       this.store.addMessage(itemId, "human", message);
       if (item.status === "paused" || item.status === "waiting_human")
         this.store.updateItem(itemId, { status: "active" });
+      // The Operator decided how to go on after a verify that could not run.
+      releaseUnrunVerify(this.store, itemId);
       this.store.addEvent(itemId, "human_message", { message });
     });
     this.pump();

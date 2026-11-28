@@ -28,7 +28,9 @@ import {
 } from "../domain/pushed.ts";
 import { run } from "../runner/workspace.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
+import { samePr } from "../domain/pr-url.ts";
 import { prFeedbackOpen } from "./pr-feedback.ts";
+import { clearVerify, latestVerify, verifyPolicy } from "./verify.ts";
 
 const WAIT = "ci-wait:";
 const FAILED = "ci-failed:";
@@ -73,6 +75,7 @@ export function policyFor(store: Store, item: WorkItem): PolicyState {
     ...policyState(item),
     ...gateEvidence(store.runs(item.id)),
     ciFailed: Boolean(store.getKv(FAILED + item.id)),
+    ...verifyPolicy(store, item.id),
     pushOnlyBranch: pushOnly.startsWith(PUSH_ONLY_AVAILABLE)
       ? pushOnly.slice(PUSH_ONLY_AVAILABLE.length)
       : null,
@@ -110,16 +113,58 @@ export class PullRequestGate {
 
   /**
    * Record the item's PR. A different PR starts fresh: not merged, and no CI
-   * wait or failure carried over from the previous PR. Re-recording the same
-   * PR changes nothing, so its merge is reported once.
+   * wait, CI failure or verify carried over from the previous PR.
+   * Re-recording the same PR changes nothing, so its merge is reported once.
    */
   record(itemId: number, prUrl: string): void {
-    if (this.store.item(itemId)?.pr_url === prUrl) return;
+    // The same PR in another spelling (a trailing slash, other casing) is not a new PR.
+    if (samePr(this.store.item(itemId)?.pr_url, prUrl)) return;
     this.store.transaction(() => {
       this.store.updateItem(itemId, { pr_url: prUrl, pr_merged: 0 });
       this.store.setKv(WAIT + itemId, "");
       this.store.setKv(FAILED + itemId, "");
       this.store.setKv(PUSH_ONLY + itemId, "");
+      clearVerify(this.store, itemId);
+    });
+  }
+
+  /**
+   * Keep the item's verify tied to its PR head: a failed or unrun verify of
+   * an older head (someone pushed since) or of another PR no longer holds
+   * review and handoff back. The head is read like handoff reads it; when
+   * it cannot be read, the result stands, so a failure is never lifted on a
+   * guess.
+   */
+  async refreshVerify(itemId: number): Promise<void> {
+    const result = latestVerify(this.store, itemId);
+    if (!result || result.status === "passed") return;
+    const prUrl = this.store.item(itemId)?.pr_url;
+    if (!prUrl || !samePr(prUrl, result.prUrl)) {
+      clearVerify(this.store, itemId);
+      return;
+    }
+    let head: string;
+    try {
+      head = (await this.io.readPrHead(prUrl)).sha;
+    } catch (error) {
+      this.log.warn("verify.head_read_failed", {
+        item_id: itemId,
+        pr_url: prUrl,
+        error,
+      });
+      return;
+    }
+    // A verify recorded while GitHub was read is not the one checked here.
+    if (
+      head === result.head ||
+      latestVerify(this.store, itemId)?.head !== result.head
+    )
+      return;
+    clearVerify(this.store, itemId);
+    this.log.info("verify.stale", {
+      item_id: itemId,
+      verified: result.head,
+      head,
     });
   }
 

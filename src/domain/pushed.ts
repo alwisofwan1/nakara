@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import type { Definition } from "../definition/load.ts";
 import { worktreeHead } from "../runner/head.ts";
+import { parsePrUrl as parsePr } from "./pr-url.ts";
 
 const exec = promisify(execFile);
 
@@ -24,12 +25,10 @@ export interface PrIO {
   onPr(prUrl: string, sha: string, head: PrHead): Promise<boolean>;
 }
 
-const PR_URL = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/;
-
 function parsePrUrl(prUrl: string) {
-  const match = PR_URL.exec(prUrl);
-  if (!match) throw new Error("Invalid GitHub pull request URL");
-  return { owner: match[1], name: match[2], number: match[3] };
+  const pr = parsePr(prUrl);
+  if (!pr) throw new Error("Invalid GitHub pull request URL");
+  return pr;
 }
 
 export const GH_PR: PrIO = {

@@ -94,6 +94,58 @@ test("a repository owner or name outside GitHub's characters is refused", async 
   }
 });
 
+test("a repository's verify commands, runner and timeout load", async () => {
+  const root = await tree({
+    "factory.yaml": FACTORY.replace(
+      "{ owner: o, name: r }",
+      "{ owner: o, name: r, verify: [npm ci, ' npm test '], runner: std, verifyTimeoutMinutes: 5 }",
+    ),
+    "runners/std.yaml":
+      "platform: { os: linux, linux: { dockerImage: ubuntu:24.04 } }\n",
+    "agents/boss/agent.md": "---\nagentType: FOREMAN\n---\nLead.",
+  });
+  const result = await loadDefinition(root, defaults);
+  assert.ok(result.ok, JSON.stringify(!result.ok && result.errors));
+  const [repo] = result.definition.factory.repositories;
+  assert.deepEqual(repo?.verify, ["npm ci", "npm test"]);
+  assert.equal(repo?.runner, "std");
+  assert.equal(repo?.verifyTimeoutMinutes, 5);
+});
+
+test("verify must be a list of at most 20 commands on a defined runner", async () => {
+  const tooMany = `[${Array.from({ length: 21 }, (_, i) => `"echo ${i}"`).join(", ")}]`;
+  for (const [verify, message] of [
+    ["npm test", /verify/],
+    ["[npm test, 3]", /verify/],
+    ["[npm test, '']", /verify command cannot be empty/],
+    [tooMany, /verify takes at most 20 commands/],
+    ["[npm test], verifyTimeoutMinutes: 0", /verifyTimeoutMinutes/],
+    ["[npm test], runner: gone", /runner "gone" is not defined/],
+    [
+      "[npm test], runner: host",
+      /runner "host" has no dockerImage; verify commands run only in a container/,
+    ],
+  ] as const) {
+    const root = await tree({
+      "factory.yaml": FACTORY.replace(
+        "{ owner: o, name: r }",
+        `{ owner: o, name: r, verify: ${verify} }`,
+      ),
+      "runners/std.yaml":
+        "platform: { os: linux, linux: { dockerImage: ubuntu:24.04 } }\n",
+      "runners/host.yaml": "description: no image\n",
+      "agents/boss/agent.md": "---\nagentType: FOREMAN\n---\nLead.",
+    });
+    const result = await loadDefinition(root, defaults);
+    assert.equal(result.ok, false, verify);
+    assert.match(
+      !result.ok ? result.errors.map((e) => `${e.message}`).join("\n") : "",
+      message,
+      verify,
+    );
+  }
+});
+
 test("egress allowlist entries must be host names or subdomain wildcards", async () => {
   const root = await tree({
     "factory.yaml": FACTORY,

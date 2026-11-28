@@ -550,6 +550,8 @@ export async function readFactoryFile(root: string): Promise<{
   agentDefaults: AgentDefaultsForm;
   /** The `owner/name` repositories the file lists, approved or not. */
   repositories: string[];
+  /** The `verify` commands of each `owner/name` that lists any; read-only in Settings. */
+  verify: Record<string, string[]>;
   revision: string;
 } | null> {
   const bytes = await readFile(join(root, FACTORY_FILE)).catch(() => null);
@@ -559,6 +561,13 @@ export async function readFactoryFile(root: string): Promise<{
   const d = isRecord(data.agentDefaults) ? data.agentDefaults : {};
   const harness = isRecord(d.harness) ? d.harness : {};
   const idle = d.idleTimeoutMinutes;
+  type Repo = { owner: string; name: string; verify?: unknown };
+  const repos: Repo[] = (
+    Array.isArray(data.repositories) ? data.repositories : []
+  ).filter(
+    (r: unknown): r is Repo =>
+      isRecord(r) && typeof r.owner === "string" && typeof r.name === "string",
+  );
   return {
     description: text(data.description),
     agentDefaults: {
@@ -568,14 +577,14 @@ export async function readFactoryFile(root: string): Promise<{
       runner: text(d.runner),
       idleTimeoutMinutes: typeof idle === "number" ? idle : null,
     },
-    repositories: (Array.isArray(data.repositories) ? data.repositories : [])
-      .filter(
-        (r: unknown): r is { owner: string; name: string } =>
-          isRecord(r) &&
-          typeof r.owner === "string" &&
-          typeof r.name === "string",
-      )
-      .map((r: { owner: string; name: string }) => `${r.owner}/${r.name}`),
+    repositories: repos.map((r) => `${r.owner}/${r.name}`),
+    verify: Object.fromEntries(
+      repos.flatMap((r) =>
+        Array.isArray(r.verify) && r.verify.length
+          ? [[`${r.owner}/${r.name}`, r.verify.map(String)]]
+          : [],
+      ),
+    ),
     revision: fileRevision(bytes),
   };
 }

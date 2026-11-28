@@ -52,6 +52,8 @@ export function readFactorySettings(
       description: string | null;
       agentDefaults: AgentDefaultsForm;
       repositories: string[];
+      /** The `verify` commands of each repository that lists any, keyed `owner/name`. */
+      verify: Record<string, string[]>;
       revision: string;
     } | null;
     /** The runners of the applied definition; a sandbox runs agents in a container. */

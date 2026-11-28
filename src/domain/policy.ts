@@ -3,6 +3,8 @@
 // and how it moves the work item. Pure: no I/O, so the MCP server and the
 // orchestrator apply the exact same rules.
 
+import { samePr } from "./pr-url.ts";
+
 export const STAGES = [
   "intake",
   "triage",
@@ -161,6 +163,17 @@ export interface PolicyState {
   prUrl: string | null;
   prMerged: boolean;
   ciFailed?: boolean;
+  /**
+   * The command that failed in the latest verify Nakara ran on the PR head
+   * (the repository's `verify` list); null or absent when it passed, or
+   * none ran.
+   */
+  verifyFailed?: string | null;
+  /**
+   * Why the latest verify could not run (no runner, a timeout), while it
+   * waits for the Operator; null or absent otherwise.
+   */
+  verifyUnavailable?: string | null;
   /**
    * The PR branch while a push-only follow_up is available: once, after a
    * handoff was refused because the work is not on the PR.
@@ -324,6 +337,8 @@ export function check(
       // which the Pull Request gate evaluates whatever they are.
       const added = gateCheckMissing(state);
       if (added) return refuse(added);
+      const verify = verifyRefusal(state, "Handoff");
+      if (verify) return refuse(verify);
       if (!action.prUrl)
         return refuse("handoff requires the pull request URL.");
       return {
@@ -394,9 +409,14 @@ function foreignUrl(
   return null;
 }
 
-/** A different PR starts unmerged; re-recording the same PR keeps its state. */
+/**
+ * A different PR starts unmerged; re-recording the same PR, in any spelling,
+ * keeps its state and the URL first recorded.
+ */
 function withPr(state: PolicyState, prUrl: string): PolicyState {
-  return prUrl === state.prUrl ? state : { ...state, prUrl, prMerged: false };
+  return samePr(prUrl, state.prUrl)
+    ? state
+    : { ...state, prUrl, prMerged: false };
 }
 
 function checkAgentWork(
@@ -466,6 +486,10 @@ function checkAgentWork(
         return refuse(
           "Review needs a pull request. Record it with record_refs first.",
         );
+      {
+        const verify = verifyRefusal(state, "Review");
+        if (verify) return refuse(verify);
+      }
       return {
         ok: true,
         next: {
@@ -490,15 +514,15 @@ function checkAgentWork(
       // Code needs the approved Spec the item or its factory asks for.
       const missing = isFollowUp ? null : specMissing(state);
       if (missing) return refuse(missing);
-      if (state.reviewCount === 0 && !state.ciFailed)
+      if (state.reviewCount === 0 && !state.ciFailed && !state.verifyFailed)
         return { ok: true, next: { ...active, stage: "building" } };
       if (!isFollowUp && BUILDS_CODE.has(action.agentType))
         return refuse(
-          "Review findings and CI failures go back to the agent that built the change: use follow_up, not a new dispatch.",
+          "Review findings, CI failures and verify failures go back to the agent that built the change: use follow_up, not a new dispatch.",
         );
       if (state.revisionCount >= state.maxRevisions)
         return refuse(
-          `Revision limit reached (${state.maxRevisions}). Ask the human how to proceed; failing CI still blocks handoff.`,
+          `Revision limit reached (${state.maxRevisions}). Ask the human how to proceed; failing CI or a failing verify still blocks handoff.`,
         );
       return {
         ok: true,
@@ -511,6 +535,21 @@ function checkAgentWork(
     }
   }
 }
+
+/**
+ * Why review or handoff waits for the latest verify on the PR head: it
+ * failed, or it could not run and the Operator decides; null otherwise.
+ */
+const verifyRefusal = (
+  state: PolicyState,
+  what: "Review" | "Handoff",
+): string | null => {
+  if (state.verifyFailed)
+    return `${what} is refused: the latest verify on the PR head failed at \`${state.verifyFailed}\`. Send the implementation agent a follow_up with the failure; it counts toward the revision cap. Nakara verifies again when that run reports success.`;
+  if (state.verifyUnavailable)
+    return `${what} is refused: the latest verify on the PR head could not run (${state.verifyUnavailable}). That is not a failure of the change; the work item waits for the Operator. End your turn.`;
+  return null;
+};
 
 const budgetSpent = (state: PolicyState) => state.costUsd >= state.budgetUsd;
 /** No run is left: neither a foreman turn nor an agent run may start. */

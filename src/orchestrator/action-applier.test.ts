@@ -20,6 +20,7 @@ import {
   mirrorBody,
 } from "./action-applier.ts";
 import { RunControl } from "./run-support.ts";
+import { recordVerify } from "./verify.ts";
 
 const item0 = (s: Store) => s.items()[0]?.id ?? 0;
 
@@ -962,4 +963,25 @@ test("PR feedback that arrives while its revision runs waits for its own follow-
   // The second succeeds: it answers only its own.
   ended(second?.id ?? 0, "succeeded");
   assert.deepEqual(await apply(answer), []);
+});
+
+test("a handoff refused for a failed verify goes through once a newer head is pushed to the PR by hand", async (t) => {
+  let head = "a".repeat(40);
+  const { store, item, apply } = setup(t, {
+    pr: { readPrHead: async () => ({ sha: head, branch: "nakara/1-x" }) },
+  });
+  store.updateItem(item.id, { pr_url: PR });
+  recordVerify(store, item.id, {
+    status: "failed",
+    commands: [{ command: "npm test", ok: false, durationMs: 1 }],
+    failed: "npm test",
+    prUrl: PR,
+    head: "a".repeat(40),
+    repo: "o/r",
+    runId: 1,
+  });
+  assert.deepEqual(await apply(handoff), []);
+  head = "b".repeat(40);
+  assert.deepEqual(await apply(handoff), [handoff]);
+  assert.equal(store.item(item.id)?.stage, "handoff");
 });

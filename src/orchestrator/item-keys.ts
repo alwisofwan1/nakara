@@ -6,6 +6,7 @@ import { ITEM_KEY_PREFIXES as GATE_KEY_PREFIXES } from "./pull-request-gate.ts";
 import { PR_FEEDBACK } from "./pr-feedback.ts";
 import { REFLECT_SEEN } from "./reflect.ts";
 import { RUN_LIMIT_TOLD } from "./run-support.ts";
+import { VERIFY } from "./verify.ts";
 
 /** The Slack thread an item was created from (intake/slack.ts). */
 export const SLACK_ITEM = "slack:item:";
@@ -17,4 +18,5 @@ export const ITEM_KV_PREFIXES: readonly string[] = [
   REFLECT_SEEN,
   PR_FEEDBACK,
   SLACK_ITEM,
+  VERIFY,
 ];

@@ -8,6 +8,7 @@ import { type RunContext, readRun } from "./runs.ts";
 const context: RunContext = {
   workDir: "/data/work",
   systemPrompt: null,
+  verifyLog: false,
   agent: (name) =>
     name === "implement"
       ? { type: "IMPLEMENT", runner: "docker · nakara-agent", docker: true }
@@ -101,6 +102,7 @@ test("readRun projects metadata, attempts and the item's other runs", () => {
       logPath: null,
       input: "Also add a test",
       systemPrompt: null,
+      verifyLog: false,
       report: null,
       error: null,
       fallback: null,
