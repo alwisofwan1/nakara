@@ -557,8 +557,10 @@ export async function loadDefinition(
       ),
     );
 
-  for (const [i, repo] of factory.repositories.entries())
-    if (repo.runner && !runners.has(repo.runner))
+  for (const [i, repo] of factory.repositories.entries()) {
+    if (!repo.runner) continue;
+    const runner = runners.get(repo.runner);
+    if (!runner)
       errors.push(
         problem(
           factoryPath,
@@ -566,6 +568,15 @@ export async function loadDefinition(
           factoryLine(["repositories", i, "runner"]),
         ),
       );
+    else if (!runner.platform?.linux?.dockerImage)
+      errors.push(
+        problem(
+          factoryPath,
+          `runner "${repo.runner}" has no dockerImage; verify commands run only in a container`,
+          factoryLine(["repositories", i, "runner"]),
+        ),
+      );
+  }
 
   const agents = new Map<string, AgentDef>();
   for (const name of await subdirs(join(root, "agents"))) {

@@ -714,12 +714,13 @@ repositories:
       - npm ci
       - npm run typecheck
       - npm test
-    runner: linux-standard      # optional; default: the implement agent's runner
+    runner: linux-standard      # optional; default: the implement agent's runner; needs a dockerImage
     verifyTimeoutMinutes: 20    # optional; all the commands together, 1-240
 ```
 
 `verify` is a list of at most 20 non-empty strings; anything else is a
-definition error, and so is a `runner` that `runners/` does not define. The
+definition error, and so is a `runner` that `runners/` does not define or
+that has no `platform.linux.dockerImage`. The
 Settings page shows each repository's commands read-only; edit them in
 `factory.yaml`.
 
@@ -729,14 +730,18 @@ Settings page shows each repository's commands read-only; edit them in
   item without a PR yet, is not verified.
 - **Where.** On the PR head commit, in a fresh checkout Nakara makes from the
   repository cache beside the item's directory (`item-<id>.verify`, removed
-  afterwards), never in the agent's clone. With a `dockerImage` the commands
-  run in a fresh container of the runner's image, behind the same egress
-  allowlist and with the same `instanceShape`; without one, on the host, as
-  the runner's agents do. They get no agent session, no agent token, no GitHub
-  token and no secrets: each command runs as `bash -lc '<command>'` in the
-  checkout, in order, and the first one that exits non-zero stops the verify.
-  A command that needs the network for packages (`npm ci`) needs its registry
-  in the runner's `egress.allow`.
+  afterwards), never in the agent's clone. Each command runs as
+  `bash -lc '<command>'` in its own fresh container of the runner's image
+  (`nakara-verify-<run>-<n>`, removed when it ends), on the runner's egress
+  network behind its allowlist and with its `instanceShape`. The container
+  sees only the checkout (read-write) and the repository cache (read-only),
+  and gets no agent session, no agent token, no GitHub token and no secrets:
+  its environment is `HOME` and the proxy variables. The commands run in
+  order and share the checkout, so `npm ci` prepares `npm test`; the first
+  one that exits non-zero stops the verify. A command that needs the network
+  for packages (`npm ci`) needs its registry in the runner's `egress.allow`.
+  Verify commands never run on the host: a runner without a `dockerImage` is
+  a verify that could not run (below).
 - **What it costs.** The commands' own time, at most `verifyTimeoutMinutes`
   (default 20), on every implementation run that reports success, follow-ups
   included. The run stays "running" until the verify ends, so it holds its
@@ -746,12 +751,18 @@ Settings page shows each repository's commands read-only; edit them in
   its output with secrets redacted as in the logs. The full output is kept
   beside the run's log (`run-<id>.verify.log`) and linked as "Verify output" on
   the run page.
-- **A failure.** While the latest verify of the item's PR failed, dispatching
+- **A failure.** While the latest verify of the PR head failed, dispatching
   or following up review and handoff are refused, naming the failing command.
   The way forward is a `follow_up` to the implementation agent, which counts
-  toward the revision cap like a CI failure; its run is verified again.
-- **Could not run.** No runner, Docker unavailable, a head that cannot be
-  checked out or the timeout is not a failure of the change: the item pauses
+  toward the revision cap like a CI failure; its run is verified again. A
+  result is tied to the head it ran on: before each foreman turn and before
+  its actions are applied, Nakara reads the PR head on GitHub (as handoff
+  does), and a failure recorded for an older head (someone pushed since)
+  no longer holds anything back. When GitHub cannot be read, the result
+  stands.
+- **Could not run.** No runner with a `dockerImage`, Docker or its egress
+  proxy unavailable, a container that could not start, a head that cannot
+  be checked out, or the timeout is not a failure of the change: the item pauses
   for the Operator with the reason, and review and handoff wait. A message to
   the item, or an answer to the foreman's question, lets it go on without that
   verify; the next implementation run verifies again.

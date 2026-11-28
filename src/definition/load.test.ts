@@ -121,6 +121,10 @@ test("verify must be a list of at most 20 commands on a defined runner", async (
     [tooMany, /verify takes at most 20 commands/],
     ["[npm test], verifyTimeoutMinutes: 0", /verifyTimeoutMinutes/],
     ["[npm test], runner: gone", /runner "gone" is not defined/],
+    [
+      "[npm test], runner: host",
+      /runner "host" has no dockerImage; verify commands run only in a container/,
+    ],
   ] as const) {
     const root = await tree({
       "factory.yaml": FACTORY.replace(
@@ -129,6 +133,7 @@ test("verify must be a list of at most 20 commands on a defined runner", async (
       ),
       "runners/std.yaml":
         "platform: { os: linux, linux: { dockerImage: ubuntu:24.04 } }\n",
+      "runners/host.yaml": "description: no image\n",
       "agents/boss/agent.md": "---\nagentType: FOREMAN\n---\nLead.",
     });
     const result = await loadDefinition(root, defaults);

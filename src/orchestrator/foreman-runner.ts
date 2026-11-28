@@ -101,6 +101,8 @@ export class ForemanRunner {
   private readonly definition: () => Definition;
   /** Pause the work item with a reason for the operator. */
   private readonly pause: (item: WorkItem, reason: string) => void;
+  /** Drop a failed verify of an older PR head before the turn's policy is taken. */
+  private readonly refreshVerify: (itemId: number) => Promise<void>;
   /** The factory's slug, which picks the agent token the foreman falls back to. */
   private readonly slug: string | undefined;
   private readonly telemetry: Telemetry;
@@ -113,6 +115,7 @@ export class ForemanRunner {
       definition: () => Definition;
       pause: (item: WorkItem, reason: string) => void;
       slug?: string | undefined;
+      refreshVerify?: (itemId: number) => Promise<void>;
     },
     telemetry: Telemetry = quietTelemetry(),
   ) {
@@ -121,6 +124,7 @@ export class ForemanRunner {
     this.control = control;
     this.definition = hooks.definition;
     this.pause = hooks.pause;
+    this.refreshVerify = hooks.refreshVerify ?? (async () => {});
     this.slug = hooks.slug;
     this.telemetry = telemetry;
   }
@@ -250,6 +254,7 @@ export class ForemanRunner {
       }
       itemLog.warn("foreman.host_run", { error });
     }
+    await this.refreshVerify(itemId);
     const runs = this.store.runs(itemId);
     const snapshot: TurnSnapshot = {
       foreman: def.foreman.name,

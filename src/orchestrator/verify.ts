@@ -1,7 +1,8 @@
 // The latest verify of a Work Item's PR head (issue #65): the repository's
 // `verify` commands, run by Nakara after an implementation run whose work is
-// on the PR. Kept in kv under `verify:<item>`, one result per item: each
-// verify replaces the last, and recording another PR clears it.
+// on the PR. Kept in kv under `verify:<item>` with the PR and head it ran on:
+// each verify replaces the last, recording another PR clears it, and
+// PullRequestGate.refreshVerify drops one whose head the PR moved past.
 import type { Store } from "../db.ts";
 import type { Definition } from "../definition/load.ts";
 import { DEFAULT_VERIFY_TIMEOUT_MINUTES } from "../definition/schema.ts";

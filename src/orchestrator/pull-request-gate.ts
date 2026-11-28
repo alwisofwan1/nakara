@@ -29,7 +29,7 @@ import {
 import { run } from "../runner/workspace.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
 import { prFeedbackOpen } from "./pr-feedback.ts";
-import { clearVerify, verifyPolicy } from "./verify.ts";
+import { clearVerify, latestVerify, verifyPolicy } from "./verify.ts";
 
 const WAIT = "ci-wait:";
 const FAILED = "ci-failed:";
@@ -123,6 +123,46 @@ export class PullRequestGate {
       this.store.setKv(FAILED + itemId, "");
       this.store.setKv(PUSH_ONLY + itemId, "");
       clearVerify(this.store, itemId);
+    });
+  }
+
+  /**
+   * Keep the item's verify tied to its PR head: a failed or unrun verify of
+   * an older head (someone pushed since) or of another PR no longer holds
+   * review and handoff back. The head is read like handoff reads it; when
+   * it cannot be read, the result stands, so a failure is never lifted on a
+   * guess.
+   */
+  async refreshVerify(itemId: number): Promise<void> {
+    const result = latestVerify(this.store, itemId);
+    if (!result || result.status === "passed") return;
+    const prUrl = this.store.item(itemId)?.pr_url;
+    if (prUrl !== result.prUrl) {
+      clearVerify(this.store, itemId);
+      return;
+    }
+    let head: string;
+    try {
+      head = (await this.io.readPrHead(prUrl)).sha;
+    } catch (error) {
+      this.log.warn("verify.head_read_failed", {
+        item_id: itemId,
+        pr_url: prUrl,
+        error,
+      });
+      return;
+    }
+    // A verify recorded while GitHub was read is not the one checked here.
+    if (
+      head === result.head ||
+      latestVerify(this.store, itemId)?.head !== result.head
+    )
+      return;
+    clearVerify(this.store, itemId);
+    this.log.info("verify.stale", {
+      item_id: itemId,
+      verified: result.head,
+      head,
     });
   }
 

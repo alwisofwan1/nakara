@@ -123,6 +123,7 @@ export class Factory {
         definition: () => this.def(),
         pause: (item, reason) => this.actions.pause(item, reason),
         slug: options.record?.slug,
+        refreshVerify: (itemId) => this.actions.refreshVerify(itemId),
       },
       telemetry,
     );

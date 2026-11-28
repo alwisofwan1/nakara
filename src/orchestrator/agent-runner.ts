@@ -702,7 +702,6 @@ export class AgentRunner {
       runner: config.runner ?? agent.runner,
       timeoutMs: config.timeoutMs,
       dirs: this.config,
-      claudeBin: this.config.claudeBin,
       logPath: verifyLogPath(logPath),
       signal,
     }).catch(

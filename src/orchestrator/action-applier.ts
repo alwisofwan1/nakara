@@ -114,6 +114,11 @@ export class ActionApplier {
     });
   }
 
+  /** Drop a failed verify of an older PR head; see PullRequestGate.refreshVerify. */
+  refreshVerify(itemId: number): Promise<void> {
+    return this.gate.refreshVerify(itemId);
+  }
+
   /** Re-check every action against the current state (a human may have acted during the turn) and apply it. */
   async applyActions(
     itemId: number,
@@ -121,6 +126,8 @@ export class ActionApplier {
   ): Promise<Action[]> {
     const applied: Action[] = [];
     const log = this.log.child({ item_id: itemId });
+    // A verify of an older PR head no longer decides these actions.
+    await this.gate.refreshVerify(itemId);
     for (const { action, accepted } of recorded) {
       if (!accepted) continue;
       // biome-ignore lint/style/noNonNullAssertion: Preserve the existing required-record assumption instead of silently skipping missing data.
