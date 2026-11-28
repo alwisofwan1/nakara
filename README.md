@@ -44,23 +44,42 @@ agents run Claude Code headless (`claude -p`) in a git clone per work item.
   (started but not submitted) and its inline comments wait until it is
   submitted. Only feedback from a login with write, maintain or admin access
   to the repository counts; bots and Nakara's own comments (evidence) are
-  ignored. Who else counts depends on whether Nakara has its own identity:
-  - *Separate identities* (an own or shared agent token of another account, a
-    bot or GitHub App): every review and comment from a writer counts, and
-    the logins of the agent token and of `NAKARA_FOREMAN_GH_TOKEN` are
-    ignored, so an agent's reply is not new feedback.
+  ignored. Who else counts depends on whether each login Nakara acts as (the
+  factory's agent token and `NAKARA_FOREMAN_GH_TOKEN`) is shared or distinct.
+  The rule: a Nakara login is *shared* when it is your own login, the one
+  `gh` acts as in Nakara's environment without those tokens (`gh api user`);
+  any other Nakara login is *distinct*. To read your login Nakara empties
+  `GH_TOKEN` or `GITHUB_TOKEN` when it holds an agent or foreman token, so
+  exporting a bot's token there never makes the bot you; any other token in
+  them stays, so you can be logged in through `GH_TOKEN` alone. Do not put
+  another token of the agent or foreman account there: Nakara cannot tell it
+  is not yours.
+  - *Distinct identity* (an own or shared agent token, or a foreman token, of
+    another account, a bot or GitHub App): every review and comment from a
+    writer counts, and that login is always ignored, even when its body starts
+    with `/nakara`. An agent's reply is not new feedback, and an agent that
+    posts `/nakara` past the `gh` guard (below) cannot start a revision loop.
   - *Shared identity* (no own or shared agent token, so agents act as your gh
-    login, or a token of a writer's own account, such as your fine-grained
-    token): a review or comment from that login counts only when its body
-    starts with `/nakara` (any case, after leading whitespace). The text after
+    login, or a token of your own account, such as your fine-grained token): a
+    review or comment from that login counts only when its body starts with
+    `/nakara` (any case, after leading whitespace). The text after
     `/nakara` is the feedback; a bare `/nakara` counts too. GitHub does not let you request changes on a
     pull request opened under your own login, so here feedback arrives as
     comments, inline comments or "Comment" reviews that start with `/nakara`.
+    A token of another writer's account counts as distinct: that person
+    comments from a login of their own.
 
-  `/nakara` works with separate identities too, so you can always use it.
-  Nakara and its agents never post a body that starts with `/nakara`: the `gh`
+  Nakara reads your login only for a `/nakara` remark from one of its own
+  logins. When it cannot read it, that poll reads nothing and the next poll
+  reads the same remarks again, so the remark is neither lost nor counted
+  unchecked. `/nakara` from any other writer counts too, so you can always
+  use it. Nakara and its agents never post a body that starts with `/nakara`: the `gh`
   that agents and the foreman run is a guard that refuses such a comment,
-  review or API body, and Nakara escapes its own comments (`\/nakara`). New
+  review or API body, and Nakara escapes its own comments (`\/nakara`). The
+  guard sees only `gh`, so with a shared identity an agent that posts another
+  way could still start a revision loop that only the run limit and the budget
+  stop. **Give agents and the foreman tokens of a separate account** (a bot
+  account or a GitHub App with write access) for the setup without that risk. New
   feedback becomes one `pr_feedback` event with each author, review state,
   comment, file and line, and link. It wakes the foreman, and an item at
   handoff becomes active again; a completed or cancelled item is not reopened.

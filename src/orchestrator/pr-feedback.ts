@@ -1,15 +1,20 @@
 // Human feedback on a Work Item's Pull Request (Roadmap #23, phase 3): reviews
 // that request changes or comment, inline review comments and plain PR
 // comments, from people with write access, become one pr_feedback event that
-// wakes the foreman. A login Nakara itself acts as writes feedback only after
-// the /nakara trigger (domain/nakara-trigger.ts). Its state lives in kv under
+// wakes the foreman. A login Nakara itself acts as is never feedback, except a
+// shared identity (the Operator's own login) after the /nakara trigger
+// (domain/nakara-trigger.ts); see PrFeedbackPoller.poll. Its state lives in kv under
 // `pr-feedback:<item>`: the PR it was read from, the newest review and comment
 // ids seen (feedback is what is newer) and those of reviews still pending,
 // whether an event waits for a human_feedback follow_up, and the runs of the
 // follow-ups that answer it until they end.
 import type { Store } from "../db.ts";
 import { afterTrigger } from "../domain/nakara-trigger.ts";
-import { agentGhEnv, agentTokenOf } from "../runner/agent-token.ts";
+import {
+  agentGhEnv,
+  agentTokenOf,
+  operatorGhEnv,
+} from "../runner/agent-token.ts";
 import { run } from "../runner/workspace.ts";
 import { hasWriteAccess } from "../runner/write-access.ts";
 import { type Logger, silentLogger } from "../telemetry/log.ts";
@@ -266,8 +271,7 @@ export class PrFeedbackPoller {
 
   /**
    * The identities Nakara acts as on GitHub: the factory's agent token (its
-   * agents' replies, Nakara's own comments) and the foreman's token. Their
-   * writing is feedback only after the /nakara trigger.
+   * agents' replies, Nakara's own comments) and the foreman's token.
    */
   private async ownLogins(slug: string | undefined): Promise<Set<string>> {
     const variable = agentTokenOf(slug, this.env).variable ?? "gh";
@@ -283,6 +287,16 @@ export class PrFeedbackPoller {
         }),
       );
     return own;
+  }
+
+  /**
+   * The Operator's login: the one gh acts as in Nakara's own environment
+   * once every agent and foreman token is out of it (operatorGhEnv), so a
+   * Nakara credential exported as GH_TOKEN or GITHUB_TOKEN never answers
+   * for the Operator.
+   */
+  private operatorLogin(): Promise<string> {
+    return this.loginOf("Operator", operatorGhEnv(this.env));
   }
 
   /**
@@ -365,17 +379,27 @@ export class PrFeedbackPoller {
             throw new Error(`cannot read the write access of ${login}`);
           return writer === true;
         };
-        // The feedback a remark carries, or null when it is none. Nakara's
-        // own logins write feedback only after /nakara: with a shared
-        // identity, a writer's comment and an agent's reply come from the
-        // same login. The prefix alone decides: a bare /nakara is feedback
-        // too, with no text after it.
+        // The feedback a remark carries, or null when it is none. A login
+        // Nakara acts as (agent or foreman token) is shared when it is also
+        // the Operator's login: a writer's comment and an agent's reply then
+        // come from the same login and only /nakara tells them apart, so it
+        // writes feedback only after /nakara. Any other login of Nakara's is
+        // distinct, Nakara's alone, and never writes feedback, /nakara or
+        // not: an agent that posts past the gh guard (curl, gh by its full
+        // path, an MCP server) cannot start a revision loop. The Operator's
+        // login is asked only for such a /nakara remark; when it cannot be
+        // read the poll throws and moves nothing, so the remark is read again
+        // next poll, neither dropped nor counted unchecked. The prefix alone
+        // decides: a bare /nakara is feedback too, with no text after it.
         const feedback = async (
           r: PrRemark,
         ): Promise<{ body: string } | null> => {
           const login = r.login ?? "";
           const triggered = afterTrigger(r.body);
-          if (own.has(login) && triggered === null) return null;
+          if (own.has(login)) {
+            if (triggered === null) return null;
+            if (login !== (await this.operatorLogin())) return null;
+          }
           if (!(await writes(login))) return null;
           return { body: triggered ?? r.body };
         };
